@@ -94,6 +94,20 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(self.call("/api/admin/grant",{"username":"nobody_here","gold":10},auth)[0],400)
         self.assertEqual(self.call("/api/admin/grant",{"username":"Beta_Test","gold":-5},auth)[0],400)
 
+    def test_lifetime_stats(self):
+        account = self.register()
+        aid = account["profile"]["id"]
+        key = {"X-Server-Key": self.store.server_key}
+        self.assertEqual(account["profile"]["stats"]["kills"], 0)
+        record = {"kills": 40, "headshots": 12, "shots": 300, "hits": 180, "wave": 20, "victory": True}
+        code, result = self.call("/api/server/reward", {"account_id": aid, "gold": 100, "stats": record}, key)
+        self.assertEqual(code, 200)
+        self.call("/api/server/reward", {"account_id": aid, "gold": 10, "stats": dict(record, wave=7, victory=False)}, key)
+        stats = self.store.profile(aid)["stats"]
+        self.assertEqual((stats["kills"], stats["missions"], stats["victories"], stats["best_wave"]), (80, 2, 1, 20))
+        self.assertEqual(self.call("/api/server/reward", {"account_id": aid, "gold": 0, "stats": dict(record, hits=999)}, key)[0], 400)
+        self.assertEqual(self.call("/api/server/reward", {"account_id": aid, "gold": 0, "stats": dict(record, kills=-1)}, key)[0], 400)
+
     def test_auth_and_persistence(self):
         account = self.register()
         self.assertFalse(account["profile"]["tutorial_complete"])

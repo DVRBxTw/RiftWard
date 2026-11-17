@@ -1,0 +1,143 @@
+using System.Collections.Generic;
+using UnityEngine;
+
+namespace RiftWard.Sim
+{
+    /// Per-tick player input. Movement x = strafe right, y = forward. Angles in radians.
+    public struct PlayerInput
+    {
+        public int Seq;
+        public Vector2 Move;
+        public float Yaw, Pitch;
+        public Vector3 Aim;
+        public bool Fire, Dash, Jump, Descend, Reload, Skill, Interact;
+        public int Slot;
+    }
+
+    /// Account-side data a player brings into a mission.
+    public sealed class Loadout
+    {
+        public List<string> Owned = new List<string> { "pistol" };
+        public List<string> Equipped = new List<string> { "pistol" };
+        public Dictionary<string, Dictionary<string, int>> Levels = new Dictionary<string, Dictionary<string, int>>();
+
+        public int Level(string weapon, string stat) =>
+            Levels.TryGetValue(weapon, out var stats) && stats.TryGetValue(stat, out var v) ? Mathf.Clamp(v, 0, Defs.MaxUpgradeLevel) : 0;
+
+        /// Keeps only owned, unique weapons; at most two equipped; pistol always owned.
+        public void Normalize()
+        {
+            var owned = new List<string> { "pistol" };
+            foreach (var w in Owned) if (Defs.Weapons.ContainsKey(w) && !owned.Contains(w)) owned.Add(w);
+            Owned = owned;
+            var kit = new List<string>();
+            foreach (var w in Equipped) if (owned.Contains(w) && !kit.Contains(w) && kit.Count < 2) kit.Add(w);
+            if (kit.Count == 0) kit.AddRange(owned.GetRange(0, Mathf.Min(2, owned.Count)));
+            Equipped = kit;
+        }
+    }
+
+    public sealed class AdminSettings
+    {
+        public float Damage = 1f, Speed = 1f;
+        public bool God, InfiniteAmmo, Fly;
+
+        public AdminSettings Clamped() => new AdminSettings
+        {
+            Damage = Mathf.Clamp(Damage, 1f, 20f), Speed = Mathf.Clamp(Speed, 0.5f, 3f),
+            God = God, InfiniteAmmo = InfiniteAmmo, Fly = Fly,
+        };
+    }
+
+    public sealed class Actor
+    {
+        public int Id;
+        public Vector3 Position;
+        public float Hp = 100f, MaxHp = 100f;
+        public float Yaw, VerticalVelocity;
+        public float FireCooldown, DashCooldown, DashLeft;
+        public Vector3 DashDirection;
+        public int Ack;
+
+        // Weapon state
+        public Loadout Loadout = new Loadout();
+        public int Slot;
+        public int Ammo, Mag;
+        public float Reload, ReloadTime;
+        public float Damage, FireInterval, Spread, HeadMultiplier, Zoom;
+        public int Pellets = 1;
+        public Dictionary<string, int> AmmoByWeapon = new Dictionary<string, int>();
+
+        // Mission buffs
+        public float Speed = Defs.BaseSpeed, DamageMult = 1f, RateMult = 1f, ReloadMult = 1f, SkillMult = 1f;
+        public int MagBonus;
+        public float Regen, Critical, Lifesteal, Explode;
+        public float SkillCooldown, Revive;
+
+        // Admin
+        public AdminSettings Admin = new AdminSettings();
+        public bool IsAdmin;
+
+        // Per-mission combat record (sent to the account service as lifetime stats).
+        public int StatKills, StatHeadshots, StatShots, StatHits;
+
+        public bool Alive => Hp > 0f;
+        public string WeaponId => Loadout.Equipped[Mathf.Clamp(Slot, 0, Loadout.Equipped.Count - 1)];
+    }
+
+    public sealed class Enemy
+    {
+        public int Id;
+        public Vector3 Position;
+        public float Hp, MaxHp, Speed, Damage, Yaw;
+        public float MeleeCooldown = 0.6f, ShotCooldown;
+        public bool Boss, Shoots = true, RangedOnly;
+        public int Kind;
+        public float Scale = 1f, Keep = 1.4f;
+        public int Xp;
+        public int Phase = 1;
+        /// 0 idle, 1 sniper aiming (telegraph), 2 boss enraged.
+        public int State;
+        public float RingCooldown = 2f;
+
+        /// Direction the enemy faces (towards its target).
+        public Vector3 Facing => new Vector3(Mathf.Sin(Yaw), 0f, Mathf.Cos(Yaw));
+    }
+
+    public enum BulletKind { Enemy = 0, Sniper = 1, Grenade = 2 }
+
+    public sealed class Bullet
+    {
+        public int Id;
+        public Vector3 Position, Velocity;
+        public float Damage, Life = Defs.BulletLife;
+        public BulletKind Kind;
+        public int Owner = -1;
+    }
+
+    public enum PickupKind { Health = 0, Ammo = 1 }
+
+    public sealed class Pickup
+    {
+        public int Id;
+        public Vector3 Position;
+        public PickupKind Kind;
+        public float Life = 20f;
+    }
+
+    /// Things the client turns into effects and sounds; drained every tick.
+    public struct ShotEvent
+    {
+        public int Shooter;
+        public Vector3 Origin, End;
+        public bool Hit, Head, Killed;
+        public float Dealt;
+    }
+
+    public struct ExplosionEvent
+    {
+        public Vector3 Position;
+        public float Radius;
+        public Color32 Color;
+    }
+}

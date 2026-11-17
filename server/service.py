@@ -75,6 +75,8 @@ class Store:
                 db.execute("ALTER TABLE progress ADD COLUMN gold INTEGER NOT NULL DEFAULT 0")
             if "loadout" not in columns:
                 db.execute("ALTER TABLE progress ADD COLUMN loadout TEXT NOT NULL DEFAULT '{}'")
+            if "stats" not in columns:
+                db.execute("ALTER TABLE progress ADD COLUMN stats TEXT NOT NULL DEFAULT '{}'")
 
     @contextmanager
     def connect(self):
@@ -94,7 +96,7 @@ class Store:
     def profile(self, account_id: int):
         with self.connect() as db:
             row = db.execute(
-                "SELECT a.id,a.username,p.unlocked,p.tutorial_complete,p.gold,p.loadout FROM accounts a "
+                "SELECT a.id,a.username,p.unlocked,p.tutorial_complete,p.gold,p.loadout,p.stats FROM accounts a "
                 "JOIN progress p ON p.account_id=a.id WHERE a.id=?", (account_id,)
             ).fetchone()
         if row is None:
@@ -103,7 +105,45 @@ class Store:
         result["tutorial_complete"] = bool(result["tutorial_complete"])
         result["loadout"] = self._parse_loadout(result.get("loadout"))
         result["admin"] = self.is_admin(result["username"])
+        result["stats"] = self._parse_stats(result.get("stats"))
         return result
+
+    STAT_KEYS = ("kills", "headshots", "shots", "hits", "missions", "victories", "best_wave")
+
+    @classmethod
+    def _parse_stats(cls, raw):
+        try:
+            data = json.loads(raw or "{}")
+        except ValueError:
+            data = {}
+        if not isinstance(data, dict):
+            data = {}
+        return {k: int(data.get(k, 0)) if isinstance(data.get(k, 0), int) else 0 for k in cls.STAT_KEYS}
+
+    def record_stats(self, account_id: int, stats):
+        """Adds one mission's combat record (reported by the game server) to lifetime stats."""
+        if not isinstance(stats, dict):
+            raise ValueError("戰績格式錯誤")
+        values = {}
+        for key, limit in (("kills", 5000), ("headshots", 5000), ("shots", 100000), ("hits", 100000), ("wave", 20)):
+            value = stats.get(key, 0)
+            if not isinstance(value, int) or not 0 <= value <= limit:
+                raise ValueError("戰績數值不合法")
+            values[key] = value
+        if values["hits"] > values["shots"] or values["headshots"] > values["hits"] * 7:
+            raise ValueError("戰績數值不合法")
+        victory = stats.get("victory") is True
+        profile = self.profile(account_id)
+        if profile is None:
+            raise ValueError("找不到帳號")
+        total = profile["stats"]
+        for key in ("kills", "headshots", "shots", "hits"):
+            total[key] += values[key]
+        total["missions"] += 1
+        total["victories"] += 1 if victory else 0
+        total["best_wave"] = max(total["best_wave"], values["wave"])
+        with self.connect() as db:
+            db.execute("UPDATE progress SET stats=? WHERE account_id=?", (json.dumps(total), account_id))
 
     def is_admin(self, username: str) -> bool:
         try:
@@ -302,13 +342,15 @@ class BetaServer(ThreadingHTTPServer):
         try:
             data = json.loads((self.releases / "manifest.json").read_text(encoding="utf-8-sig"))
             digest = data["sha256"]
-            path = self.releases / (digest + ".pck")
+            # Godot builds ship a single .pck; Unity builds ship a zipped player folder.
+            ext = "zip" if data.get("package") == "zip" else "pck"
+            path = self.releases / (digest + "." + ext)
             if not re.fullmatch(r"[0-9a-f]{64}", digest) or not path.is_file():
                 return None
             if path.stat().st_size != data["size"]:
                 return None
             return {"ok": True, "version": data["version"], "sha256": digest,
-                    "size": data["size"], "download": "/updates/" + digest + ".pck", "protocol": 1}
+                    "size": data["size"], "download": "/updates/" + digest + "." + ext, "package": ext, "protocol": 1}
         except (OSError, ValueError, KeyError):
             return None
 
@@ -342,9 +384,9 @@ class Handler(BaseHTTPRequestHandler):
             manifest = self.server.manifest()
             self._json(200 if manifest else 503, manifest or {"ok": False, "error": "更新尚未發布"})
             return
-        match = re.fullmatch(r"/updates/([0-9a-f]{64})\.pck", self.path)
+        match = re.fullmatch(r"/updates/([0-9a-f]{64})\.(pck|zip)", self.path)
         if match:
-            path = self.server.releases / (match[1] + ".pck")
+            path = self.server.releases / (match[1] + "." + match[2])
             if path.is_file():
                 self.send_response(200)
                 self.send_header("Content-Type", "application/octet-stream")
@@ -426,6 +468,8 @@ class Handler(BaseHTTPRequestHandler):
             if self.path in ("/api/server/reward", "/api/server/profile"):
                 try:
                     if self.path.endswith("reward"):
+                        if "stats" in data:
+                            store.record_stats(data.get("account_id"), data.get("stats"))
                         profile = store.reward(data.get("account_id"), data.get("gold"))
                     else:
                         account_id = data.get("account_id")

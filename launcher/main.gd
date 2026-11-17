@@ -125,6 +125,12 @@ func _check() -> void:
 		if _launch_login_offline(): return
 		_fail("無法送出版本請求（%s）。" % error_string(error))
 
+func _package(value: Dictionary) -> String:
+	return "zip" if value.get("package") == "zip" else "pck"
+
+func _bundled_path() -> String:
+	return install_dir.path_join("game/RiftWard.zip" if _package(manifest) == "zip" else "game/RiftWardGame.pck")
+
 func _launch_login_offline() -> bool:
 	var metadata_path = install_dir.path_join("game/manifest.json")
 	if not FileAccess.file_exists(metadata_path): return false
@@ -132,11 +138,11 @@ func _launch_login_offline() -> bool:
 	if not metadata is Dictionary: return false
 	metadata["ok"] = true
 	metadata["protocol"] = 1
-	metadata["download"] = "/updates/" + str(metadata.get("sha256","")) + ".pck"
+	metadata["download"] = "/updates/" + str(metadata.get("sha256","")) + "." + _package(metadata)
 	if not validate_manifest(metadata).is_empty(): return false
-	var pack = install_dir.path_join("game/RiftWardGame.pck")
-	if not verify_pack(pack,int(metadata.size),metadata.sha256).is_empty(): return false
 	manifest = metadata
+	var pack = _bundled_path()
+	if not verify_pack(pack,int(metadata.size),metadata.sha256).is_empty(): return false
 	_launch(pack)
 	return true
 
@@ -158,7 +164,7 @@ func validate_manifest(value: Variant) -> String:
 	hash_regex.compile("^[0-9a-f]{64}$")
 	if hash_regex.search(value.sha256) == null:
 		return "檔案指紋格式無效。"
-	if value.download != "/updates/" + value.sha256 + ".pck":
+	if value.download != "/updates/" + value.sha256 + "." + _package(value):
 		return "下載路徑無效。"
 	var size_value = value.get("size")
 	if not (size_value is int or size_value is float):
@@ -208,7 +214,7 @@ func _completed(result: int, code: int, _headers: PackedStringArray, body: Packe
 	if FileAccess.file_exists(cached) and verify_pack(cached, int(manifest.size), manifest.sha256).is_empty():
 		_launch(cached)
 		return
-	var bundled = OS.get_executable_path().get_base_dir().path_join("game/RiftWardGame.pck")
+	var bundled = _bundled_path()
 	if FileAccess.file_exists(bundled) and verify_pack(bundled, int(manifest.size), manifest.sha256).is_empty():
 		_launch(bundled)
 		return
@@ -231,7 +237,40 @@ func _completed(result: int, code: int, _headers: PackedStringArray, body: Packe
 		_fail("無法開始下載（%s）。" % error_string(error))
 
 func _cache_path() -> String:
-	return UPDATE_DIR.path_join("%s-%s.pck" % [manifest.version, manifest.sha256])
+	return UPDATE_DIR.path_join("%s-%s.%s" % [manifest.version, manifest.sha256, _package(manifest)])
+
+## Extracts a verified Unity build zip into its own versioned folder; returns the folder or "" on failure.
+func _extract(zip_path: String) -> String:
+	var target = UPDATE_DIR.path_join("game-%s-%s" % [manifest.version, manifest.sha256.substr(0, 16)])
+	var absolute = ProjectSettings.globalize_path(target)
+	var marker = absolute.path_join(".verified")
+	if FileAccess.file_exists(marker) and FileAccess.get_file_as_string(marker) == manifest.sha256:
+		return absolute
+	var reader = ZIPReader.new()
+	if reader.open(ProjectSettings.globalize_path(zip_path)) != OK:
+		return ""
+	for entry in reader.get_files():
+		# Refuse absolute paths and parent-directory escapes.
+		if entry.begins_with("/") or entry.contains("..") or entry.contains(":") or entry.contains("\\"):
+			reader.close()
+			return ""
+		var destination = absolute.path_join(entry)
+		if entry.ends_with("/"):
+			DirAccess.make_dir_recursive_absolute(destination)
+			continue
+		DirAccess.make_dir_recursive_absolute(destination.get_base_dir())
+		var file = FileAccess.open(destination, FileAccess.WRITE)
+		if file == null:
+			reader.close()
+			return ""
+		file.store_buffer(reader.read_file(entry))
+		file.close()
+	reader.close()
+	var done = FileAccess.open(marker, FileAccess.WRITE)
+	if done == null: return ""
+	done.store_string(manifest.sha256)
+	done.close()
+	return absolute
 
 func _process(_delta: float) -> void:
 	if downloading and request != null:
@@ -243,7 +282,19 @@ func _process(_delta: float) -> void:
 func _launch(path: String) -> void:
 	status.text = "驗證完成，正在啟動…"
 	detail.text = "版本 %s" % manifest.version
-	var process_id = OS.create_process(OS.get_executable_path(), PackedStringArray(["--main-pack", ProjectSettings.globalize_path(path)]))
+	var process_id = -1
+	if _package(manifest) == "zip":
+		status.text = "正在安裝遊戲檔案…"
+		var folder = _extract(path)
+		if folder.is_empty():
+			_fail("無法解壓遊戲檔案。請確認磁碟空間後重試。")
+			return
+		var server_cfg = install_dir.path_join("server.cfg")
+		if FileAccess.file_exists(server_cfg):
+			DirAccess.copy_absolute(server_cfg, folder.path_join("server.cfg"))
+		process_id = OS.create_process(folder.path_join("RiftWard.exe"), PackedStringArray())
+	else:
+		process_id = OS.create_process(OS.get_executable_path(), PackedStringArray(["--main-pack", ProjectSettings.globalize_path(path)]))
 	if process_id <= 0:
 		_fail("無法啟動遊戲。請確認執行檔仍在原位置。")
 		return

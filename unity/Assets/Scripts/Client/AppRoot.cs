@@ -1,0 +1,422 @@
+using System;
+using System.Collections;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using RiftWard.Sim;
+using UnityEngine;
+
+namespace RiftWard.Client
+{
+    /// Application entry point and screen router: account → story/training → home ↔ armory/admin → mission.
+    public sealed class AppRoot : MonoBehaviour
+    {
+        public GameClient Client { get; private set; }
+        public Screens Screens { get; private set; }
+        public AccountApi Api { get; private set; }
+        public Profile Profile { get; private set; }
+        public AdminSettings AdminSettings { get; } = new AdminSettings();
+        public int SelectedRegion { get; private set; }
+        public bool CanDeploy => Profile != null && (!Net.Welcomed || leaderId == Net.LocalId);
+        public NetClient Net { get; } = new NetClient();
+        int leaderId = -1, partySize, gamePort = Protocol.DefaultPort;
+        bool inNetMission, netTest;
+        string lobbyMode = "lobby";
+        string homeStatus = "離線模式 · 單人任務";
+        bool training;
+        int trainingStep;
+        Vector3 trainingOrigin;
+        float trainingYaw;
+
+        static string Arg(string name, string fallback = null)
+        {
+            var args = Environment.GetCommandLineArgs();
+            int i = Array.IndexOf(args, name);
+            return i >= 0 && i + 1 < args.Length ? args[i + 1] : (i >= 0 ? "" : fallback);
+        }
+
+        void Start()
+        {
+            if (Arg("-server") != null)
+            {
+                gameObject.AddComponent<GameServer>();
+                enabled = false;
+                return;
+            }
+            Client = gameObject.AddComponent<GameClient>();
+            Client.Setup();
+            Api = new AccountApi(this);
+            Screens = new Screens(this);
+            Net.Message += OnNetMessage;
+            Net.Disconnected += OnNetDisconnected;
+            var env = Environment.GetEnvironmentVariable("RIFTWARD_TEST_API_PORT");
+            if (!string.IsNullOrEmpty(env)) { Api.Host = Environment.GetEnvironmentVariable("RIFTWARD_TEST_API_HOST") ?? "127.0.0.1"; Api.Port = int.Parse(env); }
+            var gp = Environment.GetEnvironmentVariable("RIFTWARD_TEST_GAME_PORT");
+            if (!string.IsNullOrEmpty(gp)) gamePort = int.Parse(gp);
+            netTest = Arg("-net-test") != null;
+            if (netTest) { OnAuthenticated(Environment.GetEnvironmentVariable("RIFTWARD_TEST_TOKEN") ?? ""); return; }
+            Client.MissionEnded += OnMissionEnded;
+            Client.Menus.LeaveRequested = ReturnHome;
+            Client.Menus.RetryRequested = Deploy;
+            var capture = Arg("-capture");
+            if (capture != null) { StartCoroutine(Capture(string.IsNullOrEmpty(capture) ? "." : capture)); return; }
+            var token = SessionStore.Load(Api.Host);
+            if (token != null) { Screens.ShowBusy("正在恢復登入，請稍候…"); OnAuthenticated(token); }
+            else Screens.ShowAccount();
+        }
+
+        // ------------------------------------------------------------ account
+
+        public void OnAuthenticated(string token)
+        {
+            Api.Token = token;
+            Api.Post("/api/me", null, result =>
+            {
+                if (!result.Bool("ok"))
+                {
+                    if (result.Int("http_status") == 401) SessionStore.Forget();
+                    Api.Token = "";
+                    Screens.ShowAccount(result.Str("error", "登入已失效，請重新登入。"), true);
+                    return;
+                }
+                if (!netTest) SessionStore.Save(token, Api.Host);
+                UpdateProfile(Profile.From(result.Obj("profile")));
+                if (!Profile.TutorialComplete) { Screens.ShowStory(0); return; }
+                ConnectBase();
+            });
+        }
+
+        /// Connects to the game server; falls back to offline missions if it is unreachable.
+        void ConnectBase()
+        {
+            if (Net.Connected) { ShowHome(); return; }
+            homeStatus = "正在連接基地…";
+            Screens.ShowBusy("正在驗證帳號並連接基地…");
+            Net.Connect(Api.Host, gamePort, Api.Token, (ok, error) =>
+            {
+                if (!ok) { homeStatus = "遊戲伺服器離線 · 離線單人任務"; ShowHome(); }
+            });
+        }
+
+        void RefreshMe()
+        {
+            Api.Post("/api/me", null, result => { if (result.Bool("ok")) UpdateProfile(Profile.From(result.Obj("profile")), false); });
+        }
+
+        void OnNetMessage(Msg type, BinaryReader r)
+        {
+            switch (type)
+            {
+                case Msg.Welcome:
+                    Debug.Log("UNITY_CLIENT_WELCOME id=" + Net.LocalId);
+                    break;
+                case Msg.Lobby:
+                    SelectedRegion = r.ReadInt32();
+                    r.ReadInt32();
+                    leaderId = r.ReadInt32();
+                    partySize = r.ReadInt32();
+                    lobbyMode = r.ReadString();
+                    homeStatus = leaderId == Net.LocalId ? $"已連線 · 隊長 · {partySize} / 4" : $"已連線 · 等待隊長部署 · {partySize} / 4";
+                    if (Screens.Mode == "home" || Screens.Mode == "connecting") ShowHome();
+                    if (netTest && leaderId == Net.LocalId && partySize >= 2 && lobbyMode == "lobby" && !inNetMission && !testDone) Net.Send(Msg.RequestDeploy, w => w.Write(0));
+                    break;
+                case Msg.Deploy:
+                    int region = r.ReadInt32();
+                    Screens.Clear();
+                    Client.Menus.HideAll();
+                    Client.Objective = "";
+                    training = false;
+                    inNetMission = true;
+                    Client.StartNetworked(region, Net.LocalId, Net);
+                    PushAdmin();
+                    Debug.Log("UNITY_CLIENT_DEPLOY region=" + region);
+                    break;
+                case Msg.Snapshot: Client.ApplySnapshot(r); break;
+                case Msg.Events: Client.ApplyEvents(r); break;
+                case Msg.BuffOffer:
+                    int level = r.ReadInt32();
+                    var offer = new int[r.ReadInt32()];
+                    for (int i = 0; i < offer.Length; i++) offer[i] = r.ReadInt32();
+                    Client.ApplyBuffOffer(level, offer);
+                    if (netTest) { Client.ChooseBuff(offer[0]); testPicks++; }
+                    break;
+                case Msg.Finish:
+                    bool success = r.ReadBoolean();
+                    int finishedRegion = r.ReadInt32(), kills = r.ReadInt32();
+                    float elapsed = r.ReadSingle();
+                    int gold = r.ReadInt32();
+                    string grade = r.ReadString();
+                    var record = new[] { r.ReadInt32(), r.ReadInt32(), r.ReadInt32(), r.ReadInt32() };
+                    Client.MarkFinished(success);
+                    Client.Menus.ShowResult(success, finishedRegion, kills, elapsed, gold, (Profile?.Gold ?? 0) + gold, grade, record);
+                    Debug.Log($"UNITY_CLIENT_RESULT success={success} gold={gold} picks={testPicks}");
+                    if (netTest) StartCoroutine(TestFinish(success, gold));
+                    break;
+                case Msg.ProfileSync: RefreshMe(); break;
+                case Msg.Notice: homeStatus = r.ReadString(); if (Screens.Mode == "home") ShowHome(); break;
+                case Msg.Error:
+                    string message = r.ReadString();
+                    Net.Close();
+                    LeaveNetMission();
+                    Screens.ShowAccount(message, true);
+                    Debug.Log("UNITY_CLIENT_ERROR " + message);
+                    break;
+                case Msg.BackHome:
+                    if (inNetMission) { LeaveNetMission(); ShowHome(); }
+                    if (netTest && testDone) { Debug.Log("UNITY_CLIENT_RETURN_PASS"); Application.Quit(0); }
+                    break;
+            }
+        }
+
+        int testPicks;
+        bool testDone;
+
+        IEnumerator TestFinish(bool success, int gold)
+        {
+            yield return new WaitForSecondsRealtime(1.5f);
+            Debug.Log(success && gold > 0 && testPicks == Defs.WavesPerMission && Profile.Gold > 0
+                ? $"UNITY_CLIENT_PASS gold={gold} picks={testPicks} total={Profile.Gold}"
+                : $"UNITY_CLIENT_FAIL success={success} gold={gold} picks={testPicks} total={Profile?.Gold}");
+            testDone = true;
+            Net.Send(Msg.RequestHome);
+            yield return new WaitForSecondsRealtime(10f);
+            Application.Quit(1);
+        }
+
+        void OnNetDisconnected(string reason)
+        {
+            homeStatus = "與遊戲伺服器中斷連線 · 離線單人任務";
+            if (inNetMission) { LeaveNetMission(); ShowHome(); }
+            else if (Screens.Mode == "home" || Screens.Mode == "connecting") ShowHome();
+        }
+
+        void LeaveNetMission()
+        {
+            if (!inNetMission) return;
+            inNetMission = false;
+            Client.Menus.HideAll();
+            Client.LeaveMission();
+        }
+
+        public void UpdateProfile(Profile profile) => UpdateProfile(profile, true);
+
+        public void UpdateProfile(Profile profile, bool notifyServer)
+        {
+            if (profile == null) return;
+            Profile = profile;
+            if (notifyServer && Net.Welcomed) Net.Send(Msg.RefreshProfile);
+
+            Client.Menus.AdminPanel = profile.Admin ? (Action<Transform>)Screens.AbilityPanel : null;
+        }
+
+        public void Logout()
+        {
+            Api.Post("/api/logout", null, _ => { });
+            Net.Close();
+            SessionStore.Forget();
+            Api.Token = "";
+            Profile = null;
+            Screens.ShowAccount("", true);
+        }
+
+        public void Quit() => Application.Quit();
+
+        // ------------------------------------------------------------ home
+
+        public void ShowHome()
+        {
+            if (Profile == null) { Screens.ShowAccount(); return; }
+            Client.ShowShowcase(Mathf.Clamp(SelectedRegion, 0, Profile.Unlocked));
+            Screens.ShowHome(homeStatus);
+        }
+
+        public void SelectRegion(int region)
+        {
+            if (Net.Welcomed)
+            {
+                if (leaderId == Net.LocalId) Net.Send(Msg.SelectRegion, w => w.Write(region));
+                return;
+            }
+            SelectedRegion = Mathf.Clamp(region, 0, Profile.Unlocked);
+            ShowHome();
+        }
+
+        public void Deploy()
+        {
+            if (Net.Welcomed)
+            {
+                Client.Menus.HideAll();
+                if (leaderId == Net.LocalId) Net.Send(Msg.RequestDeploy, w => w.Write(SelectedRegion));
+                else if (inNetMission) { LeaveNetMission(); ShowHome(); }
+                return;
+            }
+            Client.Menus.HideAll();
+            Screens.Clear();
+            training = false;
+            Client.Objective = "";
+            Client.StartOffline(Mathf.Clamp(SelectedRegion, 0, Profile.Unlocked), Profile.Loadout, Profile.Admin, AdminSettings);
+        }
+
+        void ReturnHome()
+        {
+            if (inNetMission)
+            {
+                if (Client.Sim != null && Client.Sim.State == MissionState.Playing) Net.Send(Msg.LeaveMission);
+                else Net.Send(Msg.RequestHome);
+                LeaveNetMission();
+                ShowHome();
+                return;
+            }
+            Client.Menus.HideAll();
+            Client.LeaveMission();
+            if (training) { training = false; Client.Objective = ""; Screens.ShowStory(2); return; }
+            ShowHome();
+        }
+
+        void OnMissionEnded(GameSim sim)
+        {
+            if (training) return;
+            bool success = sim.State == MissionState.Victory;
+            sim.Actors.TryGetValue(Client.LocalId, out var me);
+            var record = me == null ? new int[4] : new[] { me.StatKills, me.StatHeadshots, me.StatShots, me.StatHits };
+            Client.Menus.ShowResult(success, sim.Region, sim.Kills, sim.Elapsed, -1, Profile?.Gold ?? 0, sim.MissionGrade(), record);
+        }
+
+        public void PushAdmin()
+        {
+            if (Profile == null || !Profile.Admin) return;
+            if (Net.Welcomed) Net.Send(Msg.Admin, w => w.Write(AdminSettings));
+            else Client.Sim?.SetAdmin(Client.LocalId, AdminSettings);
+        }
+
+        // ------------------------------------------------------------ training
+
+        public void StartTraining()
+        {
+            Screens.Clear();
+            training = true;
+            trainingStep = 0;
+            Client.StartTraining();
+            trainingOrigin = Client.Sim.Actors[Client.LocalId].Position;
+            trainingYaw = Client.Sim.Actors[Client.LocalId].Yaw;
+        }
+
+        static readonly string[] TrainingSteps =
+        {
+            "訓練 1/3：移動滑鼠，轉動視角", "訓練 2/3：按 WASD 移動一段距離", "訓練 3/3：射擊前方的訓練機器人", "訓練完成，正在儲存…",
+        };
+
+        AudioSource music;
+
+        void UpdateMusic()
+        {
+            if (music == null)
+            {
+                music = gameObject.AddComponent<AudioSource>();
+                music.clip = Sfx.LobbyMusic();
+                music.loop = true;
+                music.volume = 0;
+                music.Play();
+            }
+            float target = Client.Sim == null ? 0.35f : 0f;
+            music.volume = Mathf.MoveTowards(music.volume, target, Time.deltaTime * (target > 0 ? 0.25f : 0.6f));
+        }
+
+        void Update()
+        {
+            UpdateMusic();
+            Net.Poll();
+            if (!training || Client.Sim == null) return;
+            var me = Client.Sim.Actors[Client.LocalId];
+            me.Hp = me.MaxHp;
+            if (trainingStep == 0 && Mathf.Abs(Mathf.DeltaAngle(me.Yaw * Mathf.Rad2Deg, trainingYaw * Mathf.Rad2Deg)) > 15f) trainingStep = 1;
+            if (trainingStep == 1 && Vector3.Distance(me.Position, trainingOrigin) > 2f) trainingStep = 2;
+            if (trainingStep == 2 && Client.Sim.Kills > 0) { trainingStep = 3; CompleteTraining(); }
+            Client.Objective = TrainingSteps[trainingStep];
+        }
+
+        void CompleteTraining()
+        {
+            Api.Post("/api/tutorial", null, result =>
+            {
+                training = false;
+                Client.Objective = "";
+                Client.LeaveMission();
+                if (result.Bool("ok")) { UpdateProfile(Profile.From(result.Obj("profile"))); ConnectBase(); }
+                else Screens.ShowAccount("教學完成，但保存失敗：" + result.Str("error", "請重試"), true);
+            });
+        }
+
+        // ------------------------------------------------------------ automated screenshots
+
+        IEnumerator Capture(string folder)
+        {
+            Directory.CreateDirectory(folder);
+            Screen.SetResolution(1280, 800, FullScreenMode.Windowed);
+            Screens.ShowAccount();
+            yield return Settle(0.5f);
+            yield return Shot(folder, "unity-account");
+
+            var lo = new Loadout { Owned = new List<string> { "pistol", "rifle", "sniper" }, Equipped = new List<string> { "pistol", "sniper" } };
+            lo.Levels["sniper"] = new Dictionary<string, int> { ["damage"] = 2, ["mag"] = 1 };
+            lo.Levels["pistol"] = new Dictionary<string, int> { ["damage"] = 3 };
+            UpdateProfile(new Profile { Id = 1, Username = "DVRBXTW", Unlocked = 1, Gold = 1240, TutorialComplete = true, Admin = true, Loadout = lo });
+            ShowHome();
+            yield return Settle(0.8f);
+            yield return Shot(folder, "unity-home");
+            Screens.ShowArmory();
+            yield return Settle(0.4f);
+            yield return Shot(folder, "unity-armory");
+            Screens.ShowAdmin();
+            yield return Settle(0.4f);
+            yield return Shot(folder, "unity-admin");
+            Screens.ShowStory(0);
+            yield return Settle(0.3f);
+            yield return Shot(folder, "unity-story");
+            Screens.Clear();
+
+            var kit = new Loadout { Owned = new List<string> { "pistol", "rifle", "sniper" }, Equipped = new List<string> { "rifle", "sniper" } };
+            Client.StartOffline(0, kit, false, null);
+            var sim = Client.Sim;
+            sim.EnemyVariety = true;
+            sim.Wave = 5;
+            sim.SpawnWave();
+            var me = sim.Actors[Client.LocalId];
+            int i = 0;
+            foreach (var e in sim.Enemies.Values)
+            {
+                e.Position = me.Position + new Vector3(-7 + (i++ % 6) * 2.8f, 0, 9 + (i % 3) * 3f);
+                e.MeleeCooldown = 99f; e.ShotCooldown = 99f; e.Speed = 0;
+            }
+            sim.SpawnPickup(me.Position + new Vector3(1.5f, 0, 4), PickupKind.Health);
+            me.Hp = 64;
+            yield return Settle(0.6f);
+            sim.Fire(Client.LocalId, sim.Enemies.Values.First().Position + Vector3.up * Defs.HeadHeight);
+            yield return Settle(0.05f);
+            yield return Shot(folder, "unity-combat");
+            Client.Menus.OpenPause();
+            yield return Settle(0.2f);
+            yield return Shot(folder, "unity-pause");
+            Client.Menus.HideAll();
+            Client.Menus.ShowResult(true, 0, 86, 742, 740, 1980, "A", new[] { 41, 13, 290, 176 });
+            yield return Settle(0.2f);
+            yield return Shot(folder, "unity-result");
+            Application.Quit();
+        }
+
+        IEnumerator Settle(float seconds)
+        {
+            float end = Time.realtimeSinceStartup + seconds;
+            while (Time.realtimeSinceStartup < end) yield return null;
+        }
+
+        IEnumerator Shot(string folder, string name)
+        {
+            yield return new WaitForEndOfFrame();
+            ScreenCapture.CaptureScreenshot(Path.Combine(folder, name + ".png"));
+            yield return null;
+            yield return null;
+            Debug.Log("CAPTURED " + name);
+        }
+    }
+}
