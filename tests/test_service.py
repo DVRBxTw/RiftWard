@@ -71,6 +71,12 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(profile["loadout"]["owned"],["pistol","sniper"])
         self.assertEqual(profile["loadout"]["levels"]["pistol"]["damage"],1)
         self.assertEqual(self.call("/api/shop/upgrade",{"weapon":"rifle","stat":"damage"},auth)[0],400)
+        self.assertEqual(profile["loadout"]["equipped"],["pistol","sniper"])
+        code, equipped = self.call("/api/shop/equip",{"weapons":["sniper"]},auth)
+        self.assertEqual((code,equipped["profile"]["loadout"]["equipped"]),(200,["sniper"]))
+        self.assertEqual(self.call("/api/shop/equip",{"weapons":["sniper","rifle"]},auth)[0],400)
+        self.assertEqual(self.call("/api/shop/equip",{"weapons":["sniper","sniper"]},auth)[0],400)
+        self.assertEqual(self.call("/api/shop/equip",{"weapons":["pistol","sniper","pistol"]},auth)[0],400)
         self.assertEqual(self.call("/api/shop/upgrade",{"weapon":"pistol","stat":"speed"},auth)[0],400)
 
     def test_admin_grant(self):

@@ -19,9 +19,9 @@ func _run():
 	game.inputs[1] = {"slot":3,"yaw":0.0}
 	game._simulate_players(0.01)
 	assert(a.slot == 0)
-	game.inputs[1] = {"slot":2,"yaw":0.0}
+	game.inputs[1] = {"slot":1,"yaw":0.0}
 	game._simulate_players(0.01)
-	assert(a.slot == 2 and a.pellets == 7 and a.mag == 6)
+	assert(a.slot == 1 and a.pellets == 7 and a.mag == 6)
 	# Shotgun pellets each register hits.
 	game.enemies.clear()
 	var eye = a.p+Vector3.UP*game.EYE_HEIGHT
@@ -105,6 +105,21 @@ func _run():
 	assert(a.hp == a.max_hp and a.ammo == a.mag)
 	game._set_actor_stats(1)
 	assert(game.actors[1].god and is_equal_approx(game.actors[1].speed,6.5*2.0))
+	# Admin flight: no gravity, Space climbs, Ctrl descends.
+	game.admin_settings["fly"] = true
+	game._admin_apply(game.admin_settings)
+	var flyer = game.actors[1]
+	flyer.p.y = 0.0
+	for i in range(30): game._move_actor(flyer,{"jump":true,"yaw":0.0},0.05)
+	var high = flyer.p.y
+	assert(high > 5.0)
+	for i in range(10): game._move_actor(flyer,{"yaw":0.0},0.05)
+	assert(is_equal_approx(flyer.p.y,high))
+	for i in range(10): game._move_actor(flyer,{"descend":true,"yaw":0.0},0.05)
+	assert(flyer.p.y < high)
+	game.admin_settings["fly"] = false
+	game._admin_apply(game.admin_settings)
+	flyer.p.y = 0.0
 	# Recoil kicks the view up and then recovers part of it.
 	game.mode = "playing"
 	game.pitch = 0.0

@@ -20,7 +20,7 @@ HOST = "192.168.213.100"
 PORT = 24771
 ITERATIONS = 310_000
 USERNAME = re.compile(r"[A-Za-z0-9_]{3,24}\Z")
-VERSION = "0.4.1-beta.1"
+VERSION = "0.4.2-beta.1"
 
 # Armory catalog. The game client mirrors these numbers for display only;
 # every purchase is priced and validated here.
@@ -36,7 +36,7 @@ def upgrade_cost(weapon: str, level: int) -> int:
 
 
 def default_loadout():
-    return {"owned": ["pistol"], "levels": {}}
+    return {"owned": ["pistol"], "levels": {}, "equipped": ["pistol"]}
 
 
 class Store:
@@ -144,6 +144,8 @@ class Store:
                 loadout = profile["loadout"]
                 if weapon not in loadout["owned"]:
                     loadout["owned"].append(weapon)
+                    if len(loadout["equipped"]) < 2:
+                        loadout["equipped"].append(weapon)
                     with self.connect() as db:
                         db.execute("UPDATE progress SET loadout=? WHERE account_id=?", (json.dumps(loadout), account_id))
         return len(ids)
@@ -164,7 +166,25 @@ class Store:
                     if weapon in loadout["owned"] and isinstance(stats, dict):
                         loadout["levels"][weapon] = {k: max(0, min(MAX_UPGRADE, int(v))) for k, v in stats.items()
                                                      if k in UPGRADE_STATS and isinstance(v, int)}
+            equipped = data.get("equipped")
+            if isinstance(equipped, list):
+                loadout["equipped"] = [w for w in dict.fromkeys(equipped) if w in loadout["owned"]][:2]
+        if not loadout["equipped"]:
+            # Default kit: pistol plus the first other weapon owned.
+            loadout["equipped"] = loadout["owned"][:2]
         return loadout
+
+    def equip(self, account_id: int, weapons):
+        profile = self.profile(account_id)
+        if profile is None or not isinstance(weapons, list) or not 1 <= len(weapons) <= 2:
+            raise ValueError("請選擇一到兩把武器")
+        if len(set(weapons)) != len(weapons) or any(w not in profile["loadout"]["owned"] for w in weapons):
+            raise ValueError("只能裝備已擁有的武器")
+        loadout = profile["loadout"]
+        loadout["equipped"] = list(weapons)
+        with self.connect() as db:
+            db.execute("UPDATE progress SET loadout=? WHERE account_id=?", (json.dumps(loadout), account_id))
+        return self.profile(account_id)
 
     def _spend(self, account_id: int, cost: int, loadout: dict):
         with self.connect() as db:
@@ -182,6 +202,8 @@ class Store:
         if weapon in loadout["owned"]:
             raise ValueError("已擁有此武器")
         loadout["owned"].append(weapon)
+        if len(loadout["equipped"]) < 2:
+            loadout["equipped"].append(weapon)
         return self._spend(account_id, WEAPON_PRICES[weapon], loadout)
 
     def upgrade_weapon(self, account_id: int, weapon, stat):
@@ -406,7 +428,10 @@ class Handler(BaseHTTPRequestHandler):
                     if self.path.endswith("reward"):
                         profile = store.reward(data.get("account_id"), data.get("gold"))
                     else:
-                        profile = store.profile(data.get("account_id")) if isinstance(data.get("account_id"), int) else None
+                        account_id = data.get("account_id")
+                        if isinstance(account_id, float) and account_id.is_integer():
+                            account_id = int(account_id)
+                        profile = store.profile(account_id) if isinstance(account_id, int) else None
                         if profile is None:
                             raise ValueError("找不到帳號")
                 except ValueError as exc:
@@ -438,6 +463,13 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(200, {"ok": True, "count": count, "profile": store.profile(profile["id"])})
             else:
                 self._json(404, {"ok": False, "error": "找不到此服務"})
+        elif self.path == "/api/shop/equip":
+            try:
+                result = store.equip(profile["id"], data.get("weapons"))
+            except ValueError as exc:
+                self._json(400, {"ok": False, "error": str(exc)})
+                return
+            self._json(200, {"ok": True, "profile": result})
         elif self.path in ("/api/shop/buy", "/api/shop/upgrade"):
             try:
                 if self.path.endswith("buy"):

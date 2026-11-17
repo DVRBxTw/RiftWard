@@ -1,6 +1,6 @@
 extends "res://main.gd"
 
-const VERSION = "0.4.1-beta.1"
+const VERSION = "0.4.2-beta.1"
 const SESSION_PATH = "user://login-session.cfg"
 const BASE_WEAPON_DAMAGE = 28.0
 const BUFFS = [
@@ -33,9 +33,9 @@ var next_bullet = 0
 var bullet_visuals: Dictionary = {}
 var left_mission = false
 const REGIONS = [
-	["灰燼前哨", "帝國先遣隊已占領邊境。\n清掃前哨，找出通往城內的路。", Color("263a50"), Color("66f5d0")],
-	["熔核工廠", "反應爐正在替入侵艦隊供能。\n穿過熔核工廠，切斷帝國的能源。", Color("493429"), Color("ffad66")],
-	["帝國裂隙", "傳送門後是帝國的重型守衛。\n消滅守衛，封鎖通往地球的裂隙。", Color("352c4c"), Color("b492ff")]
+	["翠風草原", "你的運輸艦墜落在這顆陌生星球的草原上。\n帝國追擊部隊已經降落，先守住墜落點。", Color("467530"), Color("9bd36a")],
+	["熔核工廠", "帝國在星球地底建造了熔核工廠，\n摧毀它，切斷入侵艦隊的能源。", Color("493429"), Color("ffad66")],
+	["帝國裂隙", "裂隙的另一端就是帝國母星。\n擊敗守衛，穿越裂隙發動反擊。", Color("352c4c"), Color("b492ff")]
 ]
 var test_mode = false
 var auth_token = ""
@@ -217,9 +217,9 @@ func _show_story():
 	_clear_ui()
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 	var stories = [
-		["2189 / 最後的槍手", "你是未來地球的裂隙守衛。\n三天前，來自宇宙深處的赫利奧帝國撕開了天空。\n帝國軍團與異化怪物湧進城市，最後的防線已經崩潰。"],
-		["從前哨到裂隙", "抵抗軍只剩下一條路：\n奪回灰燼前哨 → 切斷熔核工廠 → 關閉帝國裂隙。\n每個區域都有更危險的敵人；每一波結束，都能取得新的戰術加成。"],
-		["先學會活下來", "滑鼠自由轉身與瞄準，WASD 移動，左鍵射擊。\nShift 衝刺能拉開距離，Space 可以跳躍。\n接下來進入安全訓練場，完成瞄準、移動和擊破目標。"]
+		["2189 / 墜落", "你是地球遠征軍的一名士兵。\n運輸艦在穿越星域時遭到赫利奧帝國伏擊，\n你在爆炸中彈射脫困，墜落在一顆陌生的翠綠星球上。"],
+		["守護這個世界", "這顆星球的居民救了你，但帝國軍也盯上了這裡。\n守住翠風草原 → 摧毀熔核工廠 → 打開通往帝國母星的裂隙。\n保護這個世界，然後把戰火帶回帝國的家門口。"],
+		["先學會活下來", "滑鼠瞄準，WASD 移動，左鍵射擊，右鍵瞄準。\nShift 衝刺、Space 跳躍、R 換彈、Q 手榴彈。\n接下來進入安全訓練場，完成瞄準、移動和擊破目標。"]
 	]
 	_dim(screen)
 	var v = _box(screen,Vector2(240,176),800)
@@ -388,8 +388,8 @@ func _home():
 	# Top bar: title on the left, pilot card on the right.
 	var title = _box(screen,Vector2(48,28),520)
 	title.add_theme_constant_override("separation",0)
-	title.add_child(_label("RIFTWARD  ·  " + VERSION,14,CYAN))
-	title.add_child(_label("裂隙守衛  抵抗軍基地",36))
+	title.add_child(_label("RIFTWARD    " + VERSION,13,CYAN))
+	title.add_child(_label("裂隙守衛",44))
 	var pilot = _panel(screen,region_color)
 	pilot.anchor_left = 1.0
 	pilot.anchor_right = 1.0
@@ -405,7 +405,7 @@ func _home():
 	var fill = Control.new()
 	fill.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	name_row.add_child(fill)
-	name_row.add_child(_label("◆ %d G" % int(profile.get("gold",0)),20,GOLD))
+	name_row.add_child(_label("%d G" % int(profile.get("gold",0)),20,GOLD))
 	status_label = _label(str(profile.get("save_error",_connection_text())),14,CYAN)
 	status_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	pv.add_child(status_label)
@@ -417,18 +417,19 @@ func _home():
 		var region = REGIONS[i]
 		var locked = i > int(profile.get("unlocked",0))
 		var button = _button("%02d   %s%s
-%s" % [i+1,region[0],"   🔒 尚未解鎖" if locked else "",MISSIONS[i][3]],func(): _choose_mission(i),left,84)
+%s" % [i+1,region[0],"      未解鎖" if locked else "",MISSIONS[i][3]],func(): _choose_mission(i),left,84)
 		button.alignment = HORIZONTAL_ALIGNMENT_LEFT
 		button.disabled = locked
 		mission_buttons.append(button)
 	var gap = Control.new()
 	gap.custom_minimum_size.y = 6
 	left.add_child(gap)
-	var launch = _button("▶   部署到 " + REGIONS[selected][0],_request_start,left,64)
+	var launch = _button("部署至  " + REGIONS[selected][0],_request_start,left,64)
 	launch.add_theme_font_size_override("font_size",22)
-	launch.add_theme_stylebox_override("normal",_button_style(Color(0.35,0.16,0.08,0.95),ORANGE,true))
-	launch.add_theme_stylebox_override("hover",_button_style(Color(0.5,0.22,0.1,0.98),ORANGE,true))
-	launch.add_theme_stylebox_override("pressed",_button_style(ORANGE,ORANGE,true))
+	launch.add_theme_stylebox_override("normal",_button_style(Color(CYAN,0.16),CYAN,true))
+	launch.add_theme_stylebox_override("hover",_button_style(Color(CYAN,0.28),CYAN,true))
+	launch.add_theme_color_override("font_color",CYAN)
+	launch.add_theme_stylebox_override("pressed",_button_style(CYAN,CYAN,true))
 	launch.disabled = network != "client" or local_id != leader_id
 	if launch.disabled and network == "client": launch.text = "等待隊長部署"
 	var actions = HBoxContainer.new()
@@ -448,7 +449,7 @@ func _home():
 		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		b.add_theme_font_size_override("font_size",16)
 	# Right: mission briefing card.
-	var brief = _panel(screen,region_color,Color(0.035,0.07,0.115,0.88))
+	var brief = _panel(screen,region_color,Color(0.07,0.072,0.078,0.9))
 	brief.anchor_left = 1.0
 	brief.anchor_right = 1.0
 	brief.anchor_top = 1.0
@@ -460,7 +461,7 @@ func _home():
 	var bv = VBoxContainer.new()
 	bv.add_theme_constant_override("separation",10)
 	brief.add_child(bv)
-	bv.add_child(_label("任務簡報  ·  宇宙帝國入侵 第一章",14,MUTED))
+	bv.add_child(_label("任務簡報  ·  墜落星球 第一章",14,MUTED))
 	bv.add_child(_label("%02d  %s" % [selected+1,REGIONS[selected][0]],30,region_color))
 	var description = _label(REGIONS[selected][1],19)
 	description.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -474,7 +475,7 @@ func _home():
 	grid.add_theme_constant_override("h_separation",24)
 	grid.add_theme_constant_override("v_separation",6)
 	bv.add_child(grid)
-	for pair in [["WASD","移動"],["左鍵","射擊（爆頭 ×2）"],["右鍵","瞄準 / 開鏡"],["R","換彈"],["1–4","切換武器"],["Q","手榴彈"],["Shift","衝刺"],["E","救援倒地隊友"],["Space","跳躍"],["V","切換視角"]]:
+	for pair in [["WASD","移動"],["左鍵","射擊（爆頭 ×2）"],["右鍵","瞄準 / 開鏡"],["R","換彈"],["1 / 2","切換武器"],["Q","手榴彈"],["Shift","衝刺"],["E","救援倒地隊友"],["Space","跳躍"],["V","切換視角"]]:
 		var row = HBoxContainer.new()
 		row.add_theme_constant_override("separation",8)
 		var key = _label(pair[0],14,CYAN)
@@ -619,7 +620,7 @@ func _request_leave():
 		if buff_pending and buff_choices.is_empty(): _resolve_buffs()
 
 func _build_xp_hud():
-	var panel = _panel(hud,GOLD)
+	var panel = _hud_block(hud)
 	panel.anchor_left = 0.5
 	panel.anchor_right = 0.5
 	panel.offset_left = -230
@@ -630,7 +631,7 @@ func _build_xp_hud():
 	panel.add_child(v)
 	var row = HBoxContainer.new()
 	v.add_child(row)
-	level_label = _label("Lv. 1",20,GOLD)
+	level_label = _label("LV 1",16,CYAN)
 	row.add_child(level_label)
 	var spacer = Control.new()
 	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -638,13 +639,13 @@ func _build_xp_hud():
 	xp_label = _label("0 / 100 XP",14,MUTED)
 	xp_label.size_flags_vertical = Control.SIZE_SHRINK_END
 	row.add_child(xp_label)
-	xp_bar = _bar(GOLD,8)
+	xp_bar = _bar(CYAN,3)
 	v.add_child(xp_bar)
 
 func _build_boss_hud():
 	boss_panel = PanelContainer.new()
 	boss_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	boss_panel.add_theme_stylebox_override("panel",_style(INK,ORANGE))
+	boss_panel.add_theme_stylebox_override("panel",_panel_style(Color(0.05,0.05,0.055,0.75),ORANGE))
 	hud.add_child(boss_panel)
 	boss_panel.anchor_left = 0.5
 	boss_panel.anchor_right = 0.5
@@ -660,10 +661,10 @@ func _build_boss_hud():
 	boss_name_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	content.add_child(boss_name_label)
 	boss_health_bar = ProgressBar.new()
-	boss_health_bar.custom_minimum_size.y = BOSS_BAR_HEIGHT
+	boss_health_bar.custom_minimum_size.y = 6
 	boss_health_bar.show_percentage = false
 	boss_health_bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	var background = _style(INK,CYAN)
+	var background = _style(Color(1,1,1,0.1))
 	var fill = _style(ORANGE)
 	# Bars have their own compact height; the shared panel's text padding is omitted.
 	for style in [background,fill]:
@@ -880,7 +881,7 @@ func _buff_offer(offer: Array, new_level: int):
 	buff_overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	screen.add_child(buff_overlay)
 	var shade = ColorRect.new()
-	shade.color = Color(0.015,0.03,0.06,0.82)
+	shade.color = Color(0.03,0.031,0.034,0.86)
 	shade.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	buff_overlay.add_child(shade)
 	var center = CenterContainer.new()
@@ -993,7 +994,7 @@ func _update_hud():
 	if is_instance_valid(xp_bar):
 		xp_bar.max_value = maxi(1,xp_need)
 		xp_bar.value = xp
-		level_label.text = "Lv. %d" % level
+		level_label.text = "LV %d" % level
 		xp_label.text = "%d / %d XP   ·   敵人強度 ×%.2f" % [xp,xp_need,_level_scale()]
 
 func _update_boss_hud():
@@ -1018,7 +1019,7 @@ func _finish(success: bool):
 	var gold = _mission_gold(success)
 	for id in verified.keys():
 		if not verified.has(id): continue
-		var reward = await _api("/api/server/reward",{"account_id":verified[id].id,"gold":gold},true)
+		var reward = await _api("/api/server/reward",{"account_id":int(verified[id].id),"gold":gold},true)
 		if not id in multiplayer.get_peers(): continue
 		if reward.get("ok",false):
 			verified[id] = reward.profile
@@ -1027,7 +1028,7 @@ func _finish(success: bool):
 	if success:
 		for id in verified.keys():
 			if not verified.has(id): continue
-			var result = await _api("/api/server/progress",{"account_id":verified[id].id,"mission":selected},true)
+			var result = await _api("/api/server/progress",{"account_id":int(verified[id].id),"mission":selected},true)
 			if not id in multiplayer.get_peers(): continue
 			if result.get("ok",false):
 				verified[id] = result.profile

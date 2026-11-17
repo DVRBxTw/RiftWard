@@ -1,9 +1,9 @@
 extends Node3D
 
-const CYAN = Color("66f5d0")
-const ORANGE = Color("ff8855")
-const INK = Color("101c2b")
-const WHITE = Color("e8f3ff")
+const CYAN = Color("f0b24a")
+const ORANGE = Color("e5534b")
+const INK = Color("101113")
+const WHITE = Color("ebe6db")
 const PORT = 24770
 const DEFAULT_SERVER_IP = "123.241.56.94"
 const EYE_HEIGHT = 1.65
@@ -19,16 +19,18 @@ const DASH_FOV_BOOST = 7.0
 const WEAPON_REST_POSITION = Vector3(0.27,-0.23,-0.48)
 # Cover walls: [center_x, center_z, half_x, half_z, height]. Block movement and enemy bullets.
 const COVERS = [[-6.0,-4.0,2.0,0.35,1.8],[6.0,-4.0,2.0,0.35,1.8],[-6.0,6.0,0.35,2.0,1.8],[6.0,6.0,0.35,2.0,1.8],[0.0,-10.0,2.5,0.35,1.8],[-13.0,1.0,0.35,2.5,1.8],[13.0,1.0,0.35,2.5,1.8]]
+const FLY_SPEED = 7.0
+const FLY_CEILING = 28.0
 const HEAD_HEIGHT = 1.65
 const HEAD_RADIUS = 0.3
 const HEADSHOT_MULTIPLIER = 2.0
 const MAG_SIZE = 30
 const RELOAD_TIME = 1.6
 const THIRD_PERSON_OFFSET = Vector3(0.75,0.35,3.2)
-const PANEL_BG = Color(0.035,0.07,0.115,0.82)
-const PANEL_EDGE = Color("2b4a63")
-const MUTED = Color("8fa6bb")
-const GOLD = Color("ffd166")
+const PANEL_BG = Color(0.06,0.062,0.068,0.9)
+const PANEL_EDGE = Color("2e3136")
+const MUTED = Color("8c8f93")
+const GOLD = Color("d9cfb4")
 const MISSIONS = [
 	["01", "邊境訊號", "清除廢墟中的巡邏機群", "20 波 · 第 10、20 波 Boss", 20, 4],
 	["02", "失落反應爐", "深入遺跡，摧毀增援部隊", "20 波 · 第 10、20 波 Boss", 20, 5],
@@ -60,6 +62,13 @@ var health_bar: ProgressBar
 var dash_bar: ProgressBar
 var view_label: Label
 var third_person = false
+var heading_font: FontVariation
+var caps_font: FontVariation
+var world_environment: Environment
+var sun_light: DirectionalLight3D
+var scifi_set: Node3D
+var cover_meshes: Array = []
+var perimeter_meshes: Array = []
 var desired_slot = 0
 var zoom_fov = 0.0
 var hit_flash = 0.0
@@ -128,7 +137,7 @@ func _ready():
 		_start_mission(0)
 
 func _setup_input():
-	for pair in [["forward", KEY_W], ["back", KEY_S], ["left", KEY_A], ["right", KEY_D], ["dash", KEY_SHIFT], ["jump", KEY_SPACE], ["reload", KEY_R], ["toggle_view", KEY_V], ["skill", KEY_Q], ["interact", KEY_E]]:
+	for pair in [["forward", KEY_W], ["back", KEY_S], ["left", KEY_A], ["right", KEY_D], ["dash", KEY_SHIFT], ["jump", KEY_SPACE], ["reload", KEY_R], ["toggle_view", KEY_V], ["skill", KEY_Q], ["interact", KEY_E], ["descend", KEY_CTRL]]:
 		if InputMap.has_action(pair[0]): continue
 		InputMap.add_action(pair[0])
 		var ev = InputEventKey.new()
@@ -140,28 +149,45 @@ func _style(color: Color, edge: Color = Color.TRANSPARENT) -> StyleBoxFlat:
 	s.bg_color = color
 	s.border_color = edge
 	s.set_border_width_all(1)
-	s.set_corner_radius_all(6)
+	s.set_corner_radius_all(2)
 	s.content_margin_left = 24
 	s.content_margin_right = 24
 	s.content_margin_top = 16
 	s.content_margin_bottom = 16
 	return s
 
-func _panel_style(bg: Color = PANEL_BG, accent: Color = CYAN, radius: int = 10) -> StyleBoxFlat:
+func _panel_style(bg: Color = PANEL_BG, accent: Color = CYAN, _radius: int = 0) -> StyleBoxFlat:
+	# Flat sheet with a single accent rule along the top edge.
 	var s = StyleBoxFlat.new()
 	s.bg_color = bg
-	s.border_color = PANEL_EDGE
-	s.set_border_width_all(1)
-	s.border_width_left = 3
-	s.border_color = accent.darkened(0.15)
-	s.set_corner_radius_all(radius)
-	s.shadow_color = Color(0,0,0,0.35)
-	s.shadow_size = 10
-	s.content_margin_left = 20
-	s.content_margin_right = 20
-	s.content_margin_top = 14
-	s.content_margin_bottom = 14
+	s.border_color = accent
+	s.set_border_width_all(0)
+	s.border_width_top = 2
+	s.set_corner_radius_all(0)
+	s.content_margin_left = 22
+	s.content_margin_right = 22
+	s.content_margin_top = 16
+	s.content_margin_bottom = 16
 	return s
+
+func _hud_block(parent: Node) -> PanelContainer:
+	# Frameless container for in-combat readouts.
+	var p = PanelContainer.new()
+	p.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var s = StyleBoxEmpty.new()
+	s.content_margin_left = 4
+	s.content_margin_right = 4
+	p.add_theme_stylebox_override("panel",s)
+	parent.add_child(p)
+	return p
+
+func _rule(parent: Node, color: Color = PANEL_EDGE, height: float = 1.0) -> ColorRect:
+	var r = ColorRect.new()
+	r.color = color
+	r.custom_minimum_size.y = height
+	r.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	parent.add_child(r)
+	return r
 
 func _panel(parent: Node, accent: Color = CYAN, bg: Color = PANEL_BG) -> PanelContainer:
 	var p = PanelContainer.new()
@@ -170,7 +196,7 @@ func _panel(parent: Node, accent: Color = CYAN, bg: Color = PANEL_BG) -> PanelCo
 	parent.add_child(p)
 	return p
 
-func _bar(color: Color, height: float = 10.0, back: Color = Color(1,1,1,0.08)) -> ProgressBar:
+func _bar(color: Color, height: float = 10.0, back: Color = Color(1,1,1,0.1)) -> ProgressBar:
 	var b = ProgressBar.new()
 	b.show_percentage = false
 	b.custom_minimum_size.y = height
@@ -178,14 +204,14 @@ func _bar(color: Color, height: float = 10.0, back: Color = Color(1,1,1,0.08)) -
 	for pair in [["background",back],["fill",color]]:
 		var s = StyleBoxFlat.new()
 		s.bg_color = pair[1]
-		s.set_corner_radius_all(int(height/2))
+		s.set_corner_radius_all(0)
 		b.add_theme_stylebox_override(pair[0],s)
 	return b
 
 func _backdrop(parent: Node, left_alpha: float = 0.96, right_alpha: float = 0.25):
 	var g = Gradient.new()
-	g.set_color(0,Color(0.02,0.04,0.075,left_alpha))
-	g.set_color(1,Color(0.02,0.04,0.075,right_alpha))
+	g.set_color(0,Color(0.045,0.046,0.05,left_alpha))
+	g.set_color(1,Color(0.045,0.046,0.05,right_alpha))
 	var tex = GradientTexture2D.new()
 	tex.gradient = g
 	tex.fill_from = Vector2(0.3,0)
@@ -204,28 +230,64 @@ func _setup_theme():
 	var theme = Theme.new()
 	var font = FontVariation.new()
 	font.base_font = load("res://ui-font.ttf")
-	font.variation_opentype = {"wght":500}
-	font.variation_embolden = 0.5
+	font.variation_opentype = {"wght":430}
 	theme.default_font = font
+	heading_font = FontVariation.new()
+	heading_font.base_font = font.base_font
+	heading_font.variation_opentype = {"wght":720}
+	caps_font = FontVariation.new()
+	caps_font.base_font = font.base_font
+	caps_font.variation_opentype = {"wght":560}
+	caps_font.spacing_glyph = 2
 	theme.default_font_size = 18
 	theme.set_color("font_color", "Label", WHITE)
 	theme.set_color("font_color", "Button", WHITE)
-	theme.set_color("font_hover_color", "Button", CYAN)
-	theme.set_color("font_disabled_color", "Button", Color("73849a"))
-	theme.set_color("font_pressed_color", "Button", Color("0b1622"))
-	theme.set_color("font_hover_pressed_color", "Button", Color("0b1622"))
-	theme.set_stylebox("normal", "Button", _button_style(Color(0.09,0.16,0.23,0.92), Color("2f4b63")))
-	theme.set_stylebox("hover", "Button", _button_style(Color(0.12,0.27,0.33,0.95), CYAN, true))
+	theme.set_color("font_hover_color", "Button", WHITE)
+	theme.set_color("font_disabled_color", "Button", Color("5a5d61"))
+	theme.set_color("font_pressed_color", "Button", INK)
+	theme.set_color("font_hover_pressed_color", "Button", INK)
+	theme.set_color("font_focus_color", "Button", WHITE)
+	theme.set_stylebox("normal", "Button", _button_style(Color(1,1,1,0.035), PANEL_EDGE))
+	theme.set_stylebox("hover", "Button", _button_style(Color(CYAN,0.12), CYAN, true))
 	theme.set_stylebox("pressed", "Button", _button_style(CYAN, CYAN, true))
-	theme.set_stylebox("focus", "Button", _button_style(Color(0,0,0,0), Color(CYAN,0.6)))
-	theme.set_stylebox("disabled", "Button", _button_style(Color(0.06,0.09,0.13,0.85), Color("1d2b3a")))
-	theme.set_stylebox("normal", "LineEdit", _button_style(Color(0.03,0.06,0.1,0.95), Color("2f4b63")))
-	theme.set_stylebox("focus", "LineEdit", _button_style(Color(0.03,0.06,0.1,0.95), CYAN, true))
+	theme.set_stylebox("focus", "Button", _button_style(Color(0,0,0,0), Color(CYAN,0.5)))
+	theme.set_stylebox("disabled", "Button", _button_style(Color(0,0,0,0.15), Color("222428")))
+	for kind in ["LineEdit","SpinBox"]:
+		theme.set_stylebox("normal", kind, _button_style(Color(0,0,0,0.35), PANEL_EDGE))
+		theme.set_stylebox("focus", kind, _button_style(Color(0,0,0,0.35), CYAN, true))
 	theme.set_color("font_color", "LineEdit", WHITE)
-	theme.set_color("font_placeholder_color", "LineEdit", Color("5f7489"))
+	theme.set_color("font_placeholder_color", "LineEdit", Color("5d6064"))
 	theme.set_color("caret_color", "LineEdit", CYAN)
-	theme.set_stylebox("panel", "PopupPanel", _panel_style(Color(0.04,0.08,0.13,0.98)))
-	theme.set_stylebox("panel", "AcceptDialog", _panel_style(Color(0.04,0.08,0.13,0.98)))
+	theme.set_stylebox("normal", "OptionButton", _button_style(Color(1,1,1,0.035), PANEL_EDGE))
+	theme.set_stylebox("hover", "OptionButton", _button_style(Color(CYAN,0.12), CYAN, true))
+	theme.set_stylebox("panel", "PopupMenu", _panel_style(Color(0.07,0.072,0.078,0.99)))
+	theme.set_color("font_color", "PopupMenu", WHITE)
+	theme.set_color("font_hover_color", "PopupMenu", CYAN)
+	theme.set_stylebox("hover", "PopupMenu", _button_style(Color(CYAN,0.12), Color(0,0,0,0)))
+	var slider_line = StyleBoxFlat.new()
+	slider_line.bg_color = Color(1,1,1,0.14)
+	slider_line.content_margin_top = 2
+	slider_line.content_margin_bottom = 2
+	var slider_fill = slider_line.duplicate()
+	slider_fill.bg_color = CYAN
+	theme.set_stylebox("slider", "HSlider", slider_line)
+	theme.set_stylebox("grabber_area", "HSlider", slider_fill)
+	theme.set_stylebox("grabber_area_highlight", "HSlider", slider_fill)
+	theme.set_color("font_color", "CheckButton", WHITE)
+	theme.set_color("font_hover_color", "CheckButton", WHITE)
+	theme.set_color("font_pressed_color", "CheckButton", CYAN)
+	theme.set_color("font_hover_pressed_color", "CheckButton", CYAN)
+	for state in ["normal","hover","pressed","hover_pressed","focus"]:
+		theme.set_stylebox(state, "CheckButton", _button_style(Color(1,1,1,0.03) if state != "focus" else Color(0,0,0,0), PANEL_EDGE if state in ["normal","focus"] else CYAN))
+	theme.set_stylebox("panel", "PopupPanel", _panel_style(Color(0.07,0.072,0.078,0.99)))
+	theme.set_stylebox("panel", "AcceptDialog", _panel_style(Color(0.07,0.072,0.078,0.99)))
+	var scroll = StyleBoxFlat.new()
+	scroll.bg_color = Color(1,1,1,0.25)
+	scroll.content_margin_left = 3
+	scroll.content_margin_right = 3
+	theme.set_stylebox("grabber", "VScrollBar", scroll)
+	theme.set_stylebox("grabber_highlight", "VScrollBar", scroll)
+	theme.set_stylebox("scroll", "VScrollBar", StyleBoxEmpty.new())
 	screen = Control.new()
 	screen.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	screen.theme = theme
@@ -233,15 +295,13 @@ func _setup_theme():
 
 func _button_style(color: Color, edge: Color, accent: bool = false) -> StyleBoxFlat:
 	var s = _style(color, edge)
-	s.set_corner_radius_all(8)
-	s.border_width_left = 4 if accent else 2
-	s.content_margin_left = 22
-	s.content_margin_right = 22
-	s.content_margin_top = 12
-	s.content_margin_bottom = 12
-	if accent:
-		s.shadow_color = Color(edge,0.25)
-		s.shadow_size = 8
+	s.set_corner_radius_all(2)
+	s.set_border_width_all(1)
+	if accent: s.border_width_left = 3
+	s.content_margin_left = 20
+	s.content_margin_right = 20
+	s.content_margin_top = 11
+	s.content_margin_bottom = 11
 	return s
 
 func _label(text: String, size: int = 18, color: Color = WHITE) -> Label:
@@ -249,6 +309,9 @@ func _label(text: String, size: int = 18, color: Color = WHITE) -> Label:
 	l.text = text
 	l.add_theme_font_size_override("font_size", size)
 	l.add_theme_color_override("font_color", color)
+	# Type scale: heavy display headings, tracked small labels, regular body.
+	if heading_font and size >= 26: l.add_theme_font_override("font", heading_font)
+	elif caps_font and size <= 14: l.add_theme_font_override("font", caps_font)
 	return l
 
 func _button(text: String, action: Callable, parent: Node, height: int = 48) -> Button:
@@ -323,7 +386,7 @@ func _select(i: int):
 	for j in range(mission_buttons.size()):
 		var b: Button = mission_buttons[j]
 		if j == i:
-			b.add_theme_stylebox_override("normal",_button_style(Color(0.08,0.24,0.28,0.95),CYAN,true))
+			b.add_theme_stylebox_override("normal",_button_style(Color(CYAN,0.1),CYAN,true))
 			b.add_theme_color_override("font_color",CYAN)
 		else:
 			b.remove_theme_stylebox_override("normal")
@@ -385,21 +448,26 @@ func _build_world():
 	e.tonemap_mode = Environment.TONE_MAPPER_FILMIC
 	env.environment = e
 	add_child(env)
+	world_environment = e
 	var sun = DirectionalLight3D.new()
 	sun.rotation_degrees = Vector3(-48, -32, 0)
 	sun.light_color = Color("c9e9ff")
 	sun.light_energy = 0.95
 	sun.shadow_enabled = true
 	add_child(sun)
+	sun_light = sun
 	_cube(arena, Vector3(0,-0.3,0), Vector3(46,0.6,46), Color("203547"))
+	# Sci-fi dressing lives in its own node so regions can swap it out.
+	scifi_set = Node3D.new()
+	arena.add_child(scifi_set)
 	for n in range(-11,12):
-		_cube(arena, Vector3(n*2,0.012,0), Vector3(0.025,0.015,46), Color("345568"))
-		_cube(arena, Vector3(0,0.012,n*2), Vector3(46,0.015,0.025), Color("345568"))
+		_cube(scifi_set, Vector3(n*2,0.012,0), Vector3(0.025,0.015,46), Color("345568"))
+		_cube(scifi_set, Vector3(0,0.012,n*2), Vector3(46,0.015,0.025), Color("345568"))
 	for side in [-1, 1]:
-		_cube(arena, Vector3(side*23,0.5,0), Vector3(0.4,1,46), Color("34485a"))
-		_cube(arena, Vector3(0,0.5,side*23), Vector3(46,1,0.4), Color("34485a"))
-		_cube(arena, Vector3(side*22.7,1.05,0), Vector3(0.12,0.08,46), CYAN, 2)
-		_cube(arena, Vector3(0,1.05,side*22.7), Vector3(46,0.08,0.12), CYAN, 2)
+		perimeter_meshes.append(_cube(arena, Vector3(side*23,0.5,0), Vector3(0.4,1,46), Color("34485a")))
+		perimeter_meshes.append(_cube(arena, Vector3(0,0.5,side*23), Vector3(46,1,0.4), Color("34485a")))
+		_cube(scifi_set, Vector3(side*22.7,1.05,0), Vector3(0.12,0.08,46), CYAN, 2)
+		_cube(scifi_set, Vector3(0,1.05,side*22.7), Vector3(46,0.08,0.12), CYAN, 2)
 	var rng = RandomNumberGenerator.new()
 	rng.seed = 107
 	for i in range(42):
@@ -407,28 +475,28 @@ func _build_world():
 		var radius = rng.randf_range(30,65)
 		var h = rng.randf_range(4,22)
 		var p = Vector3(sin(angle)*radius, h/2-2, cos(angle)*radius)
-		var tower = _cube(arena,p,Vector3(rng.randf_range(2,6),h,rng.randf_range(2,6)),Color("162b3d"))
+		var tower = _cube(scifi_set,p,Vector3(rng.randf_range(2,6),h,rng.randf_range(2,6)),Color("162b3d"))
 		tower.rotation.y = rng.randf_range(-0.2,0.2)
-		_cube(arena,p+Vector3(0,h/2,0),Vector3(0.12,0.4,2),CYAN,1.5)
+		_cube(scifi_set,p+Vector3(0,h/2,0),Vector3(0.12,0.4,2),CYAN,1.5)
 	for x in [-17,17]:
 		for z in [-17,0,17]:
-			_cube(arena,Vector3(x,2.2,z),Vector3(1.3,4.4,1.3),Color("34485a"))
-			_cube(arena,Vector3(x,4.5,z),Vector3(1.6,0.15,1.6),CYAN,2)
+			_cube(scifi_set,Vector3(x,2.2,z),Vector3(1.3,4.4,1.3),Color("34485a"))
+			_cube(scifi_set,Vector3(x,4.5,z),Vector3(1.6,0.15,1.6),CYAN,2)
 	for z in [-13,13]:
 		for x in [-8,8]:
-			_cube(arena,Vector3(x,0.5,z),Vector3(2,1,2),Color("3a4e5c"))
+			_cube(scifi_set,Vector3(x,0.5,z),Vector3(2,1,2),Color("3a4e5c"))
 	for c in COVERS:
-		_cube(arena,Vector3(c[0],c[4]/2.0,c[1]),Vector3(c[2]*2,c[4],c[3]*2),Color("3d5568"))
-		_cube(arena,Vector3(c[0],c[4]+0.03,c[1]),Vector3(c[2]*2+0.06,0.06,c[3]*2+0.06),CYAN,1.5)
+		cover_meshes.append(_cube(arena,Vector3(c[0],c[4]/2.0,c[1]),Vector3(c[2]*2,c[4],c[3]*2),Color("3d5568")))
+		_cube(scifi_set,Vector3(c[0],c[4]+0.03,c[1]),Vector3(c[2]*2+0.06,0.06,c[3]*2+0.06),CYAN,1.5)
 	# Central floating reactor, decorative.
 	var ring = TorusMesh.new()
 	ring.inner_radius = 2.6
 	ring.outer_radius = 2.8
-	var portal = _mesh(arena,ring,Vector3(0,5,-19),_mat(CYAN,3))
+	var portal = _mesh(scifi_set,ring,Vector3(0,5,-19),_mat(CYAN,3))
 	portal.rotation_degrees.x = 90
-	_cube(arena,Vector3(0,1.4,-19),Vector3(6,2.8,1.2),Color("314759"))
+	_cube(scifi_set,Vector3(0,1.4,-19),Vector3(6,2.8,1.2),Color("314759"))
 	for x in [-3,3]:
-		_cube(arena,Vector3(x,4,-19),Vector3(0.6,7,0.8),Color("4a6170"))
+		_cube(scifi_set,Vector3(x,4,-19),Vector3(0.6,7,0.8),Color("4a6170"))
 	camera = Camera3D.new()
 	camera.fov = BASE_FOV
 	camera.near = 0.05
@@ -607,19 +675,35 @@ func _deploy(index: int):
 	hud.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	hud.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	screen.add_child(hud)
+	for edge in [[0.0,0.22,true],[0.72,1.0,false]]:
+		var g = Gradient.new()
+		g.set_color(0,Color(0,0,0,0.5) if edge[2] else Color(0,0,0,0))
+		g.set_color(1,Color(0,0,0,0) if edge[2] else Color(0,0,0,0.55))
+		var tex = GradientTexture2D.new()
+		tex.gradient = g
+		tex.fill_from = Vector2(0,0)
+		tex.fill_to = Vector2(0,1)
+		var shade = TextureRect.new()
+		shade.texture = tex
+		shade.stretch_mode = TextureRect.STRETCH_SCALE
+		shade.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		shade.anchor_right = 1.0
+		shade.anchor_top = edge[0]
+		shade.anchor_bottom = edge[1]
+		hud.add_child(shade)
 	# Top-left: mission and objective.
-	var top = _panel(hud)
+	var top = _hud_block(hud)
 	top.position = Vector2(24,20)
 	top.custom_minimum_size.x = 380
 	var tv = VBoxContainer.new()
 	tv.add_theme_constant_override("separation",4)
 	top.add_child(tv)
-	heading_label = _label("R / W    " + MISSIONS[index][1],20,CYAN)
+	heading_label = _label("R / W    " + MISSIONS[index][1],14,CYAN)
 	tv.add_child(heading_label)
 	objective_label = _label("部署中…",16)
 	tv.add_child(objective_label)
 	# Bottom-left: shield + dash.
-	var vitals = _panel(hud)
+	var vitals = _hud_block(hud)
 	vitals.anchor_top = 1.0
 	vitals.anchor_bottom = 1.0
 	vitals.offset_left = 24
@@ -629,17 +713,17 @@ func _deploy(index: int):
 	var vv = VBoxContainer.new()
 	vv.add_theme_constant_override("separation",6)
 	vitals.add_child(vv)
-	health_label = _label("護盾  100 / 100",20,CYAN)
+	health_label = _label("護盾  100 / 100",20,WHITE)
 	vv.add_child(health_label)
-	health_bar = _bar(CYAN,12)
+	health_bar = _bar(WHITE,6)
 	vv.add_child(health_bar)
 	dash_label = _label("Shift 衝刺就緒",14,MUTED)
 	vv.add_child(dash_label)
-	dash_bar = _bar(Color("82aaff"),5)
+	dash_bar = _bar(MUTED,2)
 	dash_bar.max_value = DASH_COOLDOWN
 	vv.add_child(dash_bar)
 	# Bottom-right: ammo.
-	var ammo_panel = _panel(hud,ORANGE)
+	var ammo_panel = _hud_block(hud)
 	ammo_panel.anchor_left = 1.0
 	ammo_panel.anchor_right = 1.0
 	ammo_panel.anchor_top = 1.0
@@ -655,12 +739,12 @@ func _deploy(index: int):
 	ammo_row.alignment = BoxContainer.ALIGNMENT_END
 	ammo_row.add_theme_constant_override("separation",8)
 	av.add_child(ammo_row)
-	ammo_label = _label(str(MAG_SIZE),40,WHITE)
+	ammo_label = _label(str(MAG_SIZE),54,WHITE)
 	ammo_row.add_child(ammo_label)
 	reserve_label = _label("/ %d" % MAG_SIZE,20,MUTED)
 	reserve_label.size_flags_vertical = Control.SIZE_SHRINK_END
 	ammo_row.add_child(reserve_label)
-	reload_bar = _bar(ORANGE,5)
+	reload_bar = _bar(CYAN,2)
 	reload_bar.max_value = 1.0
 	av.add_child(reload_bar)
 	view_label = _label("R 換彈   ·   V 第一人稱",13,MUTED)
@@ -672,7 +756,7 @@ func _deploy(index: int):
 	cross.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	for offset in [Vector2(-14,-1),Vector2(6,-1),Vector2(-1,-14),Vector2(-1,6)]:
 		var line = ColorRect.new()
-		line.color = Color(CYAN,0.9)
+		line.color = Color(WHITE,0.9)
 		line.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		line.position = offset
 		line.size = Vector2(8,2) if offset.y == -1 else Vector2(2,8)
@@ -733,7 +817,7 @@ func _input(event):
 		yaw = wrapf(yaw-event.screen_relative.x*LOOK_SENSITIVITY,-PI,PI)
 		pitch = clampf(pitch-event.screen_relative.y*LOOK_SENSITIVITY,-LOOK_LIMIT,LOOK_LIMIT)
 		get_viewport().set_input_as_handled()
-	if event is InputEventKey and event.pressed and not event.echo and mode == "playing" and not modal_open and event.physical_keycode >= KEY_1 and event.physical_keycode <= KEY_4:
+	if event is InputEventKey and event.pressed and not event.echo and mode == "playing" and not modal_open and event.physical_keycode >= KEY_1 and event.physical_keycode <= KEY_2:
 		desired_slot = event.physical_keycode-KEY_1
 	if event is InputEventMouseButton and event.pressed and mode == "playing" and not modal_open and event.button_index in [MOUSE_BUTTON_WHEEL_UP,MOUSE_BUTTON_WHEEL_DOWN]:
 		desired_slot = _cycle_slot(1 if event.button_index == MOUSE_BUTTON_WHEEL_DOWN else -1)
@@ -758,13 +842,13 @@ func _show_pause_menu():
 	pause_overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	screen.add_child(pause_overlay)
 	var shade = ColorRect.new()
-	shade.color = Color(0.015,0.03,0.06,0.78)
+	shade.color = Color(0.03,0.031,0.034,0.8)
 	shade.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	pause_overlay.add_child(shade)
 	var center = CenterContainer.new()
 	center.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	pause_overlay.add_child(center)
-	var card = _panel(center,CYAN,Color(0.04,0.08,0.13,0.97))
+	var card = _panel(center,CYAN,Color(0.07,0.072,0.078,0.97))
 	card.mouse_filter = Control.MOUSE_FILTER_PASS
 	card.custom_minimum_size.x = 440
 	var v = VBoxContainer.new()
@@ -775,7 +859,7 @@ func _show_pause_menu():
 	var note = _label("退出後會回到基地主頁，本次任務進度不保留。" if network != "client" else "退出後回到基地主頁；隊友仍可繼續任務。",15,MUTED)
 	note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	v.add_child(note)
-	_button("▶  繼續戰鬥",_close_pause_menu,v,52)
+	_button("繼續戰鬥",_close_pause_menu,v,52)
 	var leave = _button("退出到主頁",func():
 		_close_pause_menu(false)
 		_leave_mission(),v,48)
@@ -813,7 +897,7 @@ func _physics_process(dt):
 			var move = Input.get_vector("left","right","forward","back") if active else Vector2.ZERO
 			var eye: Vector3 = actors[local_id].p+Vector3.UP*EYE_HEIGHT if actors.has(local_id) else camera.position
 			var target = (camera.global_position if third_person else eye)+_look_direction()*SHOT_RANGE
-			var packet = {"m":move,"yaw":yaw,"aim":target,"reload":Input.is_action_pressed("reload") and active,"slot":desired_slot,"skill":Input.is_action_pressed("skill") and active,"interact":Input.is_action_pressed("interact") and active,"fire":Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT) and active and not release_fire_to_resume,"dash":Input.is_action_pressed("dash") and active,"jump":Input.is_action_pressed("jump") and active}
+			var packet = {"m":move,"yaw":yaw,"aim":target,"reload":Input.is_action_pressed("reload") and active,"slot":desired_slot,"skill":Input.is_action_pressed("skill") and active,"interact":Input.is_action_pressed("interact") and active,"descend":Input.is_action_pressed("descend") and active,"fire":Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT) and active and not release_fire_to_resume,"dash":Input.is_action_pressed("dash") and active,"jump":Input.is_action_pressed("jump") and active}
 			if network == "client":
 				input_sequence += 1
 				packet["seq"] = input_sequence
@@ -862,7 +946,7 @@ func _broadcast_state():
 		ids.append(id)
 		var a = actors[id]
 		var dash_direction: Vector3 = a.get("dash_direction",Vector3.ZERO)
-		a_data.append_array(PackedFloat32Array([a.p.x,a.p.y,a.p.z,a.hp,a.cd,a.dash,a.y,a.v,a.get("max_hp",100),a.get("speed",6.5),a.get("fire_interval",0.16),a.get("ack",0),a.get("dash_left",0),dash_direction.x,dash_direction.y,dash_direction.z,a.get("ammo",MAG_SIZE),a.get("mag",MAG_SIZE),float(a.get("reload",0))/maxf(0.01,float(a.get("reload_time",RELOAD_TIME))),a.get("slot",0),a.get("skill_cd",0),a.get("revive",0)]))
+		a_data.append_array(PackedFloat32Array([a.p.x,a.p.y,a.p.z,a.hp,a.cd,a.dash,a.y,a.v,a.get("max_hp",100),a.get("speed",6.5),a.get("fire_interval",0.16),a.get("ack",0),a.get("dash_left",0),dash_direction.x,dash_direction.y,dash_direction.z,a.get("ammo",MAG_SIZE),a.get("mag",MAG_SIZE),float(a.get("reload",0))/maxf(0.01,float(a.get("reload_time",RELOAD_TIME))),a.get("slot",0),a.get("skill_cd",0),a.get("revive",0),1.0 if a.get("fly",false) else 0.0]))
 	for id in enemies:
 		var e = enemies[id]
 		e_data.append_array(PackedFloat32Array([id,e.p.x,e.p.y,e.p.z,e.hp,e.y,1.0 if e.boss else 0.0,e.get("max_hp",e.hp),e.get("kind_id",0),e.get("state",0)]))
@@ -870,7 +954,7 @@ func _broadcast_state():
 
 @rpc("authority", "call_remote", "unreliable_ordered")
 func _snapshot(ids: PackedInt32Array, a: PackedFloat32Array, e: PackedFloat32Array, w: int, k: int, t: float):
-	var stride = 22 if a.size() == ids.size()*22 else 16
+	var stride = 23 if a.size() == ids.size()*23 else 16
 	var estride = 10 if e.size()%10 == 0 else 8
 	if a.size() != ids.size()*stride or e.size()%estride != 0: return
 	var old_position: Vector3 = actors[local_id].p if actors.has(local_id) else Vector3.ZERO
@@ -879,8 +963,8 @@ func _snapshot(ids: PackedInt32Array, a: PackedFloat32Array, e: PackedFloat32Arr
 	for i in range(ids.size()):
 		var j = i*stride
 		actors[ids[i]] = {"p":Vector3(a[j],a[j+1],a[j+2]),"hp":a[j+3],"cd":a[j+4],"dash":a[j+5],"y":a[j+6],"v":a[j+7],"max_hp":a[j+8],"speed":a[j+9],"fire_interval":a[j+10],"ack":int(a[j+11]),"dash_left":a[j+12],"dash_direction":Vector3(a[j+13],a[j+14],a[j+15])}
-		if stride == 22:
-			actors[ids[i]].merge({"ammo":int(a[j+16]),"mag":int(a[j+17]),"reload_ratio":a[j+18],"slot":int(a[j+19]),"skill_cd":a[j+20],"revive":a[j+21]},true)
+		if stride == 23:
+			actors[ids[i]].merge({"ammo":int(a[j+16]),"mag":int(a[j+17]),"reload_ratio":a[j+18],"slot":int(a[j+19]),"skill_cd":a[j+20],"revive":a[j+21],"fly":a[j+22] > 0},true)
 	if actors.has(local_id):
 		var local_actor = actors[local_id]
 		while not pending_movement.is_empty() and int(pending_movement[0].packet.seq) <= local_actor.ack:
@@ -923,10 +1007,16 @@ func _move_actor(a: Dictionary, packet: Dictionary, dt: float):
 		var distance = DASH_DISTANCE*(smoothstep(0.0,1.0,finish)-smoothstep(0.0,1.0,start))
 		a.p += a.get("dash_direction",Vector3.ZERO)*distance
 		a["dash_left"] = next_left
-	if packet.get("jump",false) and a.p.y <= 0.01: a.v = 7.0
-	a.v -= 20*dt
-	a.p += motion*float(a.get("speed",6.5))*dt
-	a.p.y = maxf(0,a.p.y+a.v*dt)
+	if a.get("fly",false):
+		var lift = (1.0 if packet.get("jump",false) else 0.0)-(1.0 if packet.get("descend",false) else 0.0)
+		a.v = 0.0
+		a.p += motion*float(a.get("speed",6.5))*dt
+		a.p.y = clampf(a.p.y+lift*FLY_SPEED*dt,0.0,FLY_CEILING)
+	else:
+		if packet.get("jump",false) and a.p.y <= 0.01: a.v = 7.0
+		a.v -= 20*dt
+		a.p += motion*float(a.get("speed",6.5))*dt
+		a.p.y = maxf(0,a.p.y+a.v*dt)
 	a.p.x = clampf(a.p.x,-21,21)
 	a.p.z = clampf(a.p.z,-21,21)
 	a.p = _push_out_of_cover(a.p,0.4)
@@ -1228,7 +1318,7 @@ func _update_hud():
 			var mag = int(a.get("mag",MAG_SIZE))
 			var ratio = float(a.get("reload_ratio",float(a.get("reload",0))/float(a.get("reload_time",RELOAD_TIME))))
 			ammo_label.text = "換彈中" if ratio > 0 else str(ammo)
-			ammo_label.add_theme_font_size_override("font_size",26 if ratio > 0 else 40)
+			ammo_label.add_theme_font_size_override("font_size",28 if ratio > 0 else 54)
 			ammo_label.modulate = ORANGE if ratio > 0 or ammo <= mag/5 else Color.WHITE
 			reserve_label.text = "/ %d" % mag
 			reload_bar.value = 1.0-ratio if ratio > 0 else float(ammo)/maxf(1,mag)
@@ -1258,13 +1348,13 @@ func _finish_remote(success: bool, duration: float, defeated: int, index: int):
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 	_clear_ui()
 	var bg = ColorRect.new()
-	bg.color = Color(0.02,0.04,0.07,0.88)
+	bg.color = Color(0.03,0.031,0.034,0.9)
 	bg.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	screen.add_child(bg)
 	var center = CenterContainer.new()
 	center.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	screen.add_child(center)
-	var card = _panel(center,CYAN if success else ORANGE,Color(0.04,0.08,0.13,0.96))
+	var card = _panel(center,CYAN if success else ORANGE,Color(0.07,0.072,0.078,0.97))
 	card.mouse_filter = Control.MOUSE_FILTER_PASS
 	card.custom_minimum_size.x = 560
 	var v = VBoxContainer.new()

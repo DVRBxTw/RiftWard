@@ -39,7 +39,7 @@ const PLUS_BUFFS = [
 	["吸能模組", "每次擊殺恢復 %d 護盾", 4, "♥"],
 	["爆裂彈頭", "擊殺時爆炸，造成 %d 範圍傷害", 35, "✸"]
 ]
-const RARITY = [["普通", Color("9fb3c8"), 1.0], ["稀有", Color("5aa9ff"), 1.6], ["傳說", Color("ffd166"), 2.5]]
+const RARITY = [["普通", Color("a7a9ac"), 1.0], ["稀有", Color("7fb2e5"), 1.6], ["傳說", Color("f0b24a"), 2.5]]
 
 const SKILL_COOLDOWN = 12.0
 const GRENADE_RADIUS = 4.5
@@ -76,7 +76,7 @@ var last_reload_slot = -1
 var reload_sfx_log: Array = []
 var recoil_pending = 0.0
 var last_recoil_time = -1.0
-var admin_settings = {"dmg":1.0,"speed":1.0,"god":false,"ammo":false}
+var admin_settings = {"dmg":1.0,"speed":1.0,"god":false,"ammo":false,"fly":false}
 var admin_by_id: Dictionary = {}
 var admin_status: Label
 var admin_players: VBoxContainer
@@ -108,20 +108,36 @@ func _loadout_for(id: int) -> Dictionary:
 		if WEAPONS.has(str(w)) and not str(w) in owned: owned.append(str(w))
 	if not "pistol" in owned: owned.push_front("pistol")
 	var levels = lo.get("levels",{})
-	return {"owned":owned,"levels":(levels.duplicate(true) if levels is Dictionary else {})}
+	var equipped: Array = []
+	for w in lo.get("equipped",[]):
+		if str(w) in owned and not str(w) in equipped and equipped.size() < 2: equipped.append(str(w))
+	if equipped.is_empty(): equipped = owned.slice(0,2)
+	return {"owned":owned,"levels":(levels.duplicate(true) if levels is Dictionary else {}),"equipped":equipped}
+
+func _weapon_id(a: Dictionary) -> String:
+	var kit: Array = a.get("equipped",["pistol"])
+	return str(kit[clampi(int(a.get("slot",0)),0,kit.size()-1)])
+
+func _slot_weapon(slot: int) -> String:
+	# Client-side view of the local kit (from the account profile).
+	var kit: Array = _loadout_for(-1).equipped
+	return str(kit[clampi(slot,0,kit.size()-1)])
+
+func _cycle_slot(step: int) -> int:
+	return wrapi(desired_slot+step,0,maxi(1,_loadout_for(-1).equipped.size()))
 
 func _set_actor_stats(id: int):
 	super._set_actor_stats(id)
 	var a = actors[id]
 	var lo = _loadout_for(id)
-	a.merge({"owned":lo.owned,"levels":lo.levels,"slot":0,"ammo_by":{},"dmg_mult":1.0,"rate_mult":1.0,"mag_bonus":0,"reload_mult":1.0,"skill_mult":1.0,"lifesteal":0,"explode":0,"skill_cd":0.0,"revive":0.0,"admin_speed":1.0,"admin_dmg":1.0,"god":false,"inf_ammo":false},true)
+	a.merge({"owned":lo.owned,"levels":lo.levels,"equipped":lo.equipped,"slot":0,"ammo_by":{},"dmg_mult":1.0,"rate_mult":1.0,"mag_bonus":0,"reload_mult":1.0,"skill_mult":1.0,"lifesteal":0,"explode":0,"skill_cd":0.0,"revive":0.0,"admin_speed":1.0,"admin_dmg":1.0,"god":false,"inf_ammo":false,"fly":false},true)
 	_refresh_weapon(a)
 	a["ammo"] = a.mag
 	a["reload"] = 0.0
 	_apply_admin(id)
 
 func _refresh_weapon(a: Dictionary):
-	var wid = WEAPON_ORDER[clampi(int(a.get("slot",0)),0,3)]
+	var wid = _weapon_id(a)
 	var st = weapon_stats(wid,a.get("levels",{}).get(wid,{}))
 	a["damage"] = st.damage*float(a.get("dmg_mult",1.0))*float(a.get("admin_dmg",1.0))
 	a["fire_interval"] = maxf(0.045,st.interval*float(a.get("rate_mult",1.0)))
@@ -164,7 +180,7 @@ func _buff_offer(offer: Array, new_level: int):
 	buff_overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	screen.add_child(buff_overlay)
 	var shade = ColorRect.new()
-	shade.color = Color(0.015,0.03,0.06,0.84)
+	shade.color = Color(0.03,0.031,0.034,0.86)
 	shade.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	buff_overlay.add_child(shade)
 	var center = CenterContainer.new()
@@ -173,7 +189,7 @@ func _buff_offer(offer: Array, new_level: int):
 	var v = VBoxContainer.new()
 	v.add_theme_constant_override("separation",16)
 	center.add_child(v)
-	for line in [["LEVEL UP",16,GOLD],["等級提升 · Lv. %d" % new_level,40,WHITE],["選擇一項加成 · 可疊加 · 敵人也會隨等級變強 · 30 秒後自動選擇",15,MUTED]]:
+	for line in [["LEVEL UP",13,CYAN],["等級 %d" % new_level,44,WHITE],["選擇一項加成 · 可疊加 · 敵人也會隨等級變強 · 30 秒後自動選擇",15,MUTED]]:
 		var l = _label(line[0],line[1],line[2])
 		l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		v.add_child(l)
@@ -185,7 +201,7 @@ func _buff_offer(offer: Array, new_level: int):
 	for code in offer:
 		var info = _buff_text(int(code))
 		var rarity = RARITY[info[3]]
-		var b = _button("%s\n\n%s\n%s\n\n%s" % [info[0],info[1],"【%s】" % rarity[0],info[2]],func():
+		var b = _button("%s\n\n%s\n\n%s" % [rarity[0],info[1],info[2]],func():
 			for other in buttons: other.disabled = true
 			if network == "client": _choose_buff.rpc_id(1,code)
 			else:
@@ -199,7 +215,7 @@ func _buff_offer(offer: Array, new_level: int):
 		b.add_theme_stylebox_override("hover",_button_style(Color(c.r*0.28,c.g*0.28,c.b*0.3,0.98),c,true))
 		b.add_theme_color_override("font_color",c.lightened(0.35) if info[3] > 0 else WHITE)
 		buttons.append(b)
-	var waiting = _label("選擇後等待隊友；所有人選完就繼續作戰。",15,CYAN)
+	var waiting = _label("選擇後等待隊友；所有人選完就繼續作戰。",14,MUTED)
 	waiting.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	v.add_child(waiting)
 
@@ -255,7 +271,7 @@ func _spawn_wave():
 			e["kind_id"] = 6 if wave >= 20 else 5
 			e["scale"] = KINDS[e.kind_id][2]
 			e["phase"] = 1
-	_announce_all("⚠  BOSS 來襲" if has_boss else "第 %d 波" % wave)
+	_announce_all("BOSS 來襲" if has_boss else "第 %d 波" % wave)
 
 func _apply_kind(e: Dictionary, kind: int):
 	e["kind_id"] = kind
@@ -406,11 +422,11 @@ func _simulate_players(dt: float):
 		a["revive"] = 0.0
 		if not a.has("ammo_by"): a["ammo_by"] = {}
 		var want = int(p.get("slot",a.get("slot",0)))
-		if want != int(a.get("slot",0)) and want >= 0 and want < 4 and WEAPON_ORDER[want] in a.get("owned",["pistol"]):
-			a.ammo_by[WEAPON_ORDER[a.slot]] = a.ammo
+		if want != int(a.get("slot",0)) and want >= 0 and want < a.get("equipped",["pistol"]).size():
+			a.ammo_by[_weapon_id(a)] = a.ammo
 			a["slot"] = want
 			_refresh_weapon(a)
-			a["ammo"] = int(a.ammo_by.get(WEAPON_ORDER[want],a.mag))
+			a["ammo"] = int(a.ammo_by.get(_weapon_id(a),a.mag))
 			a["reload"] = 0.0
 			a["cd"] = maxf(float(a.cd),0.25)
 		if p.get("skill",false) and a.skill_cd <= 0:
@@ -491,7 +507,12 @@ func _deploy(index: int):
 	combo = 0
 	last_local_hp = -1.0
 	super._deploy(index)
-	if not dedicated and is_instance_valid(hud) and not test_mode: _build_plus_hud()
+	if not dedicated and is_instance_valid(hud) and not test_mode:
+		_build_plus_hud()
+		# Outlines keep frameless HUD text readable over bright skies.
+		for l in hud.find_children("*","Label",true,false):
+			l.add_theme_color_override("font_outline_color",Color(0,0,0,0.75))
+			if l.get_theme_constant("outline_size") < 4: l.add_theme_constant_override("outline_size",4)
 
 func _clean_models():
 	super._clean_models()
@@ -506,7 +527,7 @@ func _refresh_profile():
 	if not multiplayer.is_server() or test_mode: return
 	var id = multiplayer.get_remote_sender_id()
 	if not verified.has(id): return
-	var result = await _api("/api/server/profile",{"account_id":verified[id].id},true)
+	var result = await _api("/api/server/profile",{"account_id":int(verified[id].id)},true)
 	if result.get("ok",false) and verified.has(id):
 		verified[id] = result.profile
 		if mode != "playing" and actors.has(id): _set_actor_stats(id)
@@ -632,7 +653,7 @@ func _render_models(dt: float):
 		if slot != shown_slot:
 			shown_slot = slot
 			desired_slot = slot
-			_build_viewmodel(WEAPON_ORDER[clampi(slot,0,3)])
+			_build_viewmodel(_slot_weapon(slot))
 
 func _damage_number(at: Vector3, amount: float, head: bool):
 	var label = Label3D.new()
@@ -727,7 +748,7 @@ func _build_plus_hud():
 	strip.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	hud.add_child(strip)
 	slot_boxes.clear()
-	for i in range(4):
+	for i in range(2):
 		var box = PanelContainer.new()
 		box.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		box.custom_minimum_size = Vector2(88,0)
@@ -750,7 +771,7 @@ func _build_plus_hud():
 	weapon_name_label.add_theme_constant_override("outline_size",4)
 	hud.add_child(weapon_name_label)
 	# Grenade skill above the vitals panel.
-	var skill = _panel(hud,Color("7dff9a"))
+	var skill = _hud_block(hud)
 	skill.anchor_top = 1.0
 	skill.anchor_bottom = 1.0
 	skill.offset_left = 24
@@ -760,9 +781,9 @@ func _build_plus_hud():
 	var sv = VBoxContainer.new()
 	sv.add_theme_constant_override("separation",4)
 	skill.add_child(sv)
-	skill_label = _label("Q  手榴彈  就緒",14,Color("7dff9a"))
+	skill_label = _label("Q  手榴彈  就緒",13,WHITE)
 	sv.add_child(skill_label)
-	skill_bar = _bar(Color("7dff9a"),5)
+	skill_bar = _bar(WHITE,2)
 	skill_bar.max_value = 1.0
 	sv.add_child(skill_bar)
 	combo_label = _label("",30,GOLD)
@@ -806,24 +827,27 @@ func _update_hud():
 	last_local_hp = a.hp
 	var low = a.hp > 0 and a.hp <= float(a.get("max_hp",100))*0.3
 	vignette.modulate.a = clampf(damage_flash*1.8,0,1) if not low else 0.45+0.25*sin(clock_time*6)
-	var slot = clampi(int(a.get("slot",0)),0,3)
-	var owned = _loadout_for(local_id).owned
-	for i in range(4):
-		var wid = WEAPON_ORDER[i]
-		var has = wid in owned
+	var kit: Array = _loadout_for(-1).equipped
+	var slot = clampi(int(a.get("slot",0)),0,kit.size()-1)
+	for i in range(slot_boxes.size()):
+		var has = i < kit.size()
 		var box: PanelContainer = slot_boxes[i][0]
 		var l: Label = slot_boxes[i][1]
-		l.text = "%d  %s" % [i+1,WEAPONS[wid].short] if has else "%d  🔒" % (i+1)
-		var style = _panel_style(Color(0.12,0.28,0.32,0.92) if i == slot else Color(0.035,0.07,0.115,0.7),CYAN if i == slot else PANEL_EDGE,6)
+		box.visible = has
+		if not has: continue
+		l.text = "%d   %s" % [i+1,WEAPONS[kit[i]].short]
+		var style = StyleBoxFlat.new()
+		style.bg_color = Color(0,0,0,0)
+		style.border_color = CYAN if i == slot else Color(1,1,1,0.18)
+		style.border_width_bottom = 2 if i == slot else 1
 		style.content_margin_left = 6
 		style.content_margin_right = 6
 		style.content_margin_top = 4
-		style.content_margin_bottom = 4
-		style.shadow_size = 0
+		style.content_margin_bottom = 6
 		box.add_theme_stylebox_override("panel",style)
 		l.modulate = Color(1,1,1,1.0 if has else 0.4)
-		l.add_theme_color_override("font_color",CYAN if i == slot else WHITE)
-	weapon_name_label.text = WEAPONS[WEAPON_ORDER[slot]].name
+		l.add_theme_color_override("font_color",WHITE if i == slot else MUTED)
+	weapon_name_label.text = WEAPONS[kit[slot]].name
 	var cd = float(a.get("skill_cd",0))
 	var max_cd = SKILL_COOLDOWN*float(a.get("skill_mult",1.0))
 	skill_bar.value = 1.0-clampf(cd/maxf(0.1,max_cd),0,1)
@@ -920,7 +944,7 @@ func _show_armory():
 	wallet.offset_left = -300
 	wallet.offset_right = -48
 	wallet.offset_top = 32
-	var wl = _label("◆  %d G" % gold,26,GOLD)
+	var wl = _label("%d G" % gold,26,GOLD)
 	wl.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	wallet.add_child(wl)
 	var grid = GridContainer.new()
@@ -950,7 +974,7 @@ func _armory_card(parent: Node, wid: String, lo: Dictionary, gold: int):
 	var w = WEAPONS[wid]
 	var owned = wid in lo.owned
 	var levels: Dictionary = lo.levels.get(wid,{}) if lo.levels.get(wid,{}) is Dictionary else {}
-	var card = _panel(parent,CYAN if owned else PANEL_EDGE,Color(0.035,0.07,0.115,0.92))
+	var card = _panel(parent,CYAN if owned else PANEL_EDGE,Color(0.07,0.072,0.078,0.94))
 	card.mouse_filter = Control.MOUSE_FILTER_PASS
 	card.custom_minimum_size = Vector2(584,0)
 	var v = VBoxContainer.new()
@@ -983,10 +1007,21 @@ func _armory_card(parent: Node, wid: String, lo: Dictionary, gold: int):
 		stats.add_child(bar)
 		stats.add_child(_label(row[1],13))
 	if not owned:
-		var buy = _button("購買  ◆ %d G" % w.price,func(): _armory_request("/api/shop/buy",{"weapon":wid}),v,42)
+		var buy = _button("購買    %d G" % w.price,func(): _armory_request("/api/shop/buy",{"weapon":wid}),v,42)
 		buy.disabled = gold < w.price or armory_busy
 		buy.add_theme_color_override("font_color",GOLD)
 		return
+	var kit: Array = lo.equipped
+	var equip_row = HBoxContainer.new()
+	equip_row.add_theme_constant_override("separation",8)
+	v.add_child(equip_row)
+	for slot_index in range(2):
+		var on = slot_index < kit.size() and kit[slot_index] == wid
+		var eb = _button(("● %d 號武器" if on else "裝備到 %d 號") % (slot_index+1),func(): _armory_equip(wid,slot_index),equip_row,36)
+		eb.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		eb.add_theme_font_size_override("font_size",14)
+		eb.disabled = on or armory_busy
+		if on: eb.add_theme_color_override("font_disabled_color",CYAN)
 	var ups = HBoxContainer.new()
 	ups.add_theme_constant_override("separation",8)
 	v.add_child(ups)
@@ -994,11 +1029,23 @@ func _armory_card(parent: Node, wid: String, lo: Dictionary, gold: int):
 		var lv = int(levels.get(key,0))
 		var maxed = lv >= MAX_UPGRADE_LEVEL
 		var cost = upgrade_cost(wid,lv)
-		var label = "%s  Lv.%d\n%s" % [UPGRADE_NAMES[key],lv,"已滿級" if maxed else "◆ %d G" % cost]
+		var label = "%s  Lv.%d\n%s" % [UPGRADE_NAMES[key],lv,"已滿級" if maxed else "%d G" % cost]
 		var b = _button(label,func(): _armory_request("/api/shop/upgrade",{"weapon":wid,"stat":key}),ups,52)
 		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		b.add_theme_font_size_override("font_size",15)
 		b.disabled = maxed or gold < cost or armory_busy
+
+func _armory_equip(wid: String, slot_index: int):
+	var kit: Array = _loadout_for(-1).equipped.duplicate()
+	var other = kit.find(wid)
+	while kit.size() <= slot_index: kit.append(wid)
+	if other != -1 and other != slot_index:
+		kit[other] = kit[slot_index]
+	kit[slot_index] = wid
+	var clean: Array = []
+	for w in kit:
+		if not w in clean: clean.append(w)
+	_armory_request("/api/shop/equip",{"weapons":clean})
 
 func _armory_request(path: String, data: Dictionary):
 	if armory_busy: return
@@ -1028,7 +1075,7 @@ func _shot_fx(origin: Vector3, end: Vector3, hit: bool, shooter: int, head: bool
 	# One kick per trigger pull, even for multi-pellet weapons.
 	if clock_time-last_recoil_time < 0.03: return
 	last_recoil_time = clock_time
-	var w = WEAPONS[WEAPON_ORDER[clampi(int(actors[local_id].get("slot",0)),0,3)]]
+	var w = WEAPONS[_slot_weapon(int(actors[local_id].get("slot",0)))]
 	var kick = float(w.recoil)*(0.85+randf()*0.3)
 	pitch = clampf(pitch+kick,-LOOK_LIMIT,LOOK_LIMIT)
 	yaw = wrapf(yaw+randf_range(-1.0,1.0)*float(w.sway),-PI,PI)
@@ -1107,7 +1154,8 @@ func _admin_apply(settings: Dictionary):
 		"dmg": clampf(float(settings.get("dmg",1.0)),1.0,20.0),
 		"speed": clampf(float(settings.get("speed",1.0)),0.5,3.0),
 		"god": bool(settings.get("god",false)),
-		"ammo": bool(settings.get("ammo",false))
+		"ammo": bool(settings.get("ammo",false)),
+		"fly": bool(settings.get("fly",false))
 	}
 	_apply_admin(id)
 
@@ -1121,6 +1169,7 @@ func _apply_admin(id: int):
 	a["admin_dmg"] = float(s.dmg)
 	a["god"] = s.god
 	a["inf_ammo"] = s.ammo
+	a["fly"] = s.fly
 	_refresh_weapon(a)
 
 func _send_admin():
@@ -1135,8 +1184,12 @@ func _account_ok(user: Dictionary):
 
 func _home():
 	super._home()
-	if test_mode or dedicated or mode != "home" or not bool(profile.get("admin",false)): return
-	var admin_button = _button("⚙  管理員",_show_admin,screen,40)
+	if test_mode or dedicated or mode != "home": return
+	# The lobby backdrop previews the selected region.
+	_apply_region(selected)
+	if is_instance_valid(showcase): showcase.visible = true
+	if not bool(profile.get("admin",false)): return
+	var admin_button = _button("管理員",_show_admin,screen,40)
 	admin_button.anchor_left = 1.0
 	admin_button.anchor_right = 1.0
 	admin_button.offset_left = -200
@@ -1151,14 +1204,14 @@ func _show_pause_menu():
 	if not bool(profile.get("admin",false)) or not is_instance_valid(pause_overlay): return
 	var buttons = pause_overlay.find_children("*","VBoxContainer",true,false)
 	if buttons.is_empty(): return
-	var b = _button("⚙  管理員能力",func():
+	var b = _button("管理員能力",func():
 		var overlay = Control.new()
 		overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 		pause_overlay.add_child(overlay)
 		var center = CenterContainer.new()
 		center.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 		overlay.add_child(center)
-		var card = _panel(center,ORANGE,Color(0.04,0.08,0.13,0.98))
+		var card = _panel(center,ORANGE,Color(0.07,0.072,0.078,0.98))
 		card.mouse_filter = Control.MOUSE_FILTER_PASS
 		card.custom_minimum_size.x = 460
 		var v = VBoxContainer.new()
@@ -1196,7 +1249,7 @@ func _admin_ability_panel(v: VBoxContainer):
 			admin_settings[key] = value
 			value_label.text = fmt % value
 			_send_admin())
-	for spec in [["god","無敵（不會受到傷害）"],["ammo","無限彈藥（不需換彈）"]]:
+	for spec in [["god","無敵（不會受到傷害）"],["ammo","無限彈藥（不需換彈）"],["fly","飛行（Space 上升 · Ctrl 下降）"]]:
 		var toggle = CheckButton.new()
 		toggle.text = spec[1]
 		toggle.button_pressed = bool(admin_settings[spec[0]])
@@ -1221,7 +1274,7 @@ func _show_admin():
 	row.position = Vector2(48,112)
 	screen.add_child(row)
 	# Left: grant rewards.
-	var grant = _panel(row,GOLD,Color(0.035,0.07,0.115,0.94))
+	var grant = _panel(row,GOLD,Color(0.07,0.072,0.078,0.95))
 	grant.mouse_filter = Control.MOUSE_FILTER_PASS
 	grant.custom_minimum_size = Vector2(640,600)
 	var gv = VBoxContainer.new()
@@ -1275,7 +1328,7 @@ func _show_admin():
 	scroll.add_child(admin_players)
 	admin_players.set_meta("target",target)
 	# Right: self abilities.
-	var self_panel = _panel(row,ORANGE,Color(0.035,0.07,0.115,0.94))
+	var self_panel = _panel(row,ORANGE,Color(0.07,0.072,0.078,0.95))
 	self_panel.mouse_filter = Control.MOUSE_FILTER_PASS
 	self_panel.custom_minimum_size = Vector2(500,0)
 	self_panel.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
@@ -1302,7 +1355,7 @@ func _admin_load_players():
 	var target: LineEdit = admin_players.get_meta("target")
 	for player in result.players:
 		var name = str(player.get("username",""))
-		var b = _button("%s      ◆ %d G      已解鎖 %d 區" % [name,int(player.get("gold",0)),int(player.get("unlocked",0))+1],func(): target.text = name,admin_players,38)
+		var b = _button("%s      %d G      已解鎖 %d 區" % [name,int(player.get("gold",0)),int(player.get("unlocked",0))+1],func(): target.text = name,admin_players,38)
 		b.alignment = HORIZONTAL_ALIGNMENT_LEFT
 		b.add_theme_font_size_override("font_size",15)
 
@@ -1323,3 +1376,187 @@ func _admin_grant(username: String, gold: int, weapon_id: String):
 	else:
 		admin_status.add_theme_color_override("font_color",ORANGE)
 		admin_status.text = str(result.get("error","發放失敗"))
+
+
+# ---------------------------------------------------------------- region looks
+
+const REGION_LOOKS = [
+	{"sky":Color("6fa8d6"),"fog":Color("a9c8d8"),"fog_density":0.003,"ambient":Color("b9d4b0"),"ambient_energy":0.32,"sun":Color("ffe9c4"),"sun_energy":0.95,"scifi":false,"cover":Color("8a8270"),"wall":Color("6e5c46")},
+	{"sky":Color("2a1510"),"fog":Color("3a1d12"),"fog_density":0.009,"ambient":Color("c08a6a"),"ambient_energy":0.45,"sun":Color("ffc9a0"),"sun_energy":0.9,"scifi":true,"cover":Color("4a3a32"),"wall":Color("3e3029")},
+	{"sky":Color("160f28"),"fog":Color("24183d"),"fog_density":0.009,"ambient":Color("9c8ad1"),"ambient_energy":0.45,"sun":Color("d9c9ff"),"sun_energy":0.85,"scifi":true,"cover":Color("3a3450"),"wall":Color("332d48")}
+]
+
+func _apply_region(index: int):
+	super._apply_region(index)
+	if dedicated or not is_instance_valid(world_environment): return
+	var look = REGION_LOOKS[clampi(index,0,2)]
+	world_environment.background_color = look.sky
+	world_environment.fog_light_color = look.fog
+	world_environment.fog_density = look.fog_density
+	world_environment.ambient_light_color = look.ambient
+	world_environment.ambient_light_energy = look.ambient_energy
+	sun_light.light_color = look.sun
+	sun_light.light_energy = look.sun_energy
+	scifi_set.visible = look.scifi
+	for m in cover_meshes: m.material_override = _mat(look.cover)
+	for m in perimeter_meshes: m.material_override = _mat(look.wall)
+	if index == 0:
+		for child in region_props.get_children(): child.queue_free()
+		_build_grassland(region_props)
+
+func _build_grassland(root: Node3D):
+	var rng = RandomNumberGenerator.new()
+	rng.seed = 2189
+	var greens = [Color("355f24"),Color("41702b"),Color("4e8033"),Color("5e8f3c")]
+	# Rolling hills on the horizon.
+	for i in range(14):
+		var angle = TAU*i/14.0+rng.randf_range(-0.2,0.2)
+		var radius = rng.randf_range(55,80)
+		var hill = SphereMesh.new()
+		hill.radius = rng.randf_range(14,24)
+		hill.height = hill.radius*0.9
+		var h = _mesh(root,hill,Vector3(sin(angle)*radius,-hill.height*0.25,cos(angle)*radius),_mat(greens[rng.randi()%2].darkened(0.1)))
+		h.scale = Vector3(1.6,1,1.6)
+	# Outer ground so the arena edge does not float in the sky.
+	_cube(root,Vector3(0,-0.32,0),Vector3(160,0.5,160),Color("3f6a2b"))
+	# Trees outside the fence.
+	for i in range(46):
+		var angle = rng.randf_range(0,TAU)
+		var radius = rng.randf_range(26,48)
+		_tree(root,Vector3(sin(angle)*radius,0,cos(angle)*radius),rng.randf_range(0.8,1.5),greens[rng.randi()%greens.size()])
+	# Grass tufts and flowers inside the arena.
+	for i in range(220):
+		var p = Vector3(rng.randf_range(-22,22),0,rng.randf_range(-22,22))
+		if _in_cover(p+Vector3.UP*0.1): continue
+		var h = rng.randf_range(0.18,0.45)
+		var blade = _cube(root,p+Vector3(0,h/2,0),Vector3(0.06,h,0.06),greens[rng.randi()%greens.size()].lightened(0.1))
+		blade.rotation = Vector3(rng.randf_range(-0.3,0.3),rng.randf_range(0,TAU),rng.randf_range(-0.3,0.3))
+		blade.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	var petals = [Color("fff6e0"),Color("ffd84d"),Color("ff9ec4"),Color("c9a6ff")]
+	for i in range(70):
+		var p = Vector3(rng.randf_range(-22,22),0.12,rng.randf_range(-22,22))
+		var f = _cube(root,p,Vector3(0.1,0.1,0.1),petals[rng.randi()%petals.size()],0.2)
+		f.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	# Rocks.
+	for i in range(14):
+		var rock = SphereMesh.new()
+		rock.radius = rng.randf_range(0.4,1.1)
+		rock.height = rock.radius*1.3
+		var angle = rng.randf_range(0,TAU)
+		var radius = rng.randf_range(20,34)
+		var r = _mesh(root,rock,Vector3(sin(angle)*radius,rock.radius*0.25,cos(angle)*radius),_mat(Color("8d8a80")))
+		r.scale = Vector3(1.3,0.7,1.0)
+	_crashed_dropship(root,Vector3(7,0,31))
+
+func _tree(root: Node3D, pos: Vector3, size: float, leaf: Color):
+	var trunk = CylinderMesh.new()
+	trunk.top_radius = 0.18*size
+	trunk.bottom_radius = 0.26*size
+	trunk.height = 2.4*size
+	_mesh(root,trunk,pos+Vector3(0,1.2*size,0),_mat(Color("6b4a2f")))
+	for k in range(3):
+		var cone = CylinderMesh.new()
+		cone.top_radius = 0.0
+		cone.bottom_radius = (1.6-0.35*k)*size
+		cone.height = 1.8*size
+		_mesh(root,cone,pos+Vector3(0,(2.4+0.9*k)*size,0),_mat(leaf.darkened(0.08*k)))
+
+func _crashed_dropship(root: Node3D, pos: Vector3):
+	var ship = Node3D.new()
+	ship.position = pos
+	ship.rotation = Vector3(0.08,-0.6,0.18)
+	root.add_child(ship)
+	var hull = Color("5a6068")
+	var burnt = Color("2b2a2a")
+	_cube(ship,Vector3(0,1.2,0),Vector3(3.2,2.2,9),hull)
+	_cube(ship,Vector3(0,1.4,-5),Vector3(2.4,1.6,1.6),hull.darkened(0.1))
+	_cube(ship,Vector3(0,1.9,-5.6),Vector3(1.8,0.6,0.1),Color("8ec5ff"),0.6)
+	_cube(ship,Vector3(-3.4,0.9,0.6),Vector3(4,0.25,2.6),hull.darkened(0.15))
+	var broken = _cube(ship,Vector3(3.2,0.4,1.8),Vector3(3.4,0.25,2.4),burnt)
+	broken.rotation_degrees = Vector3(0,20,-28)
+	_cube(ship,Vector3(0,2.0,3.6),Vector3(3.3,0.9,1.4),burnt)
+	_cube(ship,Vector3(0,1.2,4.6),Vector3(1.4,1.4,0.6),Color("ff8a3d"),1.6)
+	# Smoke column.
+	for k in range(6):
+		var puff = SphereMesh.new()
+		puff.radius = 0.8+0.35*k
+		puff.height = puff.radius*2
+		var mat = _mat(Color(0.18,0.18,0.2))
+		mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		mat.albedo_color.a = 0.55-0.07*k
+		var s = _mesh(root,puff,pos+Vector3(0.6*k,3.2+1.7*k,1.2+0.4*k),mat)
+		s.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	# Scorched ground.
+	var scorch = _cube(root,pos+Vector3(0,0.005,0),Vector3(7,0.01,13),Color("3a3326"))
+	scorch.rotation.y = -0.6
+
+# ---------------------------------------------------------------- lobby music
+
+const MUSIC_MODES = ["home","armory","admin","story","account","connecting"]
+var music_player: AudioStreamPlayer
+var music_target_db = -60.0
+var music_task = -1
+var music_stream: AudioStreamWAV
+
+func _process(dt):
+	super._process(dt)
+	_music_tick(dt)
+
+func _music_tick(dt: float):
+	if dedicated or DisplayServer.get_name() == "headless": return
+	var want = mode in MUSIC_MODES
+	# Synthesize the loop on a worker thread so the menu never hitches.
+	if music_task == -1 and music_stream == null:
+		music_task = WorkerThreadPool.add_task(func(): self.music_stream = _make_lobby_music())
+	if music_task >= 0 and WorkerThreadPool.is_task_completed(music_task):
+		WorkerThreadPool.wait_for_task_completion(music_task)
+		music_task = -2
+	if want and not is_instance_valid(music_player) and music_task == -2 and music_stream != null:
+		music_player = AudioStreamPlayer.new()
+		music_player.stream = music_stream
+		music_player.volume_db = -40.0
+		add_child(music_player)
+		music_player.play()
+	if not is_instance_valid(music_player): return
+	music_target_db = -14.0 if want else -60.0
+	music_player.volume_db = lerpf(music_player.volume_db,music_target_db,1.0-exp(-dt*(1.2 if want else 2.5)))
+	if not want and music_player.volume_db < -55.0 and music_player.playing: music_player.stream_paused = true
+	if want and music_player.stream_paused: music_player.stream_paused = false
+
+func _make_lobby_music() -> AudioStreamWAV:
+	# A slow, looping ambient pad: four chords, soft arpeggio, distant pulse.
+	var rate = 16000
+	var bar = 4.0
+	var chords = [[57,60,64,69],[53,57,60,65],[48,52,55,60],[55,59,62,67]]
+	var length = int(rate*bar*chords.size())
+	var samples = PackedFloat32Array()
+	samples.resize(length)
+	for c in range(chords.size()):
+		var start = int(c*bar*rate)
+		var chord = chords[c]
+		for i in range(int(bar*rate)):
+			var t = float(i)/rate
+			var env = minf(1.0,t/1.2)*minf(1.0,(bar-t)/1.0)
+			var v = 0.0
+			for n in chord:
+				var f = 440.0*pow(2.0,(n-69)/12.0)
+				v += sin(TAU*f*t)*0.13+sin(TAU*f*1.003*t)*0.09
+			# Arpeggio: one note every half second, gently decaying.
+			var step = int(t/0.5)
+			var at = t-step*0.5
+			var arp_f = 440.0*pow(2.0,(chord[step%4]+12-69)/12.0)
+			v += sin(TAU*arp_f*at)*exp(-at*5.0)*0.18
+			# Low pulse on each beat.
+			var bt = fmod(t,1.0)
+			v += sin(TAU*55.0*bt)*exp(-bt*7.0)*0.22
+			samples[start+i] = v*env*0.55
+	var data = PackedByteArray()
+	data.resize(length*2)
+	for i in range(length): data.encode_s16(i*2,int(clampf(samples[i],-1,1)*32767))
+	var wav = AudioStreamWAV.new()
+	wav.format = AudioStreamWAV.FORMAT_16_BITS
+	wav.mix_rate = rate
+	wav.data = data
+	wav.loop_mode = AudioStreamWAV.LOOP_FORWARD
+	wav.loop_end = length
+	return wav

@@ -59,6 +59,20 @@ func _run():
 	game._damage_number(game.actors[1].p+Vector3(0,1.6,-6),56,true)
 	game._update_hud()
 	await _capture(game,"combat")
+	game._start_mission(0)
+	game._deploy(0)
+	game.wave = 3
+	game._spawn_wave()
+	for e in game.enemies.values(): e.p = game.actors[1].p+Vector3(randf_range(-8,8),0,randf_range(-16,-7))
+	game.yaw = 0.25
+	game._update_camera(0)
+	game._render_models(1)
+	game._update_hud()
+	await _capture(game,"grass")
+	game.yaw = PI
+	game._update_camera(0)
+	await _capture(game,"crash")
+	game.yaw = 0
 	game.wave = 10
 	game.enemies.clear()
 	game._spawn_wave()
