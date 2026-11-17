@@ -80,6 +80,16 @@ func _run():
 	game.enemies[boss_id].hp = game.enemies[boss_id].max_hp*0.4
 	game._simulate_enemy_kinds(0.01)
 	assert(game.enemies[boss_id].phase == 2 and game.enemies.size() == count+4)
+	# Reload sound plays mag-out, mag-in and rack in step with the reload bar.
+	var r = {"hp":100.0,"slot":0,"ammo":0,"mag":12,"reload_ratio":0.0}
+	game._reload_audio_tick(r)
+	for value in [1.0,0.7,0.3,0.0]:
+		r.reload_ratio = value
+		if value == 0.0: r.ammo = 12
+		game._reload_audio_tick(r)
+	assert(game.reload_sfx_log == ["out","in","rack"])
+	var wav = game._make_reload_sound("rack")
+	assert(wav.data.size() > 1000)
 	game.queue_free()
 	await process_frame
 	print("COMBAT_PLUS_PASS loadout switch pellets shield grenade pickup rarity revive boss_phase")

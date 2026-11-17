@@ -67,6 +67,11 @@ var banner_label: Label
 var vignette: TextureRect
 var revive_label: Label
 var armory_status: Label
+var reload_audio: AudioStreamPlayer
+var reload_sounds: Dictionary = {}
+var last_reload_ratio = 0.0
+var last_reload_slot = -1
+var reload_sfx_log: Array = []
 
 # ---------------------------------------------------------------- weapons
 
@@ -819,6 +824,65 @@ func _update_hud():
 			if id != local_id and actors[id].hp <= 0 and actors[id].p.distance_to(a.p) < 2.4:
 				revive_label.text = "按住 E 救援隊友  %d%%" % int(100*float(actors[id].get("revive",0))/REVIVE_TIME)
 	if a.hp <= 0 and actors.size() > 1 and is_instance_valid(toast): toast.text = ""
+	_reload_audio_tick(a)
+
+# ---------------------------------------------------------------- reload sound
+
+func _reload_audio_tick(a: Dictionary):
+	# Remaining reload fraction: 1 when a reload starts, 0 when finished or idle.
+	var ratio = float(a.get("reload_ratio",float(a.get("reload",0))/maxf(0.01,float(a.get("reload_time",RELOAD_TIME)))))
+	var slot = int(a.get("slot",0))
+	if a.hp > 0 and slot == last_reload_slot:
+		if last_reload_ratio <= 0 and ratio > 0: _play_reload("out")
+		elif last_reload_ratio > 0.4 and ratio <= 0.4 and ratio > 0: _play_reload("in")
+		elif last_reload_ratio > 0 and ratio <= 0 and int(a.get("ammo",0)) >= int(a.get("mag",1)): _play_reload("rack")
+	last_reload_ratio = ratio
+	last_reload_slot = slot
+
+func _play_reload(kind: String):
+	reload_sfx_log.append(kind)
+	if dedicated or DisplayServer.get_name() == "headless": return
+	if not is_instance_valid(reload_audio):
+		reload_audio = AudioStreamPlayer.new()
+		reload_audio.volume_db = -4.0
+		add_child(reload_audio)
+	if not reload_sounds.has(kind): reload_sounds[kind] = _make_reload_sound(kind)
+	reload_audio.stream = reload_sounds[kind]
+	reload_audio.play()
+
+func _make_reload_sound(kind: String) -> AudioStreamWAV:
+	var rate = 22050
+	# Each event: [start seconds, length, tone Hz, noise mix, volume]
+	var events = {
+		"out": [[0.0,0.05,520.0,0.7,0.5],[0.06,0.12,180.0,0.85,0.35]],
+		"in": [[0.0,0.035,1500.0,0.5,0.6],[0.04,0.06,300.0,0.6,0.5]],
+		"rack": [[0.0,0.05,900.0,0.75,0.5],[0.12,0.04,1900.0,0.45,0.65]]
+	}[kind]
+	var total = 0.0
+	for e in events: total = maxf(total,e[0]+e[1])
+	var count = int(rate*(total+0.02))
+	var samples = PackedFloat32Array()
+	samples.resize(count)
+	var rng = RandomNumberGenerator.new()
+	rng.seed = hash(kind)
+	for e in events:
+		var start = int(e[0]*rate)
+		var length = int(e[1]*rate)
+		var smooth = 0.0
+		for i in range(length):
+			var t = float(i)/rate
+			var env = exp(-t*55.0)*minf(1.0,i/40.0)
+			smooth = lerpf(smooth,rng.randf_range(-1,1),0.35)
+			var value = (sin(TAU*e[2]*t)*(1.0-e[3])+smooth*e[3])*env*e[4]
+			if start+i < count: samples[start+i] += value
+	var data = PackedByteArray()
+	data.resize(count*2)
+	for i in range(count): data.encode_s16(i*2,int(clampf(samples[i],-1,1)*32767))
+	var wav = AudioStreamWAV.new()
+	wav.format = AudioStreamWAV.FORMAT_16_BITS
+	wav.mix_rate = rate
+	wav.data = data
+	return wav
 
 # ---------------------------------------------------------------- armory
 
