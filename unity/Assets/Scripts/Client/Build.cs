@@ -6,6 +6,9 @@ namespace RiftWard.Client
     /// Design tokens of the "field manual" look, shared by UI and world.
     public static class Palette
     {
+        // Declared first: the colour fields below are initialised through Hex() in textual order.
+        static readonly Dictionary<string, Color> hexCache = new Dictionary<string, Color>();
+
         public static readonly Color Ink = Hex("101113");
         public static readonly Color Sheet = Hex("16171a");
         public static readonly Color Line = Hex("2e3136");
@@ -16,9 +19,12 @@ namespace RiftWard.Client
         public static readonly Color Player = Hex("f0b24a");
         public static readonly Color Teammate = Hex("82aaff");
 
+        /// Parsed once per literal: HUD and effects call this every frame.
         public static Color Hex(string hex)
         {
-            ColorUtility.TryParseHtmlString("#" + hex, out var c);
+            if (hexCache.TryGetValue(hex, out var c)) return c;
+            ColorUtility.TryParseHtmlString("#" + hex, out c);
+            hexCache[hex] = c;
             return c;
         }
     }
@@ -94,8 +100,10 @@ namespace RiftWard.Client
 
         public static GameObject Prim(PrimitiveType type, Transform parent, Vector3 position, Vector3 scale, Color color, float glow = 0f, bool shadows = true)
         {
-            var go = GameObject.CreatePrimitive(type);
-            Object.Destroy(go.GetComponent<Collider>());
+            // Shared primitive meshes: CreatePrimitive would build (and we would destroy) a collider every call,
+            // which is costly for effects spawned dozens of times per second.
+            var go = new GameObject(type.ToString(), typeof(MeshFilter), typeof(MeshRenderer));
+            go.GetComponent<MeshFilter>().sharedMesh = PrimitiveMesh(type);
             go.transform.SetParent(parent, false);
             go.transform.localPosition = position;
             go.transform.localScale = scale;
@@ -103,6 +111,17 @@ namespace RiftWard.Client
             r.sharedMaterial = Mat(color, glow);
             if (!shadows) r.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
             return go;
+        }
+
+        static readonly Dictionary<PrimitiveType, Mesh> primitiveMeshes = new Dictionary<PrimitiveType, Mesh>();
+        static Mesh PrimitiveMesh(PrimitiveType type)
+        {
+            if (primitiveMeshes.TryGetValue(type, out var mesh)) return mesh;
+            var temp = GameObject.CreatePrimitive(type);
+            mesh = temp.GetComponent<MeshFilter>().sharedMesh;
+            Object.DestroyImmediate(temp);
+            primitiveMeshes[type] = mesh;
+            return mesh;
         }
 
         public static GameObject Cube(Transform parent, Vector3 position, Vector3 size, Color color, float glow = 0f, bool shadows = true) =>

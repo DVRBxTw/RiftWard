@@ -228,6 +228,31 @@ namespace RiftWard.Sim
             return p;
         }
 
+        /// Distance along a ray to the first cover wall or the ground, capped at maxDistance (slab test per box).
+        public static float RayBlock(Vector3 origin, Vector3 dir, float maxDistance)
+        {
+            float best = maxDistance;
+            if (dir.y < -1e-4f) best = Mathf.Min(best, origin.y / -dir.y);
+            foreach (var c in Defs.Covers)
+            {
+                float tMin = 0f, tMax = best;
+                if (!Slab(origin.x, dir.x, c[0] - c[2], c[0] + c[2], ref tMin, ref tMax)) continue;
+                if (!Slab(origin.y, dir.y, 0f, c[4], ref tMin, ref tMax)) continue;
+                if (!Slab(origin.z, dir.z, c[1] - c[3], c[1] + c[3], ref tMin, ref tMax)) continue;
+                best = tMin;
+            }
+            return best;
+
+            static bool Slab(float o, float d, float lo, float hi, ref float tMin, ref float tMax)
+            {
+                if (Mathf.Abs(d) < 1e-6f) return o >= lo && o <= hi;
+                float t1 = (lo - o) / d, t2 = (hi - o) / d;
+                if (t1 > t2) (t1, t2) = (t2, t1);
+                tMin = Mathf.Max(tMin, t1); tMax = Mathf.Min(tMax, t2);
+                return tMin <= tMax;
+            }
+        }
+
         public static bool InCover(Vector3 p)
         {
             foreach (var c in Defs.Covers)
@@ -505,7 +530,8 @@ namespace RiftWard.Sim
         void FireRay(Actor a, Vector3 origin, Vector3 dir, float damage)
         {
             Enemy best = null;
-            float nearest = Defs.ShotRange;
+            // Walls and the ground stop the shot: nothing behind them can be hit.
+            float nearest = RayBlock(origin, dir, Defs.ShotRange);
             bool head = false;
             foreach (var e in Enemies.Values)
             {

@@ -35,7 +35,12 @@ namespace RiftWard.Client
     /// Display data for account progression: talents, gear slots and rarities (rules live in the account service).
     public static class Gear
     {
+        /// Currency colours shared by the nav chips, shop and icons.
+        public static readonly Color GearKeyColor = Palette.Hex("b07cff"), WeaponKeyColor = Palette.Hex("e5534b");
         public static readonly string[] RarityNames = { "劣質", "普通", "稀世", "傳奇", "神話" };
+        /// Gold per salvaged piece; mirrors GEAR_SALVAGE_GOLD / DUPLICATE_GOLD in server/service.py.
+        public static readonly int[] GearSalvageGold = { 10, 25, 60, 150, 400 };
+        public static readonly int[] WeaponSalvageGold = { 20, 50, 120, 300, 800 };
         public static readonly Color[] RarityColors =
         {
             Palette.Hex("e8e6e1"), Palette.Hex("5fd17a"), Palette.Hex("b07cff"), Palette.Hex("ff9a3c"), Palette.Hex("ff4b4b"),

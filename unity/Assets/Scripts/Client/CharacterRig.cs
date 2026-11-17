@@ -43,7 +43,8 @@ namespace RiftWard.Client
         public static Transform Find(Transform t, string name)
         {
             if (t.name == name) return t;
-            foreach (Transform c in t) { var f = Find(c, name); if (f != null) return f; }
+            // Indexed loop: foreach over a Transform allocates an enumerator per node.
+            for (int i = 0; i < t.childCount; i++) { var f = Find(t.GetChild(i), name); if (f != null) return f; }
             return null;
         }
 

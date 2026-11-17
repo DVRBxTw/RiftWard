@@ -304,6 +304,17 @@ namespace RiftWard.Client
             damageArcs.Add((arc, 1f));
         }
 
+        // Text is only re-formatted when the value behind it changes: formatting every label every frame
+        // produced a steady stream of garbage (and GC hitches) for numbers that rarely change.
+        readonly Dictionary<Text, long> textKeys = new Dictionary<Text, long>();
+        readonly List<int> gone = new List<int>();
+        bool Changed(Text t, long key)
+        {
+            if (textKeys.TryGetValue(t, out var last) && last == key) return false;
+            textKeys[t] = key;
+            return true;
+        }
+
         public void Tick(float dt, GameSim sim, Actor local, Camera camera, bool thirdPerson, string toastText)
         {
             bannerTimer = Mathf.Max(0, bannerTimer - dt);
@@ -325,7 +336,7 @@ namespace RiftWard.Client
             }
             hitRoot.localScale = Vector3.one * (1f + 0.35f * (1f - Mathf.Clamp01(hit)) * (hit > 0 ? 1 : 0) + (killTimer > 0 ? 0.25f : 0));
             headTag.text = headTimer > 0 ? "爆頭" : "";
-            combo.text = comboCount >= 2 ? $"×{comboCount}" : "";
+            if (Changed(combo, comboCount)) combo.text = comboCount >= 2 ? $"×{comboCount}" : "";
             comboCaption.enabled = comboCount >= 2;
 
             // Prompt capsule fades in and out instead of popping.
@@ -336,10 +347,12 @@ namespace RiftWard.Client
             toastPill.sizeDelta = new Vector2(Mathf.Max(240, toast.preferredWidth + 48), 34);
 
             region.text = Defs.Regions[sim.Region].Name;
-            wave.text = $"第 {sim.Wave} 波  / {Defs.WavesPerMission}";
-            stats.text = $"剩餘 {sim.Enemies.Count:00}    擊破 {sim.Kills:00}    {(int)sim.Elapsed / 60:00}:{(int)sim.Elapsed % 60:00}";
-            level.text = $"LV {sim.Level:00}";
-            xpText.text = $"{sim.Xp} / {sim.XpNeed} XP · 敵人 ×{sim.LevelScale:0.00}";
+            if (Changed(wave, sim.Wave)) wave.text = $"第 {sim.Wave} 波  / {Defs.WavesPerMission}";
+            if (Changed(stats, ((long)sim.Enemies.Count << 42) | ((long)sim.Kills << 21) | (long)(int)sim.Elapsed))
+                stats.text = $"剩餘 {sim.Enemies.Count:00}    擊破 {sim.Kills:00}    {(int)sim.Elapsed / 60:00}:{(int)sim.Elapsed % 60:00}";
+            if (Changed(level, sim.Level)) level.text = $"LV {sim.Level:00}";
+            if (Changed(xpText, ((long)sim.Xp << 42) | ((long)sim.XpNeed << 21) | (long)Mathf.RoundToInt(sim.LevelScale * 100)))
+                xpText.text = $"{sim.Xp} / {sim.XpNeed} XP · 敵人 ×{sim.LevelScale:0.00}";
             xpBar.Value = sim.XpNeed > 0 ? (float)sim.Xp / sim.XpNeed : 0;
 
             Enemy boss = null;
@@ -347,7 +360,8 @@ namespace RiftWard.Client
             bossRoot.gameObject.SetActive(boss != null && !sim.BuffPending);
             if (boss != null)
             {
-                bossName.text = $"{Defs.Kinds[boss.Kind].Name}   {Mathf.CeilToInt(boss.Hp)} / {Mathf.CeilToInt(boss.MaxHp)}";
+                if (Changed(bossName, ((long)boss.Kind << 50) | ((long)Mathf.CeilToInt(boss.Hp) << 25) | (long)Mathf.CeilToInt(boss.MaxHp)))
+                    bossName.text = $"{Defs.Kinds[boss.Kind].Name}   {Mathf.CeilToInt(boss.Hp)} / {Mathf.CeilToInt(boss.MaxHp)}";
                 bossBar.Value = boss.Hp / Mathf.Max(1, boss.MaxHp);
                 bossEnrage.gameObject.SetActive(boss.State == 2);
                 if (boss.State == 2) bossEnrage.color = Color.Lerp(Palette.Danger, Palette.Amber, 0.5f + 0.5f * Mathf.Sin(Time.time * 8f));
@@ -356,7 +370,7 @@ namespace RiftWard.Client
             // Kill feed from enemies that disappeared since last frame (labelled "你" for your own kills).
             seen.Clear();
             foreach (var e in sim.Enemies.Values) { seen.Add(e.Id); lastEnemies[e.Id] = e.Elite ? 100 + e.Kind : e.Kind; }
-            var gone = new List<int>();
+            gone.Clear();
             foreach (var kv in lastEnemies) if (!seen.Contains(kv.Key)) gone.Add(kv.Key);
             foreach (var id in gone)
             {
@@ -410,17 +424,17 @@ namespace RiftWard.Client
                 bool low = local.Alive && local.Hp <= local.MaxHp * 0.3f;
                 float alpha = low ? 0.45f + 0.25f * Mathf.Sin(Time.time * 6) : Mathf.Clamp01(damageFlash * 1.8f);
                 vignette.color = new Color(0.9f, 0.05f, 0.1f, alpha);
-                shieldValue.text = Mathf.CeilToInt(local.Hp).ToString();
+                if (Changed(shieldValue, Mathf.CeilToInt(local.Hp))) shieldValue.text = Mathf.CeilToInt(local.Hp).ToString();
                 shieldValue.color = low ? Palette.Danger : Palette.Bone;
-                shieldMax.text = $"/ {Mathf.RoundToInt(local.MaxHp)}";
+                if (Changed(shieldMax, Mathf.RoundToInt(local.MaxHp))) shieldMax.text = $"/ {Mathf.RoundToInt(local.MaxHp)}";
                 shieldBar.Value = local.Hp / local.MaxHp;
                 shieldBar.Color = low ? Palette.Danger : Palette.Bone;
                 float maxCd = Defs.SkillCooldown * local.SkillMult;
                 skillBar.Value = 1f - Mathf.Clamp01(local.SkillCooldown / Mathf.Max(0.1f, maxCd));
-                skillTime.text = local.SkillCooldown <= 0 ? "就緒" : $"{local.SkillCooldown:0.0}s";
+                if (Changed(skillTime, local.SkillCooldown <= 0 ? -1 : Mathf.RoundToInt(local.SkillCooldown * 10))) skillTime.text = local.SkillCooldown <= 0 ? "就緒" : $"{local.SkillCooldown:0.0}s";
                 skillTime.color = local.SkillCooldown <= 0 ? Palette.Amber : Palette.Hex("c9c5bb");
                 dashBar.Value = 1f - Mathf.Clamp01(local.DashCooldown / Defs.DashCooldown);
-                dashTime.text = local.DashCooldown <= 0 ? "就緒" : $"{local.DashCooldown:0.0}s";
+                if (Changed(dashTime, local.DashCooldown <= 0 ? -1 : Mathf.RoundToInt(local.DashCooldown * 10))) dashTime.text = local.DashCooldown <= 0 ? "就緒" : $"{local.DashCooldown:0.0}s";
                 dashTime.color = local.DashCooldown <= 0 ? Palette.Hex("82aaff") : Palette.Hex("c9c5bb");
 
                 var kit = local.Loadout.Equipped;
@@ -431,25 +445,25 @@ namespace RiftWard.Client
                     if (!has) continue;
                     bool current = i == local.Slot;
                     int r = local.Loadout.RarityOf(kit[i]);
-                    slotLabels[i].text = $"{i + 1}   {Defs.Weapons[kit[i]].Short}";
+                    if (Changed(slotLabels[i], kit[i].GetHashCode())) slotLabels[i].text = $"{i + 1}   {Defs.Weapons[kit[i]].Short}";
                     slotLabels[i].color = current ? Gear.RarityColors[r] : Palette.Hex("8c8f93");
                     slotChips[i].color = current ? new Color(1, 1, 1, 0.12f) : new Color(1, 1, 1, 0.04f);
                 }
                 int rarity = local.Loadout.RarityOf(local.WeaponId);
                 weaponName.text = Defs.Weapons[local.WeaponId].Name;
                 weaponName.color = Gear.RarityColors[rarity];
-                weaponRarity.text = $"{Gear.RarityNames[rarity]}  ·  傷害 {local.Damage:0}";
+                if (Changed(weaponRarity, ((long)rarity << 32) | (long)Mathf.RoundToInt(local.Damage))) weaponRarity.text = $"{Gear.RarityNames[rarity]}  ·  傷害 {local.Damage:0}";
                 bool reloading = local.Reload > 0;
                 bool lowMag = !reloading && local.Ammo <= Mathf.Max(1, local.Mag / 5);
-                ammo.text = reloading ? "換彈" : local.Ammo.ToString();
+                if (Changed(ammo, reloading ? -1 : local.Ammo)) ammo.text = reloading ? "換彈" : local.Ammo.ToString();
                 ammo.fontSize = reloading ? 30 : 56;
                 ammo.color = reloading || lowMag ? Palette.Amber : Palette.Bone;
-                ammoMax.text = $"/ {local.Mag}";
+                if (Changed(ammoMax, local.Mag)) ammoMax.text = $"/ {local.Mag}";
                 reloadBar.Value = reloading ? 1f - local.Reload / local.ReloadTime : (float)local.Ammo / Mathf.Max(1, local.Mag);
                 reloadBar.Color = reloading ? Palette.Amber : Palette.Bone;
                 lowAmmo.text = lowMag && local.Alive ? (local.Ammo == 0 ? "彈匣已空 · 按 R 換彈" : "彈藥不足 · 按 R 換彈") : "";
                 lowAmmo.color = new Color(Palette.Amber.r, Palette.Amber.g, Palette.Amber.b, 0.6f + 0.4f * Mathf.Sin(Time.time * 8f));
-                hint.text = $"R 換彈  ·  右鍵 瞄準  ·  V {(thirdPerson ? "第三人稱" : "第一人稱")}  ·  Esc 選單";
+                if (Changed(hint, thirdPerson ? 1 : 0)) hint.text = $"R 換彈  ·  右鍵 瞄準  ·  V {(thirdPerson ? "第三人稱" : "第一人稱")}  ·  Esc 選單";
                 revive.text = "";
                 if (!local.Alive && sim.Actors.Count > 1)
                     revive.text = $"你已倒地 · 等待隊友按住 E 救援  {Mathf.RoundToInt(100 * local.Revive / Defs.ReviveTime)}%";

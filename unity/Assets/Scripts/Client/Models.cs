@@ -205,29 +205,81 @@ namespace RiftWard.Client
             if (rarity >= 2)
                 foreach (float x in new[] { -0.046f, 0.046f })
                     P(h, new Vector3(x, 0.012f, length * 0.35f), new Vector3(0.004f, 0.006f, length * 0.55f), glow, 3f);
-            if (rarity >= 3)
+            if (rarity < 3) return;
+
+            // 傳奇 / 神話: re-skin the whole gun first (dark body, precious-metal edges), then add the extras.
+            bool myth = rarity >= 4;
+            Color dark = Palette.Hex(myth ? "160a0d" : "221a12"), metal = Palette.Hex(myth ? "7a1c24" : "c9a24a");
+            foreach (var r in h.GetComponentsInChildren<MeshRenderer>())
             {
-                Color gold = Palette.Hex("c9a24a");
-                P(h, new Vector3(0, 0.046f, length * 0.2f), new Vector3(0.05f, 0.004f, length * 0.4f), gold, 0.6f);
-                foreach (float x in new[] { -0.047f, 0.047f }) P(h, new Vector3(x, -0.03f, 0f), new Vector3(0.004f, 0.02f, 0.08f), gold, 0.6f);
+                var m = r.sharedMaterial;
+                if (m == null || m.IsKeywordEnabled("_EMISSION")) continue;
+                Color c = m.color;
+                float lum = c.r * 0.3f + c.g * 0.59f + c.b * 0.11f;
+                r.sharedMaterial = Build.Mat(lum < 0.2f ? Color.Lerp(dark, c, 0.25f) : metal, lum < 0.2f ? 0f : 0.5f);
             }
-            if (rarity >= 3)
+            Color hot = Color.Lerp(glow, Color.white, 0.35f);
+
+            // Engraved trim along the top and both flanks.
+            P(h, new Vector3(0, 0.047f, length * 0.25f), new Vector3(0.012f, 0.005f, length * 0.6f), metal, 1.2f);
+            foreach (float x in new[] { -0.047f, 0.047f })
             {
-                var ember = P(h, new Vector3(0, -0.02f, length * 0.6f), new Vector3(0.02f, 0.02f, 0.06f), glow, 5f);
-                ember.AddComponent<Spinner>().Pulse = 0.35f;
+                P(h, new Vector3(x, -0.022f, length * 0.1f), new Vector3(0.004f, 0.006f, length * 0.5f), metal, 1.2f);
+                // Pulsing energy vein in the rarity colour.
+                var vein = P(h, new Vector3(x * 1.02f, 0.0f, length * 0.4f), new Vector3(0.005f, 0.01f, length * 0.62f), hot, 6f);
+                vein.AddComponent<Spinner>().Pulse = 0.12f;
             }
-            if (rarity >= 4)
+
+            // Three glowing coolant rings around the barrel, pulsing out of phase.
+            for (int i = 0; i < 3; i++)
+            {
+                var ring = P(h, new Vector3(0, 0.012f, length * (0.62f + i * 0.11f)), new Vector3(0.06f, 0.06f, 0.012f), glow, 5f);
+                ring.transform.localRotation = Quaternion.Euler(0, 0, 45f);
+                var sp = ring.AddComponent<Spinner>();
+                sp.Pulse = 0.18f; sp.Speed = 90f * (i % 2 == 0 ? 1 : -1);
+            }
+
+            // Visible core in the receiver.
+            var core = P(h, new Vector3(0, 0.01f, length * 0.05f), new Vector3(0.03f, 0.03f, 0.05f), hot, 7f);
+            core.AddComponent<Spinner>().Pulse = 0.3f;
+
+            // Muzzle energy: an orb plus a ring of shards (two counter-rotating rings for 神話).
+            var orb = P(h, new Vector3(0, 0.01f, length + 0.01f), new Vector3(0.022f, 0.022f, 0.022f), hot, 8f);
+            orb.AddComponent<Spinner>().Pulse = 0.4f;
+            for (int ringIndex = 0; ringIndex < (myth ? 2 : 1); ringIndex++)
             {
                 var halo = new GameObject("Halo").transform;
                 halo.SetParent(h, false);
-                halo.localPosition = new Vector3(0, 0.01f, length - 0.02f);
-                halo.gameObject.AddComponent<Spinner>().Speed = 220f;
-                for (int i = 0; i < 6; i++)
+                halo.localPosition = new Vector3(0, 0.01f, length - 0.02f - ringIndex * 0.05f);
+                halo.gameObject.AddComponent<Spinner>().Speed = ringIndex == 0 ? 220f : -160f;
+                int count = myth ? 6 : 4;
+                float radius = ringIndex == 0 ? 0.075f : 0.1f;
+                for (int i = 0; i < count; i++)
                 {
-                    float a = i * Mathf.PI / 3f;
-                    var shard = P(halo, new Vector3(Mathf.Cos(a) * 0.075f, Mathf.Sin(a) * 0.075f, 0), new Vector3(0.012f, 0.012f, 0.03f), glow, 5f);
+                    float a = i * Mathf.PI * 2f / count;
+                    var shard = P(halo, new Vector3(Mathf.Cos(a) * radius, Mathf.Sin(a) * radius, 0), new Vector3(0.012f, 0.012f, 0.03f), glow, 5f);
                     shard.transform.localRotation = Quaternion.Euler(0, 0, a * Mathf.Rad2Deg + 45f);
                 }
+            }
+
+            if (!myth) return;
+            // 神話: crystal spikes on top and rift fragments orbiting the whole gun.
+            for (int i = 0; i < 3; i++)
+            {
+                var spike = P(h, new Vector3(0, 0.06f + i * 0.004f, length * (0.15f + i * 0.12f)), new Vector3(0.014f, 0.04f - i * 0.008f, 0.014f), hot, 6f);
+                spike.transform.localRotation = Quaternion.Euler(-20f, 45f, 0);
+            }
+            var orbit = new GameObject("RiftOrbit").transform;
+            orbit.SetParent(h, false);
+            orbit.localPosition = new Vector3(0, 0.01f, length * 0.4f);
+            var spin = orbit.gameObject.AddComponent<Spinner>();
+            spin.Speed = 70f;
+            for (int i = 0; i < 5; i++)
+            {
+                float a = i * Mathf.PI * 2f / 5f;
+                var frag = P(orbit, new Vector3(Mathf.Cos(a) * 0.11f, Mathf.Sin(a) * 0.11f, (i - 2) * length * 0.15f), new Vector3(0.01f, 0.018f, 0.01f), glow, 6f);
+                frag.transform.localRotation = Quaternion.Euler(30, a * Mathf.Rad2Deg, 20);
+                frag.AddComponent<Spinner>().Blink = i % 2 == 0 ? 0f : 0.7f;
             }
         }
 

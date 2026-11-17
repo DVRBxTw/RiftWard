@@ -8,9 +8,12 @@ namespace RiftWard.Client
     {
         float life, t, alpha, lightStart;
         Vector3 from, to, drift;
-        Material material;
+        Renderer rend;
+        MaterialPropertyBlock block;
         Color color;
         Light glow;
+        static int liveLights;
+        const int MaxLights = 4;   // every extra point light re-renders what it touches (forward path)
 
         public static GameObject Sphere(Vector3 at, Color color, float alpha, float glowAmount, float fromSize, float toSize, float life, Vector3 drift = default)
         {
@@ -33,8 +36,10 @@ namespace RiftWard.Client
             var b = go.AddComponent<Burst>();
             var r = go.GetComponent<Renderer>();
             r.sharedMaterial = Build.Mat(color, glowAmount, Mathf.Min(alpha, 0.99f));
-            b.material = r.material;   // instance so each piece fades on its own
-            b.color = b.material.color;
+            // Fade through a property block: the material stays shared (no per-piece material allocation).
+            b.rend = r;
+            b.block = new MaterialPropertyBlock();
+            b.color = r.sharedMaterial.color;
             b.alpha = alpha;
             b.from = fromScale; b.to = toScale; b.life = life; b.drift = drift;
             go.transform.localScale = fromScale;
@@ -42,6 +47,8 @@ namespace RiftWard.Client
 
         public void AddLight(Color color, float intensity, float range)
         {
+            if (liveLights >= MaxLights) return;
+            liveLights++;
             glow = gameObject.AddComponent<Light>();
             glow.type = LightType.Point;
             glow.color = color;
@@ -56,11 +63,13 @@ namespace RiftWard.Client
             float ease = 1f - (1f - k) * (1f - k);
             transform.localScale = Vector3.Lerp(from, to, ease);
             transform.position += drift * Time.deltaTime;
-            if (material != null) { var c = color; c.a = alpha * (1f - k); material.color = c; }
+            if (rend != null) { var c = color; c.a = alpha * (1f - k); block.SetColor(ColorId, c); rend.SetPropertyBlock(block); }
             if (glow != null) glow.intensity = lightStart * (1f - k) * (1f - k);
             if (t >= life) Destroy(gameObject);
         }
 
-        void OnDestroy() { if (material != null) Destroy(material); }
+        static readonly int ColorId = Shader.PropertyToID("_Color");
+
+        void OnDestroy() { if (glow != null) liveLights--; }
     }
 }

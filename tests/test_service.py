@@ -95,6 +95,13 @@ class ServiceTests(unittest.TestCase):
         wrong = (lo2["copies"][gun][0] + 1) % 5
         self.assertEqual(self.call("/api/weapon/salvage", {"weapon": gun, "index": 0, "rarity": wrong}, auth)[0], 400)
         lo = lo2
+        # Bulk weapon salvage keeps every active copy and re-points the active index.
+        active_rarity = {w: lo["copies"][w][lo["active"][w]] for w in lo["owned"]}
+        code, r = self.call("/api/salvage/bulk", {"kind": "weapon", "rarities": [0, 1, 2, 3, 4], "confirm": True}, auth)
+        lo = r["profile"]["loadout"]
+        self.assertEqual(code, 200)
+        for w in lo["owned"]:
+            self.assertEqual((lo["copies"][w], lo["active"][w]), ([active_rarity[w]], 0))
         code, equipped = self.call("/api/shop/equip",{"weapons":[lo["owned"][0]]},auth)
         self.assertEqual((code,equipped["profile"]["loadout"]["equipped"]),(200,[lo["owned"][0]]))
         # Legacy loadouts keep their guns, counted as 普通.
@@ -124,9 +131,14 @@ class ServiceTests(unittest.TestCase):
         key = {"X-Server-Key": self.store.server_key}
         p = account["profile"]
         self.assertEqual((p["level"], p["talent_points"], p["keys"]), (1, 0, 0))
-        # Missions grant account XP: 40 kills * 3 + 20 waves * 15 + 200 victory = 620 -> level 4 (150 + 200 + 250 = 600).
+        # Missions grant account XP: 40 kills * 1 + 20 waves * 5 + 100 victory = 240 -> level 2 (needs 150).
         record = {"kills": 40, "headshots": 12, "shots": 300, "hits": 180, "wave": 20, "victory": True}
         self.call("/api/server/reward", {"account_id": aid, "gold": 0, "stats": record}, key)
+        p = self.store.profile(aid)
+        self.assertEqual((p["level"], p["talent_points"]), (2, 1))
+        # Two more wins: 720 total -> level 4 (150 + 200 + 250 = 600).
+        for _ in range(2):
+            self.call("/api/server/reward", {"account_id": aid, "gold": 0, "stats": record}, key)
         p = self.store.profile(aid)
         self.assertEqual((p["level"], p["talent_points"]), (4, 3))
         code, r = self.call("/api/talent/assign", {"talent": "damage", "points": 2}, auth)
@@ -150,6 +162,13 @@ class ServiceTests(unittest.TestCase):
         code, r = self.call("/api/gear/salvage", {"item": other["id"]}, auth)
         self.assertEqual((code, len(r["profile"]["inventory"])), (200, 9))
         self.assertGreater(r["profile"]["gold"], gold)
+        # Bulk salvage: 傳奇+ needs confirm; worn gear always survives.
+        self.assertEqual(self.call("/api/salvage/bulk", {"kind": "gear", "rarities": [3]}, auth)[0], 400)
+        self.assertEqual(self.call("/api/salvage/bulk", {"kind": "gear", "rarities": []}, auth)[0], 400)
+        gold = r["profile"]["gold"]
+        code, r = self.call("/api/salvage/bulk", {"kind": "gear", "rarities": [0, 1, 2, 3, 4], "confirm": True}, auth)
+        self.assertEqual((code, r["count"], [i["id"] for i in r["profile"]["inventory"]]), (200, 8, [item["id"]]))
+        self.assertEqual(r["profile"]["gold"], gold + r["gold"])
 
     def test_lifetime_stats(self):
         account = self.register()

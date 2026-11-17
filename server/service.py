@@ -49,6 +49,14 @@ GEAR_NAMES = {"armor": "護甲", "module": "槍械模組", "boots": "戰術靴",
 INVENTORY_LIMIT = 200
 
 
+def mission_xp(stats):
+    """Account XP for one mission. Tuned down from kills*3 + wave*15 + 200, which let a single cleared region
+    jump several levels; the level curve itself is unchanged so existing accounts keep their level and talents."""
+    kills = stats.get("kills", 0) if isinstance(stats.get("kills"), int) else 0
+    wave = stats.get("wave", 0) if isinstance(stats.get("wave"), int) else 0
+    return max(0, kills) * 1 + max(0, wave) * 5 + (100 if stats.get("victory") is True else 0)
+
+
 def level_for(xp: int):
     """Returns (level, xp into level, xp needed for next level). Each level needs 100 + 50 * level."""
     level = 1
@@ -71,6 +79,7 @@ def roll_item(rng):
 
 WEAPON_WEIGHTS = {"pistol": 30, "rifle": 30, "shotgun": 20, "sniper": 20}
 DUPLICATE_GOLD = [20, 50, 120, 300, 800]
+GEAR_SALVAGE_GOLD = [10, 25, 60, 150, 400]
 
 
 def default_loadout():
@@ -328,8 +337,49 @@ class Store:
         gear["inventory"].remove(item)
         self._save_gear(account_id, gear)
         with self.connect() as db:
-            db.execute("UPDATE progress SET gold=gold+? WHERE account_id=?", ([10, 25, 60, 150, 400][item["rarity"]], account_id))
+            db.execute("UPDATE progress SET gold=gold+? WHERE account_id=?", (GEAR_SALVAGE_GOLD[item["rarity"]], account_id))
         return self.profile(account_id)
+
+    def salvage_bulk(self, account_id: int, kind, rarities, confirm=False):
+        """Salvages every unequipped item (gear) or every inactive copy (weapons) of the chosen rarities.
+        Anything 傳奇 or above needs confirm=True, so a stray request can never wipe the best loot."""
+        if kind not in ("gear", "weapon"):
+            raise ValueError("分解類型不正確")
+        if not isinstance(rarities, list) or not rarities or not all(isinstance(r, int) and not isinstance(r, bool) and 0 <= r < len(RARITIES) for r in rarities):
+            raise ValueError("請選擇要分解的稀有度")
+        chosen = set(rarities)
+        if max(chosen) >= 3 and confirm is not True:
+            raise ValueError("包含傳奇以上，請先確認")
+        count, gold = 0, 0
+        if kind == "gear":
+            gear = self._raw_gear(account_id)
+            worn = set(gear["equipped"].values())
+            kept = []
+            for item in gear["inventory"]:
+                if item["rarity"] in chosen and item["id"] not in worn:
+                    count += 1
+                    gold += GEAR_SALVAGE_GOLD[item["rarity"]]
+                else:
+                    kept.append(item)
+            gear["inventory"] = kept
+            self._save_gear(account_id, gear)
+            with self.connect() as db:
+                db.execute("UPDATE progress SET gold=gold+? WHERE account_id=?", (gold, account_id))
+            return count, gold, self.profile(account_id)
+        loadout = self.profile(account_id)["loadout"]
+        for weapon in loadout["owned"]:
+            copies, active = loadout["copies"][weapon], loadout["active"][weapon]
+            kept = []
+            for i, rarity in enumerate(copies):
+                if rarity in chosen and i != active:
+                    count += 1
+                    gold += DUPLICATE_GOLD[rarity]
+                else:
+                    if i == active:
+                        loadout["active"][weapon] = len(kept)
+                    kept.append(rarity)
+            loadout["copies"][weapon] = kept
+        return count, gold, self._save_loadout(account_id, loadout, gold)
 
     def add_xp(self, account_id: int, xp: int):
         with self.connect() as db:
@@ -717,7 +767,7 @@ class Handler(BaseHTTPRequestHandler):
                         if "stats" in data:
                             store.record_stats(data.get("account_id"), data.get("stats"))
                             st = data["stats"]
-                            store.add_xp(data.get("account_id"), st.get("kills", 0) * 3 + st.get("wave", 0) * 15 + (200 if st.get("victory") is True else 0))
+                            store.add_xp(data.get("account_id"), mission_xp(st))
                         profile = store.reward(data.get("account_id"), data.get("gold"))
                     else:
                         account_id = data.get("account_id")
@@ -755,7 +805,7 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(200, {"ok": True, "count": count, "profile": store.profile(profile["id"])})
             else:
                 self._json(404, {"ok": False, "error": "找不到此服務"})
-        elif self.path in ("/api/talent/assign", "/api/talent/reset", "/api/gacha/draw", "/api/gacha/weapon", "/api/gear/equip", "/api/gear/salvage", "/api/weapon/select", "/api/weapon/salvage"):
+        elif self.path in ("/api/talent/assign", "/api/talent/reset", "/api/gacha/draw", "/api/gacha/weapon", "/api/gear/equip", "/api/gear/salvage", "/api/weapon/select", "/api/weapon/salvage", "/api/salvage/bulk"):
             try:
                 extra = {}
                 if self.path == "/api/talent/assign":
@@ -770,6 +820,9 @@ class Handler(BaseHTTPRequestHandler):
                     extra["weapons"] = weapons
                 elif self.path == "/api/weapon/select":
                     result = store.select_weapon_copy(profile["id"], data.get("weapon"), data.get("index"), data.get("rarity"))
+                elif self.path == "/api/salvage/bulk":
+                    count, gold, result = store.salvage_bulk(profile["id"], data.get("kind"), data.get("rarities"), data.get("confirm", False))
+                    extra.update(count=count, gold=gold)
                 elif self.path == "/api/weapon/salvage":
                     result = store.salvage_weapon_copy(profile["id"], data.get("weapon"), data.get("index"), data.get("rarity"))
                 elif self.path == "/api/gear/equip":

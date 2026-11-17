@@ -72,6 +72,8 @@ namespace RiftWard.Client
             Client.ShowcaseWeapon = () => Profile != null && Profile.Loadout.Equipped.Count > 0 ? Profile.Loadout.Equipped[0] : "rifle";
             Client.Menus.LeaveRequested = ReturnHome;
             Client.Menus.RetryRequested = Deploy;
+            var bench = Arg("-bench");
+            if (bench != null) { StartCoroutine(Bench(bench)); return; }
             var capture = Arg("-capture");
             if (capture != null) { StartCoroutine(Capture(string.IsNullOrEmpty(capture) ? "." : capture)); return; }
             var token = SessionStore.Load(Api.Host);
@@ -368,6 +370,44 @@ namespace RiftWard.Client
 
         // ------------------------------------------------------------ automated screenshots
 
+        /// Repeatable heavy-combat run (all gadgets, mythic weapon, endless waves, auto-fire while sweeping the view)
+        /// that writes frame-time statistics: average FPS, 1% low, worst frame and GC collections.
+        IEnumerator Bench(string output)
+        {
+            var kit = new Loadout { Owned = new List<string> { "rifle", "shotgun" }, Equipped = new List<string> { "rifle", "shotgun" } };
+            kit.Rarity["rifle"] = 4;
+            Client.WeaponRarity = id => kit.RarityOf(id);
+            Client.StartOffline(0, kit, true, new AdminSettings { God = true, InfiniteAmmo = true });
+            var sim = Client.Sim;
+            sim.EnemyVariety = true;
+            foreach (int buff in new[] { Defs.BuffDrone + 200, Defs.BuffPlasma, Defs.BuffOrbit + 200, Defs.BuffMissile + 200, Defs.BuffLightning + 200, Defs.BuffMine + 200 })
+                sim.ApplyBuff(Client.LocalId, buff);
+            sim.Wave = 8;
+            sim.SpawnWave();
+            Client.BenchFire = true;
+            QualitySettings.vSyncCount = 0; Application.targetFrameRate = -1;   // measure raw cost, not the cap
+            yield return Settle(2f);
+            var times = new List<float>();
+            int gc0 = System.GC.CollectionCount(0);
+            float end = Time.realtimeSinceStartup + 25f, yawT = 0;
+            while (Time.realtimeSinceStartup < end)
+            {
+                if (sim.Enemies.Count < 12) sim.SpawnWave();
+                yawT += Time.unscaledDeltaTime;
+                Client.SetView(Mathf.Sin(yawT * 0.7f) * 1.2f, -0.05f);
+                yield return null;
+                times.Add(Time.unscaledDeltaTime * 1000f);
+            }
+            times.Sort();
+            float avg = 0; foreach (var t in times) avg += t; avg /= Mathf.Max(1, times.Count);
+            var low = times.GetRange(times.Count * 99 / 100, Mathf.Max(1, times.Count - times.Count * 99 / 100));
+            float lowAvg = 0; foreach (var t in low) lowAvg += t; lowAvg /= low.Count;
+            int spikes = times.FindAll(t => t > 33f).Count;
+            string report = $"frames={times.Count} avg_fps={1000f / avg:0.0} avg_ms={avg:0.00} low1_fps={1000f / lowAvg:0.0} worst_ms={times[times.Count - 1]:0.0} spikes_over_33ms={spikes} gc0={System.GC.CollectionCount(0) - gc0} kills={sim.Kills}";
+            System.IO.File.WriteAllText(output, report);
+            Application.Quit();
+        }
+
         IEnumerator Capture(string folder)
         {
             Directory.CreateDirectory(folder);
@@ -422,6 +462,13 @@ namespace RiftWard.Client
             Screens.ShowArmory();
             yield return Settle(0.5f);
             yield return Shot(folder, "unity-armory-rarity");
+            Screens.BulkSalvage("weapon");
+            yield return Settle(0.3f);
+            yield return Shot(folder, "unity-salvage-weapon");
+            Screens.ShowCharacter();
+            Screens.BulkSalvage("gear");
+            yield return Settle(0.4f);
+            yield return Shot(folder, "unity-salvage-gear");
             Screens.ShowSettings();
             yield return Settle(0.3f);
             yield return Shot(folder, "unity-settings");
@@ -430,6 +477,15 @@ namespace RiftWard.Client
             yield return Shot(folder, "unity-chest-charge");
             yield return Settle(2.2f);
             yield return Shot(folder, "unity-chest-open");
+            // Weapon draw reveal: every card shows its turning weapon model (傳奇 / 神話 finishes included).
+            Screens.ShowCharacter();
+            var weaponDraw = new List<GearItem>();
+            var drawn = new[] { ("rifle", 4), ("sniper", 3), ("shotgun", 3), ("pistol", 2), ("rifle", 1), ("shotgun", 0), ("pistol", 4), ("sniper", 1), ("rifle", 2), ("pistol", 0) };
+            foreach (var (w, r) in drawn)
+                weaponDraw.Add(new GearItem { Id = w, Slot = "weapon", Rarity = r, Title = Gear.WeaponName(w, r), Detail = "已存入武器庫" });
+            Screens.PlayChestDemo(weaponDraw, 4);
+            yield return Settle(4.5f);
+            yield return Shot(folder, "unity-chest-weapons");
             Screens.ShowStory(0);
             yield return Settle(0.3f);
             yield return Shot(folder, "unity-story");

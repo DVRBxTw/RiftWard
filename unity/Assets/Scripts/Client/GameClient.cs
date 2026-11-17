@@ -36,6 +36,11 @@ namespace RiftWard.Client
 
         readonly Dictionary<int, GameObject> actorViews = new Dictionary<int, GameObject>();
         readonly Dictionary<int, float> enemyHp = new Dictionary<int, float>();
+        readonly List<int> stale = new List<int>();
+        // Looked up once per enemy view instead of searching the hierarchy every frame.
+        readonly Dictionary<int, (Transform laser, CharacterRig rig)> enemyParts = new Dictionary<int, (Transform, CharacterRig)>();
+        readonly HashSet<int> plasmaMounted = new HashSet<int>();
+        readonly Dictionary<int, CharacterRig> actorRigs = new Dictionary<int, CharacterRig>();   // reused each frame to find views whose entity is gone
         readonly Dictionary<int, List<Transform>> droneViews = new Dictionary<int, List<Transform>>();
         readonly Dictionary<int, TextMesh> nameTags = new Dictionary<int, TextMesh>();
         readonly Dictionary<int, List<Transform>> bladeViews = new Dictionary<int, List<Transform>>();
@@ -59,7 +64,7 @@ namespace RiftWard.Client
 
         public void Setup()
         {
-            Application.targetFrameRate = 144;
+            // Frame rate / vSync come from GameSettings.Apply (幀率上限).
             Time.fixedDeltaTime = 1f / 60f;
             var camGo = new GameObject("Camera");
             Camera = camGo.AddComponent<Camera>();
@@ -197,6 +202,12 @@ namespace RiftWard.Client
             }
             foreach (var e in effects) Destroy(e.go);
             effects.Clear();
+            // Gadgets and name tags are separate world objects, not children of the actor view.
+            foreach (var list in droneViews.Values) foreach (var t in list) if (t != null) Destroy(t.gameObject);
+            foreach (var list in bladeViews.Values) foreach (var t in list) if (t != null) Destroy(t.gameObject);
+            foreach (var tag in nameTags.Values) if (tag != null) Destroy(tag.gameObject);
+            droneViews.Clear(); bladeViews.Clear(); nameTags.Clear();
+            enemyHp.Clear(); enemyParts.Clear(); actorRigs.Clear(); plasmaMounted.Clear();
         }
 
         /// Lobby backdrop: the selected region with a slowly orbiting camera and a large soldier.
@@ -219,6 +230,8 @@ namespace RiftWard.Client
         }
 
         public void SetThirdPerson(bool on) => thirdPerson = on;
+        /// Benchmark mode: hold the trigger without a mouse.
+        public bool BenchFire;
         public void SelectSlot(int slot) => desiredSlot = slot;
         /// Rarity of the local player's weapons (from the account profile) for the first-person finish.
         public Func<string, int> WeaponRarity;
@@ -283,7 +296,7 @@ namespace RiftWard.Client
                 Move = active ? new Vector2((Input.GetKey(KeyCode.D) ? 1 : 0) - (Input.GetKey(KeyCode.A) ? 1 : 0), (Input.GetKey(KeyCode.W) ? 1 : 0) - (Input.GetKey(KeyCode.S) ? 1 : 0)) : Vector2.zero,
                 Yaw = yaw, Pitch = pitch,
                 Aim = origin + GameSim.LookDirection(yaw, pitch) * Defs.ShotRange,
-                Fire = active && Input.GetMouseButton(0) && !releaseFireToResume,
+                Fire = BenchFire || (active && Input.GetMouseButton(0) && !releaseFireToResume),
                 Dash = active && (Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift)),
                 Jump = active && Input.GetKey(KeyCode.Space),
                 Descend = active && (Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl)),
@@ -344,6 +357,8 @@ namespace RiftWard.Client
                 var shooterRig = shooterView.GetComponent<CharacterRig>();
                 if (shooterRig != null) { shooterRig.Fire(); if (shooterRig.Muzzle != null) origin = shooterRig.Muzzle.position; }
             }
+            // A miss that stopped short of full range hit a wall or the ground.
+            if (!shot.Hit && Vector3.Distance(shot.Origin, shot.End) < Defs.ShotRange - 0.5f) ImpactEffect(shot.End, shot.End - shot.Origin);
             int rarity = Sim.Actors.TryGetValue(shot.Shooter, out var shooter) ? shooter.Loadout.RarityOf(shooter.WeaponId) : 1;
             if (rarity >= 3) { RarityShot(shot, origin, rarity); if (shot.Shooter == LocalId) { Hud.OnLocalShot(shot, Camera); Sfx.Play(shot.Head ? "head" : shot.Hit ? "hit" : "shot", 0.6f); ApplyRecoil(); } return; }
             var beam = new GameObject("Beam");
@@ -430,6 +445,19 @@ namespace RiftWard.Client
             }
         }
 
+        /// Bullet striking cover or ground: a brief flash, a puff of dust and a few sparks bouncing back.
+        void ImpactEffect(Vector3 at, Vector3 incoming)
+        {
+            Vector3 back = -incoming.normalized;
+            Burst.Sphere(at, Palette.Hex("fff1c0"), 0.9f, 4f, 0.05f, 0.25f, 0.06f);
+            Burst.Sphere(at + back * 0.05f, Palette.Hex("9a948a"), 0.45f, 0f, 0.1f, 0.5f, 0.45f, back * 0.6f + Vector3.up * 0.4f);
+            for (int i = 0; i < 3; i++)
+            {
+                var spark = Build.Cube(null, at, Vector3.one * 0.04f, Palette.Hex("ffd27a"), 5f, false);
+                effects.Add((spark, 0.25f, (back + UnityEngine.Random.insideUnitSphere * 0.8f) * 4f + Vector3.up * 1.5f, 600f));
+            }
+        }
+
         void RenderGadgets(Actor a, GameObject view)
         {
             if (!droneViews.TryGetValue(a.Id, out var drones)) droneViews[a.Id] = drones = new List<Transform>();
@@ -451,8 +479,8 @@ namespace RiftWard.Client
                 drones[i].rotation = Quaternion.Slerp(drones[i].rotation, heading, 1f - Mathf.Exp(-6f * Time.deltaTime));
                 drones[i].gameObject.SetActive(a.Alive);
             }
-            var cannon = view.transform.Find("Plasma");
-            if (a.Plasma && cannon == null) Models.PlasmaCannon(view.transform);
+            if (a.Plasma && !plasmaMounted.Contains(a.Id) && view.transform.Find("Plasma") == null) Models.PlasmaCannon(view.transform);
+            if (a.Plasma) plasmaMounted.Add(a.Id);
             if (!bladeViews.TryGetValue(a.Id, out var blades)) bladeViews[a.Id] = blades = new List<Transform>();
             int bladeCount = a.Alive ? Defs.BladeCount(a.OrbitLevel) : 0;
             while (blades.Count < bladeCount) blades.Add(Models.Blade().transform);
@@ -569,7 +597,7 @@ namespace RiftWard.Client
             }
             for (int i = 0; i < 14; i++)
             {
-                var spark = Build.Cube(null, ex.Position, Vector3.one * 0.08f, Color.Lerp(color, Palette.Hex("fff1c0"), UnityEngine.Random.value), 5f, false);
+                var spark = Build.Cube(null, ex.Position, Vector3.one * 0.08f, Color.Lerp(color, Palette.Hex("fff1c0"), (i % 3) * 0.5f), 5f, false);
                 effects.Add((spark, UnityEngine.Random.Range(0.35f, 0.6f), UnityEngine.Random.onUnitSphere * UnityEngine.Random.Range(5f, 10f) + Vector3.up * 4f, 720f));
             }
             if (Sim.Actors.TryGetValue(LocalId, out var me) && Vector3.Distance(me.Position, ex.Position) < ex.Radius * 3) shake = 0.08f;
@@ -618,7 +646,7 @@ namespace RiftWard.Client
                 float lying = a.Alive ? 0f : -80f;
                 var current = view.transform.rotation;
                 view.transform.rotation = Quaternion.Slerp(current, Quaternion.Euler(lying, a.Yaw * Mathf.Rad2Deg, 0), a.Alive ? 1f : 1f - Mathf.Exp(-6f * dt));
-                var rig = view.GetComponent<CharacterRig>();
+                if (!actorRigs.TryGetValue(a.Id, out var rig)) actorRigs[a.Id] = rig = view.GetComponent<CharacterRig>();
                 if (rig != null)
                 {
                     rig.Alive = a.Alive;
@@ -632,9 +660,10 @@ namespace RiftWard.Client
                 RenderGadgets(a, view);
                 RenderNameTag(a, view);
             }
-            foreach (var id in actorViews.Keys.Where(id => !Sim.Actors.ContainsKey(id)).ToList())
+            stale.Clear(); foreach (var key in actorViews.Keys) if (!Sim.Actors.ContainsKey(key)) stale.Add(key);
+            foreach (var id in stale)
             {
-                Destroy(actorViews[id]); actorViews.Remove(id);
+                Destroy(actorViews[id]); actorViews.Remove(id); actorRigs.Remove(id);
                 if (droneViews.TryGetValue(id, out var ds)) { foreach (var d in ds) Destroy(d.gameObject); droneViews.Remove(id); }
                 if (nameTags.TryGetValue(id, out var tag)) { Destroy(tag.gameObject); nameTags.Remove(id); }
                 if (bladeViews.TryGetValue(id, out var bs)) { foreach (var b in bs) Destroy(b.gameObject); bladeViews.Remove(id); }
@@ -648,21 +677,24 @@ namespace RiftWard.Client
                     if (e.Elite) Models.MakeElite(view);
                     view.transform.position = e.Position;
                     enemyViews[e.Id] = view;
+                    enemyParts[e.Id] = (CharacterRig.Find(view.transform, "Laser"), view.GetComponent<CharacterRig>());
                 }
+                var (laser, enemyRig) = enemyParts[e.Id];
                 view.transform.position = Vector3.Lerp(view.transform.position, e.Position, 1f - Mathf.Exp(-14f * dt));
                 view.transform.rotation = Quaternion.Euler(0, e.Yaw * Mathf.Rad2Deg, 0);
-                var laser = CharacterRig.Find(view.transform, "Laser");
-                if (enemyHp.TryGetValue(e.Id, out var lastHp) && e.Hp < lastHp - 0.5f) view.GetComponent<CharacterRig>()?.Hit();
+                if (enemyHp.TryGetValue(e.Id, out var lastHp) && e.Hp < lastHp - 0.5f && enemyRig != null) enemyRig.Hit();
                 enemyHp[e.Id] = e.Hp;
                 if (laser != null) laser.gameObject.SetActive(e.State == 1);
             }
-            foreach (var id in enemyViews.Keys.Where(id => !Sim.Enemies.ContainsKey(id)).ToList())
+            stale.Clear(); foreach (var key in enemyViews.Keys) if (!Sim.Enemies.ContainsKey(key)) stale.Add(key);
+            foreach (var id in stale)
             {
                 var view = enemyViews[id];
                 DeathEffect(view, Palette.Hex("ff8855"), view.transform.localScale.x);
                 Destroy(view);
                 enemyViews.Remove(id);
                 enemyHp.Remove(id);
+                enemyParts.Remove(id);
             }
 
             foreach (var b in Sim.Bullets.Values)
@@ -671,7 +703,8 @@ namespace RiftWard.Client
                 view.transform.position = b.Position;
                 if (b.Kind == BulletKind.Missile && b.Velocity.sqrMagnitude > 0.01f) view.transform.rotation = Quaternion.LookRotation(b.Velocity);
             }
-            foreach (var id in bulletViews.Keys.Where(id => !Sim.Bullets.ContainsKey(id)).ToList()) { Destroy(bulletViews[id]); bulletViews.Remove(id); }
+            stale.Clear(); foreach (var key in bulletViews.Keys) if (!Sim.Bullets.ContainsKey(key)) stale.Add(key);
+            foreach (var id in stale) { Destroy(bulletViews[id]); bulletViews.Remove(id); }
 
             foreach (var p in Sim.Pickups.Values)
             {
@@ -679,7 +712,8 @@ namespace RiftWard.Client
                 view.transform.position = p.Position + Vector3.up * (0.6f + Mathf.Sin(Time.time * 3 + p.Id) * 0.12f);
                 view.transform.Rotate(0, dt * 115f, 0);
             }
-            foreach (var id in pickupViews.Keys.Where(id => !Sim.Pickups.ContainsKey(id)).ToList()) { Destroy(pickupViews[id]); pickupViews.Remove(id); }
+            stale.Clear(); foreach (var key in pickupViews.Keys) if (!Sim.Pickups.ContainsKey(key)) stale.Add(key);
+            foreach (var id in stale) { Destroy(pickupViews[id]); pickupViews.Remove(id); }
 
             for (int i = effects.Count - 1; i >= 0; i--)
             {

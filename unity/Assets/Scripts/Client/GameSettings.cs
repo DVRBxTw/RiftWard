@@ -8,7 +8,7 @@ namespace RiftWard.Client
     public static class GameSettings
     {
         public static bool Fullscreen = true;
-        public static int Resolution = -1, Quality = 2;
+        public static int Resolution = -1, Quality = 2, FrameCap = 3;
         public static float Master = 0.9f, Music = 0.7f, Effects = 0.9f, Sensitivity = 1f;
 
         public static readonly (int w, int h, string label)[] Resolutions =
@@ -18,6 +18,8 @@ namespace RiftWard.Client
             (1920, 1200, "1920 × 1200（16:10）"), (2560, 1080, "2560 × 1080（21:9）"), (3440, 1440, "3440 × 1440（21:9）"),
         };
         public static readonly string[] QualityNames = { "低", "中", "高", "極致" };
+        /// 0 = vertical sync, otherwise a fixed cap (-1 = unlimited).
+        public static readonly (int fps, string label)[] FrameCaps = { (0, "垂直同步"), (60, "60 FPS"), (120, "120 FPS"), (144, "144 FPS"), (240, "240 FPS"), (-1, "無上限") };
 
         static float F(string key, float fallback) { try { return PlayerPrefs.GetFloat(key, fallback); } catch { return fallback; } }
         static int I(string key, int fallback) { try { return PlayerPrefs.GetInt(key, fallback); } catch { return fallback; } }
@@ -27,6 +29,7 @@ namespace RiftWard.Client
             Fullscreen = I("rw.fullscreen", 1) == 1;
             Resolution = I("rw.resolution", -1);
             Quality = Mathf.Clamp(I("rw.quality", 2), 0, QualityNames.Length - 1);
+            FrameCap = Mathf.Clamp(I("rw.framecap", 3), 0, FrameCaps.Length - 1);
             Master = Mathf.Clamp01(F("rw.master", 0.9f));
             Music = Mathf.Clamp01(F("rw.music", 0.7f));
             Effects = Mathf.Clamp01(F("rw.effects", 0.9f));
@@ -40,6 +43,7 @@ namespace RiftWard.Client
                 PlayerPrefs.SetInt("rw.fullscreen", Fullscreen ? 1 : 0);
                 PlayerPrefs.SetInt("rw.resolution", Resolution);
                 PlayerPrefs.SetInt("rw.quality", Quality);
+                PlayerPrefs.SetInt("rw.framecap", FrameCap);
                 PlayerPrefs.SetFloat("rw.master", Master);
                 PlayerPrefs.SetFloat("rw.music", Music);
                 PlayerPrefs.SetFloat("rw.effects", Effects);
@@ -60,6 +64,10 @@ namespace RiftWard.Client
             if (levels > 0) QualitySettings.SetQualityLevel(Mathf.RoundToInt(Quality * (levels - 1) / 3f), true);
             QualitySettings.shadowDistance = new[] { 25f, 45f, 70f, 110f }[Quality];
             foreach (var fx in UnityEngine.Object.FindObjectsByType<PostFx>(FindObjectsSortMode.None)) fx.enabled = Quality >= 1;
+            // After the quality level (which carries its own vSync flag): an explicit cap keeps frame pacing even.
+            int cap = FrameCaps[FrameCap].fps;
+            QualitySettings.vSyncCount = cap == 0 ? 1 : 0;
+            Application.targetFrameRate = cap > 0 ? cap : -1;
             if (!display) return;
             var mode = Fullscreen ? FullScreenMode.FullScreenWindow : FullScreenMode.Windowed;
             if (Resolution >= 0 && Resolution < Resolutions.Length)
@@ -102,6 +110,7 @@ namespace RiftWard.Client
             Cycle("解析度 / 比例", () => Resolution >= 0 && Resolution < Resolutions.Length ? Resolutions[Resolution].label : "自動（螢幕原生）",
                 () => Resolution = Resolution + 1 >= Resolutions.Length ? -1 : Resolution + 1);
             Cycle("畫質", () => QualityNames[Quality] + (Quality == 0 ? "（關閉光暈後製）" : ""), () => Quality = (Quality + 1) % QualityNames.Length);
+            Cycle("幀率上限", () => FrameCaps[FrameCap].label, () => FrameCap = (FrameCap + 1) % FrameCaps.Length);
             Widgets.Section(stack, "音效").Sized(26);
             Slide("主音量", 0, 1, () => Master, v => Master = v, v => $"{v * 100:0}%");
             Slide("背景音樂", 0, 1, () => Music, v => Music = v, v => $"{v * 100:0}%");

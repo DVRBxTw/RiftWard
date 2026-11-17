@@ -60,7 +60,7 @@ namespace RiftWard.Client
         }
 
         /// A switch rendered as a full-width row: label on the left, ON / OFF state on the right.
-        public static Button Toggle(Transform parent, string label, bool initial, Action<bool> changed)
+        public static Button Toggle(Transform parent, string label, bool initial, Action<bool> changed, string onText = "開啟", string offText = "關閉")
         {
             bool on = initial;
             Text state = null;
@@ -74,7 +74,7 @@ namespace RiftWard.Client
             state.rectTransform.offsetMax = new Vector2(-18, 0);
             void Paint()
             {
-                state.text = on ? "開啟" : "關閉";
+                state.text = on ? onText : offText;
                 state.color = on ? Palette.Amber : Palette.Muted;
                 row.GetComponent<Outline>().effectColor = on ? Palette.Amber : Palette.Line;
             }
