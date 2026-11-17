@@ -1,9 +1,10 @@
 extends "res://main.gd"
 
-const VERSION = "0.3.0-beta.2"
+const VERSION = "0.3.0-beta.3"
 const SESSION_PATH = "user://login-session.cfg"
+const BASE_WEAPON_DAMAGE = 28.0
 const BUFFS = [
-	["超載彈芯", "本次任務的傷害增加 20%", "damage"],
+	["超載彈芯", "基礎傷害增加 20%（可疊加）", "damage"],
 	["急速扳機", "射擊間隔縮短 15%", "fire_interval"],
 	["動能靴", "移動速度增加 12%", "speed"],
 	["強化護盾", "護盾上限 +30，立即恢復 30", "max_hp"],
@@ -38,6 +39,14 @@ var session_generation = 0
 var session_polling = false
 var logging_out = false
 var session_path = SESSION_PATH
+var api_port = 24771
+const BOSS_HUD_WIDTH = 640.0
+const BOSS_HUD_CENTER_OFFSET = 200.0
+const BOSS_HUD_TOP = 24.0
+const BOSS_BAR_HEIGHT = 16.0
+var boss_panel: PanelContainer
+var boss_name_label: Label
+var boss_health_bar: ProgressBar
 
 func _ready():
 	var args = OS.get_cmdline_user_args()
@@ -81,8 +90,8 @@ func api_base() -> String:
 	if dedicated:
 		var address = OS.get_environment("RIFTWARD_API_HOST")
 		if address.is_empty(): address = "192.168.213.100"
-		return "http://%s:24771" % address
-	return "http://%s:24771" % server_address
+		return "http://%s:%d" % [address,api_port]
+	return "http://%s:%d" % [server_address,api_port]
 
 func _api(path: String, data: Dictionary, server_only: bool = false) -> Dictionary:
 	var request = HTTPRequest.new()
@@ -442,7 +451,7 @@ func _reset_actors():
 	for id in actors: _set_actor_stats(id)
 
 func _set_actor_stats(id: int):
-	actors[id].merge({"max_hp":100.0,"damage":28.0,"speed":6.5,"fire_interval":0.16,"regen":0,"critical":0.0},true)
+	actors[id].merge({"max_hp":100.0,"damage":BASE_WEAPON_DAMAGE,"speed":6.5,"fire_interval":0.16,"regen":0,"critical":0.0},true)
 
 func _start_mission(index: int):
 	buff_pending = false
@@ -466,6 +475,43 @@ func _deploy(index: int):
 	if not test_mode and is_instance_valid(hud):
 		var heading = hud.get_child(0).get_child(0)
 		heading.text = "R / W    "+REGIONS[index][0]
+	if not dedicated and is_instance_valid(hud):
+		_build_boss_hud()
+
+func _build_boss_hud():
+	boss_panel = PanelContainer.new()
+	boss_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	boss_panel.add_theme_stylebox_override("panel",_style(INK,ORANGE))
+	hud.add_child(boss_panel)
+	boss_panel.anchor_left = 0.5
+	boss_panel.anchor_right = 0.5
+	boss_panel.offset_left = BOSS_HUD_CENTER_OFFSET-BOSS_HUD_WIDTH/2.0
+	boss_panel.offset_right = BOSS_HUD_CENTER_OFFSET+BOSS_HUD_WIDTH/2.0
+	boss_panel.offset_top = BOSS_HUD_TOP
+	var content = VBoxContainer.new()
+	content.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	content.add_theme_constant_override("separation",8)
+	boss_panel.add_child(content)
+	boss_name_label = _label("",18,WHITE)
+	boss_name_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	boss_name_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	content.add_child(boss_name_label)
+	boss_health_bar = ProgressBar.new()
+	boss_health_bar.custom_minimum_size.y = BOSS_BAR_HEIGHT
+	boss_health_bar.show_percentage = false
+	boss_health_bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var background = _style(INK,CYAN)
+	var fill = _style(ORANGE)
+	# Bars have their own compact height; the shared panel's text padding is omitted.
+	for style in [background,fill]:
+		style.content_margin_left = 0
+		style.content_margin_right = 0
+		style.content_margin_top = 0
+		style.content_margin_bottom = 0
+	boss_health_bar.add_theme_stylebox_override("background",background)
+	boss_health_bar.add_theme_stylebox_override("fill",fill)
+	content.add_child(boss_health_bar)
+	boss_panel.hide()
 
 func _apply_region(index: int):
 	if not is_instance_valid(arena): return
@@ -520,11 +566,21 @@ func _simulate(dt: float):
 func _spawn_wave():
 	super._spawn_wave()
 	if test_mode: return
+	var elapsed_waves = max(0,wave-1)
+	var region = float(selected)
+	var party_scale = 1.0+0.6*max(0,actors.size()-1)
 	for id in enemies:
 		var e = enemies[id]
-		e.hp *= 1.0+0.22*(wave-1)+selected*0.1
-		e.speed = minf(5.0,e.speed+0.16*(wave-1))
-		e.damage = (20 if e.boss else 10)+2*(wave-1)+selected*2
+		if e.boss:
+			var base_health = 3000.0 if wave == 10 else 7000.0
+			e.hp = base_health*(1.0+0.18*region)*party_scale
+			e.damage = (20.0+3.0*region)*(1.0+0.03*elapsed_waves)
+			e.speed = 1.6*(1.0+0.1*region)*(1.0+minf(0.2,0.01*elapsed_waves))
+		else:
+			e.hp = (55.0+10.0*region)*(1.0+0.08*elapsed_waves)
+			e.damage = (10.0+2.0*region)*(1.0+0.04*elapsed_waves)
+			e.speed = (2.1+0.3*region)*(1.0+minf(0.25,0.015*elapsed_waves))
+		e.max_hp = e.hp
 	for id in actors:
 		var a = actors[id]
 		if a.hp>0: a.hp = minf(a.get("max_hp",100),a.hp+a.get("regen",0))
@@ -584,7 +640,7 @@ func _apply_buff(id: int, index: int):
 		return
 	var a = actors[id]
 	match index:
-		0: a.damage = a.get("damage",28)*1.2
+		0: a.damage = a.get("damage",BASE_WEAPON_DAMAGE)+BASE_WEAPON_DAMAGE*0.2
 		1: a.fire_interval = maxf(0.045,a.get("fire_interval",0.16)*0.85)
 		2: a.speed = minf(12.0,a.get("speed",6.5)*1.12)
 		3:
@@ -619,19 +675,33 @@ func _fire(id: int, target: Vector3):
 	if test_mode:
 		super._fire(id,target)
 		return
-	var original_damage = actors[id].get("damage",28.0)
+	var original_damage = actors[id].get("damage",BASE_WEAPON_DAMAGE)
 	if randf()<actors[id].get("critical",0.0): actors[id].damage = original_damage*2
 	super._fire(id,target)
 	actors[id].damage = original_damage
 
 func _update_hud():
 	super._update_hud()
+	_update_boss_hud()
 	if test_mode or dedicated or not is_instance_valid(hud): return
 	if tutorial_running:
 		var messages = ["教學 1/3：移動滑鼠，轉動第一人稱視角", "教學 2/3：按 WASD 移動一段距離", "教學 3/3：找到前方訓練機器人，左鍵射擊", "教學完成，正在儲存…", "正在連接基地…"]
 		objective_label.text = messages[tutorial_step]
 	elif actors.has(local_id):
 		health_label.text = "護盾 %d / %d   ·   加成 %d" % [actors[local_id].hp,actors[local_id].get("max_hp",100),buffs_picked]
+
+func _update_boss_hud():
+	if not is_instance_valid(boss_panel): return
+	boss_panel.hide()
+	if mode != "playing" or modal_open or tutorial_running or buff_pending: return
+	for enemy in enemies.values():
+		if not enemy.get("boss",false) or float(enemy.hp) <= 0: continue
+		var maximum = maxf(1.0,float(enemy.get("max_hp",enemy.hp)))
+		boss_health_bar.max_value = maximum
+		boss_health_bar.value = clampf(float(enemy.hp),0,maximum)
+		boss_name_label.text = "%s · BOSS   %d / %d" % [REGIONS[selected][0],ceili(float(enemy.hp)),ceili(maximum)]
+		boss_panel.show()
+		return
 
 func _finish(success: bool):
 	if test_mode or tutorial_running:

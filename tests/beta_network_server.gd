@@ -10,6 +10,8 @@ func _initialize():
 
 func _start():
 	game = load("res://main.tscn").instantiate()
+	game.server_port = int(OS.get_environment("RIFTWARD_TEST_GAME_PORT"))
+	game.api_port = int(OS.get_environment("RIFTWARD_TEST_API_PORT"))
 	root.add_child(game)
 
 func _process(dt):
@@ -29,7 +31,7 @@ func _process(dt):
 	if stage == 2 and game.mode == "home" and game.actors.is_empty():
 		print("BETA_SERVER_RETURN_PASS")
 		quit()
-	if runtime>35:
+	if runtime>60:
 		push_error("BETA_SERVER_TIMEOUT stage="+str(stage))
 		quit(1)
 	return false

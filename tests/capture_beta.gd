@@ -38,6 +38,12 @@ func _run():
 	game._render_models(1)
 	game._update_hud()
 	await _capture(game,"combat")
+	game.wave = 10
+	game.enemies.clear()
+	game._spawn_wave()
+	game._render_models(1)
+	game._update_hud()
+	await _capture(game,"boss")
 	game.queue_free()
 	await process_frame
 	quit()

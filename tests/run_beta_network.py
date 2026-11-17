@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 import secrets
+import socket
 import subprocess
 import tempfile
 import threading
@@ -18,12 +19,17 @@ def main():
     engine = ROOT / "tools/Godot_v4.5.1-stable_win64_console.exe"
     with tempfile.TemporaryDirectory() as temp:
         store = service.Store(Path(temp))
-        api = service.BetaServer((service.HOST,service.PORT),store,ROOT / "build/releases")
+        api = service.BetaServer((service.HOST,0),store,ROOT / "build/releases")
         api.game_online = lambda: True
         thread = threading.Thread(target=api.serve_forever,daemon=True)
         thread.start()
         environment = os.environ.copy()
         environment["RIFTWARD_SERVER_DATA"] = temp
+        environment["RIFTWARD_TEST_API_PORT"] = str(api.server_port)
+        environment["RIFTWARD_TEST_SESSION_PATH"] = str(Path(temp)/"no-saved-client-session.cfg")
+        with socket.socket(socket.AF_INET,socket.SOCK_DGRAM) as probe:
+            probe.bind((service.HOST,0))
+            environment["RIFTWARD_TEST_GAME_PORT"] = str(probe.getsockname()[1])
         processes = []
         logs = []
         try:
@@ -41,7 +47,7 @@ def main():
             failed = []
             for number, process in enumerate(processes):
                 try:
-                    process.wait(timeout=40)
+                    process.wait(timeout=70)
                 except subprocess.TimeoutExpired:
                     process.terminate()
                     process.wait(timeout=5)

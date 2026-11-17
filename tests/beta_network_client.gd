@@ -10,6 +10,9 @@ func _initialize():
 
 func _start():
 	game = load("res://main.tscn").instantiate()
+	game.server_port = int(OS.get_environment("RIFTWARD_TEST_GAME_PORT"))
+	game.api_port = int(OS.get_environment("RIFTWARD_TEST_API_PORT"))
+	game.session_path = OS.get_environment("RIFTWARD_TEST_SESSION_PATH")
 	root.add_child(game)
 	game.server_address = "192.168.213.100"
 	game.auth_token = OS.get_environment("RIFTWARD_TEST_TOKEN")
@@ -30,14 +33,14 @@ func _process(dt):
 			buttons[0].pressed.emit()
 			picks += 1
 	if stage == 1 and game.mode == "result":
-		assert(game.result_success and game.profile.unlocked == 1 and picks == 2)
-		print("BETA_CLIENT_PASS authenticated two_buff_choices persisted_progress")
+		assert(game.result_success and game.profile.unlocked == 1 and picks == 20)
+		print("BETA_CLIENT_PASS authenticated twenty_buff_choices persisted_progress")
 		game._request_home()
 		stage = 2
 	if stage == 2 and game.mode == "home":
 		print("BETA_CLIENT_RETURN_PASS")
 		quit()
-	if runtime>30:
+	if runtime>60:
 		push_error("BETA_CLIENT_TIMEOUT stage="+str(stage)+" mode="+game.mode)
 		quit(1)
 	return false

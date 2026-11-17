@@ -11,9 +11,9 @@ const LOOK_SENSITIVITY = 0.0025
 const LOOK_LIMIT = PI * 85.0 / 180.0
 const SHOT_RANGE = 65.0
 const MISSIONS = [
-	["01", "邊境訊號", "清除廢墟中的巡邏機群", "2 波敵人 · 入門", 2, 4],
-	["02", "失落反應爐", "深入遺跡，摧毀增援部隊", "3 波敵人 · 進階", 3, 5],
-	["03", "裂隙之心", "迎戰重型守衛，關閉裂隙", "3 波敵人 + 重型守衛", 3, 6]
+	["01", "邊境訊號", "清除廢墟中的巡邏機群", "20 波 · 第 10、20 波 Boss", 20, 4],
+	["02", "失落反應爐", "深入遺跡，摧毀增援部隊", "20 波 · 第 10、20 波 Boss", 20, 5],
+	["03", "裂隙之心", "迎戰重型守衛，關閉裂隙", "20 波 · 第 10、20 波 Boss", 20, 6]
 ]
 var arena: Node3D
 var camera: Camera3D
@@ -41,6 +41,7 @@ var unlocked = 0
 var mode = "home"
 var network = "offline"
 var server_address = DEFAULT_SERVER_IP
+var server_port = PORT
 var dedicated = false
 var yaw = 0.0
 var pitch = 0.0
@@ -63,6 +64,11 @@ var smoke_test = false
 var smoke_phase = 0
 var captured = false
 var net_test_phase = 0
+var input_sequence = 0
+var pending_movement: Array = []
+var local_previous_position = Vector3.ZERO
+var local_position_initialized = false
+var camera_correction = Vector3.ZERO
 
 func _ready():
 	dedicated = "--server" in OS.get_cmdline_user_args()
@@ -377,9 +383,9 @@ func _host(headless: bool):
 	var peer = ENetMultiplayerPeer.new()
 	var bind_address = "127.0.0.1" if "--network-test" in OS.get_cmdline_user_args() else "0.0.0.0"
 	peer.set_bind_ip(bind_address)
-	var err = peer.create_server(PORT, 4 if headless else 3)
+	var err = peer.create_server(server_port, 4 if headless else 3)
 	if err != OK:
-		var message = "無法監聽 UDP %s:%d（%s）；請確認沒有重複啟動伺服器" % [bind_address,PORT,error_string(err)]
+		var message = "無法監聽 UDP %s:%d（%s）；請確認沒有重複啟動伺服器" % [bind_address,server_port,error_string(err)]
 		push_warning(message)
 		if is_instance_valid(status_label): status_label.text = message
 		if headless: get_tree().quit(1)
@@ -387,7 +393,7 @@ func _host(headless: bool):
 	multiplayer.multiplayer_peer = peer
 	network = "host"
 	if not headless: _add_actor(1)
-	print("SERVER_READY address=", bind_address, " port=", PORT)
+	print("SERVER_READY address=", bind_address, " port=", server_port)
 	if not headless: _home()
 
 func _join(ip: String):
@@ -397,7 +403,7 @@ func _join(ip: String):
 		status_label.text = "請輸入伺服器 IP 位址"
 		return
 	var peer = ENetMultiplayerPeer.new()
-	if peer.create_client(ip, PORT) != OK:
+	if peer.create_client(ip, server_port) != OK:
 		status_label.text = "無法連線，請檢查伺服器位址"
 		return
 	multiplayer.multiplayer_peer = peer
@@ -470,6 +476,9 @@ func _start_mission(index: int):
 
 @rpc("authority", "call_remote", "reliable")
 func _deploy(index: int):
+	pending_movement.clear()
+	local_position_initialized = false
+	camera_correction = Vector3.ZERO
 	selected = index
 	mode = "playing"
 	if is_instance_valid(showcase): showcase.visible = false
@@ -560,22 +569,32 @@ func _look_direction() -> Vector3:
 	return Vector3.FORWARD.rotated(Vector3.RIGHT,pitch).rotated(Vector3.UP,yaw)
 
 func _process(dt):
+	if mode == "playing": _render_models(dt)
 	_update_camera(dt)
 
 func _physics_process(dt):
 	clock_time += dt
 	if mode == "playing":
+		if actors.has(local_id):
+			local_previous_position = actors[local_id].p
+			local_position_initialized = true
 		if not dedicated:
 			var active = not modal_open and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED
 			var move = Input.get_vector("left","right","forward","back") if active else Vector2.ZERO
 			var eye: Vector3 = actors[local_id].p+Vector3.UP*EYE_HEIGHT if actors.has(local_id) else camera.position
 			var target = eye+_look_direction()*SHOT_RANGE
 			var packet = {"m":move,"yaw":yaw,"aim":target,"fire":Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT) and active and not release_fire_to_resume,"dash":Input.is_action_pressed("dash") and active,"jump":Input.is_action_pressed("jump") and active}
-			if network == "client": _receive_input.rpc_id(1, packet)
+			if network == "client":
+				input_sequence += 1
+				packet["seq"] = input_sequence
+				_receive_input.rpc_id(1, packet)
+				if actors.has(local_id) and not modal_open:
+					pending_movement.append({"packet":packet,"dt":dt})
+					if pending_movement.size() > 120: pending_movement.pop_front()
+					_move_actor(actors[local_id],packet,dt)
 			else: inputs[1] = packet
 		if network != "client":
 			_simulate(dt)
-		_render_models(dt)
 		_update_hud()
 	if network == "host":
 		sync_time += dt
@@ -600,6 +619,9 @@ func _receive_input(packet: Dictionary):
 	if not actors.has(id): return
 	if not packet.get("m") is Vector2 or not packet.get("aim") is Vector3: return
 	if not packet["m"].is_finite() or not packet["aim"].is_finite(): return
+	if not packet.get("seq",0) is int: return
+	if int(packet.get("seq",0)) < int(inputs.get(id,{}).get("seq",0)): return
+	packet["received_at"] = clock_time
 	inputs[id] = packet
 
 func _broadcast_state():
@@ -609,48 +631,71 @@ func _broadcast_state():
 	for id in actors:
 		ids.append(id)
 		var a = actors[id]
-		a_data.append_array(PackedFloat32Array([a.p.x,a.p.y,a.p.z,a.hp,a.cd,a.dash,a.y,a.v,a.get("max_hp",100)]))
+		a_data.append_array(PackedFloat32Array([a.p.x,a.p.y,a.p.z,a.hp,a.cd,a.dash,a.y,a.v,a.get("max_hp",100),a.get("speed",6.5),a.get("fire_interval",0.16),a.get("ack",0)]))
 	for id in enemies:
 		var e = enemies[id]
-		e_data.append_array(PackedFloat32Array([id,e.p.x,e.p.y,e.p.z,e.hp,e.y,1.0 if e.boss else 0.0]))
+		e_data.append_array(PackedFloat32Array([id,e.p.x,e.p.y,e.p.z,e.hp,e.y,1.0 if e.boss else 0.0,e.get("max_hp",e.hp)]))
 	_snapshot.rpc(ids,a_data,e_data,wave,kills,elapsed)
 
 @rpc("authority", "call_remote", "unreliable_ordered")
 func _snapshot(ids: PackedInt32Array, a: PackedFloat32Array, e: PackedFloat32Array, w: int, k: int, t: float):
+	if a.size() != ids.size()*12 or e.size()%8 != 0: return
+	var old_position: Vector3 = actors[local_id].p if actors.has(local_id) else Vector3.ZERO
+	var had_local = actors.has(local_id)
 	actors.clear()
 	for i in range(ids.size()):
-		var j = i*9
-		actors[ids[i]] = {"p":Vector3(a[j],a[j+1],a[j+2]),"hp":a[j+3],"cd":a[j+4],"dash":a[j+5],"y":a[j+6],"v":a[j+7],"max_hp":a[j+8]}
+		var j = i*12
+		actors[ids[i]] = {"p":Vector3(a[j],a[j+1],a[j+2]),"hp":a[j+3],"cd":a[j+4],"dash":a[j+5],"y":a[j+6],"v":a[j+7],"max_hp":a[j+8],"speed":a[j+9],"fire_interval":a[j+10],"ack":int(a[j+11])}
+	if actors.has(local_id):
+		var local_actor = actors[local_id]
+		while not pending_movement.is_empty() and int(pending_movement[0].packet.seq) <= local_actor.ack:
+			pending_movement.pop_front()
+		if mode == "playing" and not modal_open:
+			for step in pending_movement: _move_actor(local_actor,step.packet,step.dt)
+		if had_local and old_position.distance_to(local_actor.p) < 5.0:
+			var correction: Vector3 = old_position-local_actor.p
+			camera_correction += correction
+			local_previous_position -= correction
+		else:
+			local_previous_position = local_actor.p
+			camera_correction = Vector3.ZERO
+		local_position_initialized = true
 	enemies.clear()
-	for j in range(0,e.size(),7):
-		enemies[int(e[j])] = {"p":Vector3(e[j+1],e[j+2],e[j+3]),"hp":e[j+4],"y":e[j+5],"boss":e[j+6]>0}
+	for j in range(0,e.size(),8):
+		enemies[int(e[j])] = {"p":Vector3(e[j+1],e[j+2],e[j+3]),"hp":e[j+4],"y":e[j+5],"boss":e[j+6]>0,"max_hp":e[j+7]}
 	wave = w
 	kills = k
 	elapsed = t
+
+func _move_actor(a: Dictionary, packet: Dictionary, dt: float):
+	a.cd = maxf(0,a.cd-dt)
+	a.dash = maxf(0,a.dash-dt)
+	if a.hp <= 0: return
+	var mv: Vector2 = packet.get("m",Vector2.ZERO).limit_length(1)
+	var rotation_y = float(packet.get("yaw",0))
+	if not is_finite(rotation_y): rotation_y = 0
+	var motion = Vector3(mv.x,0,mv.y).rotated(Vector3.UP,rotation_y)
+	if packet.get("dash",false) and a.dash <= 0 and mv.length()>0:
+		a.dash = 2.8
+		a.p += motion*4
+	if packet.get("jump",false) and a.p.y <= 0.01: a.v = 7.0
+	a.v -= 20*dt
+	a.p += motion*float(a.get("speed",6.5))*dt
+	a.p.y = maxf(0,a.p.y+a.v*dt)
+	a.p.x = clampf(a.p.x,-21,21)
+	a.p.z = clampf(a.p.z,-21,21)
+	a.y = rotation_y
 
 func _simulate(dt: float):
 	elapsed += dt
 	for id in actors:
 		var a = actors[id]
-		a.cd = maxf(0,a.cd-dt)
-		a.dash = maxf(0,a.dash-dt)
-		if a.hp <= 0 or not inputs.has(id): continue
-		var p = inputs[id]
-		var mv: Vector2 = p.get("m",Vector2.ZERO).limit_length(1)
-		var rotation_y = float(p.get("yaw",0))
-		if not is_finite(rotation_y): rotation_y = 0
-		var motion = Vector3(mv.x,0,mv.y).rotated(Vector3.UP,rotation_y)
-		var speed = float(a.get("speed",6.5))
-		if p.get("dash",false) and a.dash <= 0 and mv.length()>0:
-			a.dash = 2.8
-			a.p += motion*4
-		if p.get("jump",false) and a.p.y <= 0.01: a.v = 7.0
-		a.v -= 20*dt
-		a.p += motion*speed*dt
-		a.p.y = maxf(0,a.p.y+a.v*dt)
-		a.p.x = clampf(a.p.x,-21,21)
-		a.p.z = clampf(a.p.z,-21,21)
-		a.y = rotation_y
+		var p: Dictionary = inputs.get(id,{})
+		if network == "host" and id != 1 and clock_time-float(p.get("received_at",clock_time)) > 0.25:
+			p = {"seq":p.get("seq",0),"yaw":a.y}
+		_move_actor(a,p,dt)
+		a["ack"] = int(p.get("seq",0))
+		if a.hp <= 0: continue
 		if p.get("fire",false) and a.cd <= 0:
 			a.cd = float(a.get("fire_interval",0.16))
 			_fire(id, p.get("aim", a.p+Vector3(0,1,-30)))
@@ -691,11 +736,12 @@ func _simulate(dt: float):
 				wave_delay = 2.0
 
 func _spawn_wave():
-	var count = MISSIONS[selected][5]+wave*2+(actors.size()-1)*2
+	var count = mini(24,MISSIONS[selected][5]+ceili(wave/2.0)+maxi(0,actors.size()-1)*2)
 	for i in range(count):
 		var angle = TAU*i/count+wave*0.7
-		var boss = selected == 2 and wave == 3 and i == 0
+		var boss = wave in [10,20] and i == 0
 		enemies[next_enemy] = {"p":Vector3(sin(angle)*19,0,cos(angle)*19),"hp":500.0 if boss else 55.0+selected*10,"speed":1.5 if boss else 2.1+selected*0.3,"cd":0.6,"y":0.0,"boss":boss}
+		enemies[next_enemy]["max_hp"] = enemies[next_enemy].hp
 		next_enemy += 1
 
 func _fire(id: int, target: Vector3):
@@ -762,7 +808,7 @@ func _render_models(dt: float):
 			add_child(visuals[id])
 			visuals[id].position = actors[id].p
 		var v = visuals[id]
-		v.position = v.position.lerp(actors[id].p,minf(1,dt*20))
+		v.position = v.position.lerp(actors[id].p,1.0-exp(-20.0*dt))
 		v.rotation.y = actors[id].y
 		v.visible = actors[id].hp > 0 and id != local_id
 	for id in visuals.keys():
@@ -775,7 +821,7 @@ func _render_models(dt: float):
 			add_child(enemy_visuals[id])
 			enemy_visuals[id].position = enemies[id].p
 		var v = enemy_visuals[id]
-		v.position = v.position.lerp(enemies[id].p,minf(1,dt*14))
+		v.position = v.position.lerp(enemies[id].p,1.0-exp(-14.0*dt))
 		v.rotation.y = enemies[id].y
 	for id in enemy_visuals.keys():
 		if not enemies.has(id):
@@ -792,7 +838,13 @@ func _update_camera(dt: float):
 	if dedicated: return
 	weapon.visible = mode == "playing" and actors.has(local_id) and actors[local_id].hp > 0
 	if mode == "playing" and actors.has(local_id):
-		camera.position = actors[local_id].p+Vector3.UP*EYE_HEIGHT
+		var position: Vector3 = actors[local_id].p
+		if not local_position_initialized:
+			local_previous_position = position
+			local_position_initialized = true
+		var blend = clampf(Engine.get_physics_interpolation_fraction(),0.0,1.0)
+		camera_correction *= exp(-18.0*dt)
+		camera.position = local_previous_position.lerp(position,blend)+camera_correction+Vector3.UP*EYE_HEIGHT
 		camera.rotation = Vector3(pitch,yaw,0)
 		# Recoil moves only the view model, preserving the centered aim ray.
 		shake = maxf(0,shake-dt)
@@ -901,7 +953,7 @@ func _smoke_tick():
 		assert(mode == "home")
 		_start_mission(0)
 		enemies.clear()
-		wave = 2
+		wave = MISSIONS[selected][4]
 		wave_delay = 0
 		smoke_phase = 2
 	elif smoke_phase == 2 and mode == "result":
