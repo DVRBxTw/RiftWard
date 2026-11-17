@@ -5,7 +5,8 @@ func _initialize():
 	_run.call_deferred()
 
 func _state(actor: Dictionary, ack: int) -> PackedFloat32Array:
-	return PackedFloat32Array([actor.p.x,actor.p.y,actor.p.z,actor.hp,actor.cd,actor.dash,actor.y,actor.v,actor.get("max_hp",100),actor.get("speed",6.5),actor.get("fire_interval",0.16),ack])
+	var direction: Vector3 = actor.get("dash_direction",Vector3.ZERO)
+	return PackedFloat32Array([actor.p.x,actor.p.y,actor.p.z,actor.hp,actor.cd,actor.dash,actor.y,actor.v,actor.get("max_hp",100),actor.get("speed",6.5),actor.get("fire_interval",0.16),ack,actor.get("dash_left",0),direction.x,direction.y,direction.z])
 
 func _run():
 	var game = load("res://main.tscn").instantiate()

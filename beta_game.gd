@@ -1,6 +1,6 @@
 extends "res://main.gd"
 
-const VERSION = "0.3.0-beta.3"
+const VERSION = "0.3.0-beta.4"
 const SESSION_PATH = "user://login-session.cfg"
 const BASE_WEAPON_DAMAGE = 28.0
 const BUFFS = [

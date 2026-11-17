@@ -37,3 +37,9 @@
 - Moving/reconciliation aim uses an interpolated camera and authoritative actor firing origin; native stationary ray tests pass, but moving target accuracy under latency has not been empirically measured.
 - Calibration copy: temporary detached worktree `riftward-boss-calibration-47defe9c84fd493480823c12335adbb1`; Boss label size intentionally changed from18 to32. A separate calibration agent found the difference against the checklist. The copy was removed afterward. This proves source review of the size difference, not every layout or input behavior.
 - Difficulty values are an initial beta tuning, not a measured multiplayer win-rate claim. Native FPS test may log a pending-timer ObjectDB cleanup warning at exit.
+# Beta 0.3.0-beta.4: hero dash animation
+
+- Replaced instant four-unit dash teleport with an integrated smoothstep movement over 0.18 seconds; shared client prediction/server movement and snapshots carry remaining time and direction.
+- First-person visual envelope lasts 0.32 seconds: FOV80 to87 and back, weapon draw-back/tilt and return. Camera pitch/yaw/roll remain independent of the animation. Remote character models lean forward while dashing.
+- `tests/dash_animation.gd` covers 30/60/120Hz distance invariance, cooldown, mid-dash acknowledgment/replay, peak FOV/weapon pose, unchanged aim rotation, normal pose restoration, pause and menu cleanup.
+- This is a procedural native 3D/viewmodel animation; no imported character skeleton or authored motion asset is required. Native peak/recovery poses, FPS controls, exported-pack smoke and isolated two-client 20-wave integration passed. Human motion-comfort preferences and all network latency conditions remain unmeasured.

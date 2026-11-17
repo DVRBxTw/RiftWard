@@ -10,6 +10,13 @@ const EYE_HEIGHT = 1.65
 const LOOK_SENSITIVITY = 0.0025
 const LOOK_LIMIT = PI * 85.0 / 180.0
 const SHOT_RANGE = 65.0
+const DASH_DURATION = 0.18
+const DASH_DISTANCE = 4.0
+const DASH_COOLDOWN = 2.8
+const DASH_VISUAL_DURATION = 0.32
+const BASE_FOV = 80.0
+const DASH_FOV_BOOST = 7.0
+const WEAPON_REST_POSITION = Vector3(0.27,-0.23,-0.48)
 const MISSIONS = [
 	["01", "邊境訊號", "清除廢墟中的巡邏機群", "20 波 · 第 10、20 波 Boss", 20, 4],
 	["02", "失落反應爐", "深入遺跡，摧毀增援部隊", "20 波 · 第 10、20 波 Boss", 20, 5],
@@ -320,7 +327,7 @@ func _build_world():
 	for x in [-3,3]:
 		_cube(arena,Vector3(x,4,-19),Vector3(0.6,7,0.8),Color("4a6170"))
 	camera = Camera3D.new()
-	camera.fov = 80
+	camera.fov = BASE_FOV
 	camera.near = 0.05
 	camera.far = 180
 	add_child(camera)
@@ -334,7 +341,7 @@ func _build_world():
 
 func _build_weapon():
 	weapon = Node3D.new()
-	weapon.position = Vector3(0.27, -0.23, -0.48)
+	weapon.position = WEAPON_REST_POSITION
 	weapon.visible = false
 	camera.add_child(weapon)
 	_cube(weapon,Vector3.ZERO,Vector3(0.15,0.14,0.42),INK)
@@ -631,7 +638,8 @@ func _broadcast_state():
 	for id in actors:
 		ids.append(id)
 		var a = actors[id]
-		a_data.append_array(PackedFloat32Array([a.p.x,a.p.y,a.p.z,a.hp,a.cd,a.dash,a.y,a.v,a.get("max_hp",100),a.get("speed",6.5),a.get("fire_interval",0.16),a.get("ack",0)]))
+		var dash_direction: Vector3 = a.get("dash_direction",Vector3.ZERO)
+		a_data.append_array(PackedFloat32Array([a.p.x,a.p.y,a.p.z,a.hp,a.cd,a.dash,a.y,a.v,a.get("max_hp",100),a.get("speed",6.5),a.get("fire_interval",0.16),a.get("ack",0),a.get("dash_left",0),dash_direction.x,dash_direction.y,dash_direction.z]))
 	for id in enemies:
 		var e = enemies[id]
 		e_data.append_array(PackedFloat32Array([id,e.p.x,e.p.y,e.p.z,e.hp,e.y,1.0 if e.boss else 0.0,e.get("max_hp",e.hp)]))
@@ -639,13 +647,13 @@ func _broadcast_state():
 
 @rpc("authority", "call_remote", "unreliable_ordered")
 func _snapshot(ids: PackedInt32Array, a: PackedFloat32Array, e: PackedFloat32Array, w: int, k: int, t: float):
-	if a.size() != ids.size()*12 or e.size()%8 != 0: return
+	if a.size() != ids.size()*16 or e.size()%8 != 0: return
 	var old_position: Vector3 = actors[local_id].p if actors.has(local_id) else Vector3.ZERO
 	var had_local = actors.has(local_id)
 	actors.clear()
 	for i in range(ids.size()):
-		var j = i*12
-		actors[ids[i]] = {"p":Vector3(a[j],a[j+1],a[j+2]),"hp":a[j+3],"cd":a[j+4],"dash":a[j+5],"y":a[j+6],"v":a[j+7],"max_hp":a[j+8],"speed":a[j+9],"fire_interval":a[j+10],"ack":int(a[j+11])}
+		var j = i*16
+		actors[ids[i]] = {"p":Vector3(a[j],a[j+1],a[j+2]),"hp":a[j+3],"cd":a[j+4],"dash":a[j+5],"y":a[j+6],"v":a[j+7],"max_hp":a[j+8],"speed":a[j+9],"fire_interval":a[j+10],"ack":int(a[j+11]),"dash_left":a[j+12],"dash_direction":Vector3(a[j+13],a[j+14],a[j+15])}
 	if actors.has(local_id):
 		var local_actor = actors[local_id]
 		while not pending_movement.is_empty() and int(pending_movement[0].packet.seq) <= local_actor.ack:
@@ -676,8 +684,17 @@ func _move_actor(a: Dictionary, packet: Dictionary, dt: float):
 	if not is_finite(rotation_y): rotation_y = 0
 	var motion = Vector3(mv.x,0,mv.y).rotated(Vector3.UP,rotation_y)
 	if packet.get("dash",false) and a.dash <= 0 and mv.length()>0:
-		a.dash = 2.8
-		a.p += motion*4
+		a.dash = DASH_COOLDOWN
+		a["dash_left"] = DASH_DURATION
+		a["dash_direction"] = motion.normalized()
+	var dash_left = float(a.get("dash_left",0))
+	if dash_left > 0:
+		var next_left = maxf(0,dash_left-dt)
+		var start = 1.0-dash_left/DASH_DURATION
+		var finish = 1.0-next_left/DASH_DURATION
+		var distance = DASH_DISTANCE*(smoothstep(0.0,1.0,finish)-smoothstep(0.0,1.0,start))
+		a.p += a.get("dash_direction",Vector3.ZERO)*distance
+		a["dash_left"] = next_left
 	if packet.get("jump",false) and a.p.y <= 0.01: a.v = 7.0
 	a.v -= 20*dt
 	a.p += motion*float(a.get("speed",6.5))*dt
@@ -810,6 +827,7 @@ func _render_models(dt: float):
 		var v = visuals[id]
 		v.position = v.position.lerp(actors[id].p,1.0-exp(-20.0*dt))
 		v.rotation.y = actors[id].y
+		v.rotation.x = -0.18*_dash_animation_strength(actors[id])
 		v.visible = actors[id].hp > 0 and id != local_id
 	for id in visuals.keys():
 		if not actors.has(id):
@@ -848,10 +866,25 @@ func _update_camera(dt: float):
 		camera.rotation = Vector3(pitch,yaw,0)
 		# Recoil moves only the view model, preserving the centered aim ray.
 		shake = maxf(0,shake-dt)
-		weapon.position.z = -0.48+shake
+		var animation_offset = blend/float(Engine.physics_ticks_per_second)
+		var strength = _dash_animation_strength(actors[local_id],animation_offset) if weapon.visible and not modal_open else 0.0
+		camera.fov = BASE_FOV+DASH_FOV_BOOST*strength
+		weapon.position = WEAPON_REST_POSITION+Vector3(0.02,-0.045,0.10)*strength+Vector3(0,0,shake)
+		weapon.rotation = Vector3(-0.10,0.04,-0.10)*strength
 	else:
+		camera.fov = BASE_FOV
+		weapon.position = WEAPON_REST_POSITION
+		weapon.rotation = Vector3.ZERO
 		camera.position = Vector3(16+sin(clock_time*0.08)*2,11,19)
 		camera.look_at(Vector3(0,2,-6))
+
+func _dash_animation_strength(actor: Dictionary, time_offset: float = 0.0) -> float:
+	if float(actor.get("hp",0)) <= 0: return 0.0
+	var cooldown = float(actor.get("dash",0))
+	if cooldown <= 0: return 0.0
+	var elapsed_dash = DASH_COOLDOWN-cooldown+time_offset
+	if elapsed_dash < 0 or elapsed_dash >= DASH_VISUAL_DURATION: return 0.0
+	return sin(PI*elapsed_dash/DASH_VISUAL_DURATION)
 
 func _update_hud():
 	if dedicated or not is_instance_valid(hud): return

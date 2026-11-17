@@ -20,7 +20,7 @@ HOST = "192.168.213.100"
 PORT = 24771
 ITERATIONS = 310_000
 USERNAME = re.compile(r"[A-Za-z0-9_]{3,24}\Z")
-VERSION = "0.3.0-beta.3"
+VERSION = "0.3.0-beta.4"
 
 
 class Store:
