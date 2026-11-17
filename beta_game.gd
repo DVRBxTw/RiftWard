@@ -67,6 +67,10 @@ func _ready():
 		_show_account()
 
 func api_base() -> String:
+	if dedicated:
+		var address = OS.get_environment("RIFTWARD_API_HOST")
+		if address.is_empty(): address = "192.168.213.100"
+		return "http://%s:24771" % address
 	return "http://%s:24771" % server_address
 
 func _api(path: String, data: Dictionary, server_only: bool = false) -> Dictionary:

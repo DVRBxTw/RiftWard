@@ -11,6 +11,7 @@ func _initialize():
 func _start():
 	game = load("res://main.tscn").instantiate()
 	root.add_child(game)
+	game.server_address = "192.168.213.100"
 	game.auth_token = OS.get_environment("RIFTWARD_TEST_TOKEN")
 	var result = await game._api("/api/me",{})
 	assert(result.get("ok",false))

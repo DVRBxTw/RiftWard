@@ -375,17 +375,19 @@ func _reset_actors():
 func _host(headless: bool):
 	if network != "offline": return
 	var peer = ENetMultiplayerPeer.new()
-	peer.set_bind_ip("127.0.0.1" if "--network-test" in OS.get_cmdline_user_args() else "*")
+	var bind_address = "127.0.0.1" if "--network-test" in OS.get_cmdline_user_args() else "0.0.0.0"
+	peer.set_bind_ip(bind_address)
 	var err = peer.create_server(PORT, 4 if headless else 3)
 	if err != OK:
-		var message = "無法綁定 %s:%d；請確認本機 IP 與連接埠" % [server_address,PORT]
+		var message = "無法監聽 UDP %s:%d（%s）；請確認沒有重複啟動伺服器" % [bind_address,PORT,error_string(err)]
 		push_warning(message)
 		if is_instance_valid(status_label): status_label.text = message
+		if headless: get_tree().quit(1)
 		return
 	multiplayer.multiplayer_peer = peer
 	network = "host"
 	if not headless: _add_actor(1)
-	print("SERVER_READY address=", "127.0.0.1" if "--network-test" in OS.get_cmdline_user_args() else server_address, " port=", PORT)
+	print("SERVER_READY address=", bind_address, " port=", PORT)
 	if not headless: _home()
 
 func _join(ip: String):

@@ -2,6 +2,7 @@
 from pathlib import Path
 import hashlib
 import json
+import os
 import shutil
 import socket
 import subprocess
@@ -22,9 +23,9 @@ def main():
         if hasattr(socket,"SO_EXCLUSIVEADDRUSE"):
             probe.setsockopt(socket.SOL_SOCKET,socket.SO_EXCLUSIVEADDRUSE,1)
         try:
-            probe.bind((HOST,24770))
+            probe.bind(("0.0.0.0",24770))
         except OSError as exc:
-            raise SystemExit(f"Game port {HOST}:24770 is busy. Close the old server first: {exc}") from exc
+            raise SystemExit(f"UDP 0.0.0.0:24770 is unavailable. Close the existing game server first: {exc}") from exc
     store = Store(base / "server-data")
     releases = base / "releases"
     releases.mkdir(parents=True,exist_ok=True)
@@ -42,8 +43,9 @@ def main():
     thread = threading.Thread(target=api.serve_forever, daemon=True)
     thread.start()
     print(f"Account/update service: http://{HOST}:{PORT}", flush=True)
+    environment = dict(os.environ, RIFTWARD_API_HOST=HOST)
     process = subprocess.Popen([str(engine), "--headless", "--main-pack", str(pack),
-                                "--log-file", str(base / "server-data" / "game-server.log"), "--", "--server"])
+                                "--log-file", str(base / "server-data" / "game-server.log"), "--", "--server"], env=environment)
     try:
         while process.poll() is None:
             time.sleep(0.5)
