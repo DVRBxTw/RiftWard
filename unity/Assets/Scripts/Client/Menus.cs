@@ -16,6 +16,7 @@ namespace RiftWard.Client
         public System.Action RetryRequested;
         /// Set for admins: builds the ability controls into the given parent.
         public System.Action<Transform> AdminPanel;
+        public System.Action<Transform> SettingsPanel;
 
         public Menus(GameClient client)
         {
@@ -105,9 +106,24 @@ namespace RiftWard.Client
             Ui.Label(stack, "退出後回到基地主頁；連線時隊友仍可繼續任務。", 15, Palette.Muted).Sized(40);
             Ui.Button(stack, "繼續戰鬥", ClosePause, 18).Sized(52);
             Ui.Button(stack, "退出到主頁", () => { ClosePause(false); LeaveRequested?.Invoke(); }, 18, Palette.Danger).Sized(48);
+            if (SettingsPanel != null)
+            {
+                sheet.sizeDelta += new Vector2(0, 56);
+                Ui.Button(stack, "設定", () =>
+                {
+                    var overlay = Scrim(pause.transform, 0.6f);
+                    var panel = Sheet(overlay, Palette.Amber, new Vector2(620, 600));
+                    var ps = Ui.VStack(panel, 6);
+                    ps.Fill();
+                    ps.GetComponent<VerticalLayoutGroup>().padding = new RectOffset(28, 28, 22, 22);
+                    Ui.Label(ps, "設定", 26, Palette.Bone, TextAnchor.UpperLeft, true).Sized(36);
+                    SettingsPanel(ps);
+                    Ui.Button(ps, "關閉", () => Object.Destroy(overlay.gameObject), 16).Sized(44);
+                }, 16).Sized(44);
+            }
             if (AdminPanel != null)
             {
-                sheet.sizeDelta = new Vector2(460, 360);
+                sheet.sizeDelta += new Vector2(0, 60);
                 Ui.Button(stack, "管理員能力", () =>
                 {
                     var overlay = Scrim(pause.transform, 0.6f);

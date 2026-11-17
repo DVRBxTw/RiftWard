@@ -23,6 +23,8 @@ namespace RiftWard.Client
             public float LastInput;
             public AdminSettings Admin = new AdminSettings();
             public Room Room;
+            /// Region picked while playing alone (no room).
+            public int SoloRegion;
         }
 
         /// A party with its own leader, mission and snapshots. Players outside a room are alone.
@@ -255,7 +257,7 @@ namespace RiftWard.Client
         /// A player outside any room is the leader of a party of one.
         void SendSoloLobby(Player p)
         {
-            p.Conn.Send(Protocol.Frame(Msg.Lobby, w => { w.Write(0); w.Write(p.Profile.Unlocked); w.Write(p.Conn.Id); w.Write(1); w.Write("lobby"); w.Write(""); }));
+            p.Conn.Send(Protocol.Frame(Msg.Lobby, w => { w.Write(p.SoloRegion); w.Write(p.Profile.Unlocked); w.Write(p.Conn.Id); w.Write(1); w.Write("lobby"); w.Write(""); }));
         }
 
         // ------------------------------------------------------------ messages
@@ -305,7 +307,8 @@ namespace RiftWard.Client
                         break;
                     case Msg.SelectRegion:
                         int region = r.ReadInt32();
-                        if (room != null && id == room.Leader && mode != "playing") { room.Selected = Mathf.Clamp(region, 0, p.Profile.Unlocked); SendLobby(room); }
+                        if (room == null) { p.SoloRegion = Mathf.Clamp(region, 0, p.Profile.Unlocked); SendSoloLobby(p); }
+                        else if (id == room.Leader && mode != "playing") { room.Selected = Mathf.Clamp(region, 0, p.Profile.Unlocked); SendLobby(room); }
                         break;
                     case Msg.RequestDeploy:
                         int target = r.ReadInt32();

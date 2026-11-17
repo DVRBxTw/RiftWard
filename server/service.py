@@ -75,7 +75,15 @@ DUPLICATE_GOLD = [20, 50, 120, 300, 800]
 
 def default_loadout():
     # New recruits start with a worn (劣質) AR-27; better guns come from weapon supply draws.
-    return {"owned": ["rifle"], "levels": {}, "equipped": ["rifle"], "rarity": {"rifle": 0}}
+    return {"owned": ["rifle"], "levels": {}, "equipped": ["rifle"], "rarity": {"rifle": 0}, "copies": {"rifle": [0]}, "active": {"rifle": 0}}
+
+
+WEAPON_COPY_LIMIT = 50
+
+
+def sync_rarity(loadout):
+    """The active copy decides each weapon's rarity."""
+    loadout["rarity"] = {w: loadout["copies"][w][loadout["active"][w]] for w in loadout["owned"]}
 
 
 class Store:
@@ -243,26 +251,59 @@ class Store:
             raise ValueError("武器鑰匙不足")
         rng = random.SystemRandom()
         loadout = self.profile(account_id)["loadout"]
-        results, gold = [], 0
+        results, gold, refund = [], 0, 0
         for _ in range(count):
             weapon = rng.choices(list(WEAPON_WEIGHTS), weights=list(WEAPON_WEIGHTS.values()))[0]
             rarity = rng.choices(range(len(RARITIES)), weights=RARITY_WEIGHTS)[0]
             if weapon not in loadout["owned"]:
                 loadout["owned"].append(weapon)
-                loadout["rarity"][weapon] = rarity
+                loadout["copies"][weapon] = [rarity]
+                loadout["active"][weapon] = 0
                 if len(loadout["equipped"]) < 2:
                     loadout["equipped"].append(weapon)
-                outcome, refund = "new", 0
-            elif rarity > loadout["rarity"].get(weapon, 1):
-                loadout["rarity"][weapon] = rarity
-                outcome, refund = "upgrade", 0
+                outcome = "new"
+            elif len(loadout["copies"][weapon]) < WEAPON_COPY_LIMIT:
+                loadout["copies"][weapon].append(rarity)
+                outcome = "copy"
             else:
-                outcome, refund = "duplicate", DUPLICATE_GOLD[rarity]
+                outcome, refund = "full", DUPLICATE_GOLD[rarity]
                 gold += refund
-            results.append({"weapon": weapon, "rarity": rarity, "outcome": outcome, "gold": refund})
+            results.append({"weapon": weapon, "rarity": rarity, "outcome": outcome, "gold": DUPLICATE_GOLD[rarity] if outcome == "full" else 0})
+        sync_rarity(loadout)
         with self.connect() as db:
             db.execute("UPDATE progress SET loadout=?, gold=gold+? WHERE account_id=?", (json.dumps(loadout), gold, account_id))
         return results, self.profile(account_id)
+
+    def _weapon_copy(self, account_id, weapon, index, rarity=None):
+        loadout = self.profile(account_id)["loadout"]
+        if weapon not in loadout["owned"]:
+            raise ValueError("尚未擁有此武器")
+        if isinstance(index, bool) or not isinstance(index, int) or not 0 <= index < len(loadout["copies"][weapon]):
+            raise ValueError("找不到此武器副本")
+        # The client sends the rarity it saw; a mismatch means the list changed underneath it (stale index).
+        if rarity is not None and loadout["copies"][weapon][index] != rarity:
+            raise ValueError("武器庫已變動，請重新選擇")
+        return loadout
+
+    def _save_loadout(self, account_id, loadout, gold=0):
+        sync_rarity(loadout)
+        with self.connect() as db:
+            db.execute("UPDATE progress SET loadout=?, gold=gold+? WHERE account_id=?", (json.dumps(loadout), gold, account_id))
+        return self.profile(account_id)
+
+    def select_weapon_copy(self, account_id: int, weapon, index, rarity=None):
+        loadout = self._weapon_copy(account_id, weapon, index, rarity)
+        loadout["active"][weapon] = index
+        return self._save_loadout(account_id, loadout)
+
+    def salvage_weapon_copy(self, account_id: int, weapon, index, rarity=None):
+        loadout = self._weapon_copy(account_id, weapon, index, rarity)
+        if index == loadout["active"][weapon]:
+            raise ValueError("使用中的武器無法分解")
+        rarity = loadout["copies"][weapon].pop(index)
+        if loadout["active"][weapon] > index:
+            loadout["active"][weapon] -= 1
+        return self._save_loadout(account_id, loadout, DUPLICATE_GOLD[rarity])
 
     def equip_gear(self, account_id: int, item_id):
         gear = self._raw_gear(account_id)
@@ -372,7 +413,9 @@ class Store:
                 loadout = profile["loadout"]
                 if weapon not in loadout["owned"]:
                     loadout["owned"].append(weapon)
-                    loadout["rarity"][weapon] = 1
+                    loadout["copies"][weapon] = [1]
+                    loadout["active"][weapon] = 0
+                    sync_rarity(loadout)
                     if len(loadout["equipped"]) < 2:
                         loadout["equipped"].append(weapon)
                     with self.connect() as db:
@@ -392,6 +435,15 @@ class Store:
             rarity = data.get("rarity") if isinstance(data.get("rarity"), dict) else {}
             # Weapons owned before rarities existed count as 普通 (1).
             loadout["rarity"] = {w: max(0, min(len(RARITIES) - 1, rarity[w])) if isinstance(rarity.get(w), int) else 1 for w in loadout["owned"]}
+            copies = data.get("copies") if isinstance(data.get("copies"), dict) else {}
+            active = data.get("active") if isinstance(data.get("active"), dict) else {}
+            loadout["copies"], loadout["active"] = {}, {}
+            for w in loadout["owned"]:
+                kept = [max(0, min(len(RARITIES) - 1, r)) for r in copies.get(w, []) if isinstance(r, int)][:WEAPON_COPY_LIMIT]
+                loadout["copies"][w] = kept or [loadout["rarity"][w]]
+                index = active.get(w)
+                loadout["active"][w] = index if isinstance(index, int) and 0 <= index < len(loadout["copies"][w]) else 0
+            sync_rarity(loadout)
             loadout["equipped"] = []
             levels = data.get("levels", {})
             if isinstance(levels, dict):
@@ -703,7 +755,7 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(200, {"ok": True, "count": count, "profile": store.profile(profile["id"])})
             else:
                 self._json(404, {"ok": False, "error": "找不到此服務"})
-        elif self.path in ("/api/talent/assign", "/api/talent/reset", "/api/gacha/draw", "/api/gacha/weapon", "/api/gear/equip", "/api/gear/salvage"):
+        elif self.path in ("/api/talent/assign", "/api/talent/reset", "/api/gacha/draw", "/api/gacha/weapon", "/api/gear/equip", "/api/gear/salvage", "/api/weapon/select", "/api/weapon/salvage"):
             try:
                 extra = {}
                 if self.path == "/api/talent/assign":
@@ -716,6 +768,10 @@ class Handler(BaseHTTPRequestHandler):
                 elif self.path == "/api/gacha/weapon":
                     weapons, result = store.draw_weapons(profile["id"], data.get("count", 1))
                     extra["weapons"] = weapons
+                elif self.path == "/api/weapon/select":
+                    result = store.select_weapon_copy(profile["id"], data.get("weapon"), data.get("index"), data.get("rarity"))
+                elif self.path == "/api/weapon/salvage":
+                    result = store.salvage_weapon_copy(profile["id"], data.get("weapon"), data.get("index"), data.get("rarity"))
                 elif self.path == "/api/gear/equip":
                     result = store.equip_gear(profile["id"], data.get("item"))
                 else:

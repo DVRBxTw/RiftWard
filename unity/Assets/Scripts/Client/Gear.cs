@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using RiftWard.Sim;
 using UnityEngine;
 
 namespace RiftWard.Client
@@ -20,7 +21,7 @@ namespace RiftWard.Client
             return item;
         }
 
-        public string Name => $"{Gear.RarityNames[Rarity]}{Gear.SlotNames.GetValueOrDefault(Slot, Slot)}";
+        public string Name => Gear.ItemName(Slot, Rarity);
         public Color Color => Gear.RarityColors[Rarity];
 
         public string StatText()
@@ -51,6 +52,24 @@ namespace RiftWard.Client
             ["reload"] = ("快速裝填", "換彈速度 +3%"), ["crit"] = ("致命直覺", "爆擊率 +1%"),
         };
         public const int TalentMax = 10;
+
+        /// Every slot has its own item line, one name per rarity (劣質 → 神話).
+        static readonly System.Collections.Generic.Dictionary<string, string[]> ItemNames = new System.Collections.Generic.Dictionary<string, string[]>
+        {
+            ["armor"] = new[] { "破損防彈背心", "制式戰術護甲", "幽影奈米甲", "熾陽動力裝甲", "裂隙神諭戰甲" },
+            ["module"] = new[] { "生鏽準星模組", "制式光學模組", "幽能聚焦模組", "熾金火控核心", "裂隙湮滅核心" },
+            ["boots"] = new[] { "磨損行軍靴", "制式戰術靴", "幽影疾行靴", "熾陽推進靴", "裂隙相位靴" },
+            ["chip"] = new[] { "老舊運算晶片", "制式戰術晶片", "幽能神經晶片", "熾金預判晶片", "裂隙先知晶片" },
+        };
+
+        /// Weapons keep their model name; the rarity adds a finish prefix.
+        static readonly string[] WeaponPrefix = { "破舊", "制式", "幽能", "熾金", "裂隙神話" };
+
+        public static string ItemName(string slot, int rarity) =>
+            ItemNames.TryGetValue(slot, out var names) ? names[Mathf.Clamp(rarity, 0, names.Length - 1)] : slot;
+
+        public static string WeaponName(string weapon, int rarity) =>
+            $"{WeaponPrefix[Mathf.Clamp(rarity, 0, WeaponPrefix.Length - 1)]} {(Defs.Weapons.TryGetValue(weapon, out var w) ? w.Name : weapon)}";
 
         public static string StatText(string key, float value) => key switch
         {

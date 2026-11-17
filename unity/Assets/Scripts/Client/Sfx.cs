@@ -28,7 +28,7 @@ namespace RiftWard.Client
             var v = voices[next];
             next = (next + 1) % voices.Length;
             v.clip = clip;
-            v.volume = volume;
+            v.volume = volume * GameSettings.Effects;
             v.Play();
         }
 

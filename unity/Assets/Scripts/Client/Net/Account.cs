@@ -55,6 +55,16 @@ namespace RiftWard.Client
             }
             var rarity = lo?.Obj("rarity");
             if (rarity != null) foreach (var kv in rarity) p.Loadout.Rarity[kv.Key] = kv.Value is double rv ? (int)rv : 1;
+            var copies = lo?.Obj("copies");
+            if (copies != null)
+                foreach (var kv in copies)
+                {
+                    var list = new List<int>();
+                    if (kv.Value is List<object> items) foreach (var o in items) list.Add(o is double cv ? (int)cv : 1);
+                    p.Loadout.Copies[kv.Key] = list;
+                }
+            var active = lo?.Obj("active");
+            if (active != null) foreach (var kv in active) p.Loadout.Active[kv.Key] = kv.Value is double av ? (int)av : 0;
             p.Loadout.Normalize();
             var record = d.Obj("stats");
             if (record != null)

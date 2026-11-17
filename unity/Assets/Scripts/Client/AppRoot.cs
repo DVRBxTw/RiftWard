@@ -65,6 +65,11 @@ namespace RiftWard.Client
             netTest = Arg("-net-test") != null;
             if (netTest) { OnAuthenticated(Environment.GetEnvironmentVariable("RIFTWARD_TEST_TOKEN") ?? ""); return; }
             Client.MissionEnded += OnMissionEnded;
+            GameSettings.Load();
+            GameSettings.Apply(Arg("-capture") == null && !Application.isBatchMode);
+            Client.Menus.SettingsPanel = GameSettings.BuildPanel;
+            Client.WeaponRarity = id => Profile?.Loadout.RarityOf(id) ?? 1;
+            Client.ShowcaseWeapon = () => Profile != null && Profile.Loadout.Equipped.Count > 0 ? Profile.Loadout.Equipped[0] : "rifle";
             Client.Menus.LeaveRequested = ReturnHome;
             Client.Menus.RetryRequested = Deploy;
             var capture = Arg("-capture");
@@ -247,6 +252,7 @@ namespace RiftWard.Client
             if (Net.Welcomed)
             {
                 if (leaderId == Net.LocalId) Net.Send(Msg.SelectRegion, w => w.Write(region));
+                if (!InRoom) { SelectedRegion = Mathf.Clamp(region, 0, Profile.Unlocked); ShowHome(); }
                 return;
             }
             SelectedRegion = Mathf.Clamp(region, 0, Profile.Unlocked);
@@ -331,7 +337,7 @@ namespace RiftWard.Client
                 music.volume = 0;
                 music.Play();
             }
-            float target = Client.Sim == null ? 0.35f : 0f;
+            float target = Client.Sim == null ? 0.35f * GameSettings.Music : 0f;
             music.volume = Mathf.MoveTowards(music.volume, target, Time.deltaTime * (target > 0 ? 0.25f : 0.6f));
         }
 
@@ -398,7 +404,13 @@ namespace RiftWard.Client
                 },
                 ["equipment"] = new Dictionary<string, object> { ["armor"] = "a", ["module"] = "b" },
                 ["bonus"] = new Dictionary<string, object> { ["hp"] = 42.0, ["damage"] = 22.0, ["speed"] = 6.0, ["crit"] = 5.0 },
-                ["loadout"] = new Dictionary<string, object> { ["owned"] = new List<object> { "pistol", "rifle", "sniper" }, ["equipped"] = new List<object> { "pistol", "sniper" } },
+                ["loadout"] = new Dictionary<string, object>
+                {
+                    ["owned"] = new List<object> { "pistol", "rifle", "sniper" }, ["equipped"] = new List<object> { "pistol", "sniper" },
+                    ["rarity"] = new Dictionary<string, object> { ["pistol"] = 4.0, ["rifle"] = 0.0, ["sniper"] = 3.0 },
+                    ["copies"] = new Dictionary<string, object> { ["pistol"] = new List<object> { 1.0, 4.0, 0.0, 2.0 }, ["rifle"] = new List<object> { 0.0 }, ["sniper"] = new List<object> { 3.0 } },
+                    ["active"] = new Dictionary<string, object> { ["pistol"] = 1.0, ["rifle"] = 0.0, ["sniper"] = 0.0 },
+                },
             });
             UpdateProfile(demo);
             Screens.ShowCharacter();
@@ -407,6 +419,12 @@ namespace RiftWard.Client
             Screens.ShowShop();
             yield return Settle(0.4f);
             yield return Shot(folder, "unity-shop");
+            Screens.ShowArmory();
+            yield return Settle(0.5f);
+            yield return Shot(folder, "unity-armory-rarity");
+            Screens.ShowSettings();
+            yield return Settle(0.3f);
+            yield return Shot(folder, "unity-settings");
             Screens.PlayChestDemo(new List<GearItem>(demo.Inventory), 4);
             yield return Settle(1.0f);
             yield return Shot(folder, "unity-chest-charge");
@@ -418,6 +436,8 @@ namespace RiftWard.Client
             Screens.Clear();
 
             var kit = new Loadout { Owned = new List<string> { "pistol", "rifle", "sniper" }, Equipped = new List<string> { "rifle", "sniper" } };
+            kit.Rarity["rifle"] = 4; kit.Rarity["sniper"] = 3;
+            Client.WeaponRarity = id => kit.RarityOf(id);
             Client.StartOffline(0, kit, false, null);
             var sim = Client.Sim;
             sim.EnemyVariety = true;
@@ -425,6 +445,8 @@ namespace RiftWard.Client
             sim.ApplyBuff(Client.LocalId, Defs.BuffPlasma);
             sim.ApplyBuff(Client.LocalId, Defs.BuffOrbit + 200);
             sim.ApplyBuff(Client.LocalId, Defs.BuffMissile + 200);
+            sim.ApplyBuff(Client.LocalId, Defs.BuffLightning + 200);
+            sim.ApplyBuff(Client.LocalId, Defs.BuffMine + 200);
             sim.Wave = 5;
             sim.SpawnWave();
             var me = sim.Actors[Client.LocalId];
@@ -461,6 +483,41 @@ namespace RiftWard.Client
             Client.SetThirdPerson(true);
             yield return Settle(0.3f);
             yield return Shot(folder, "unity-third-0");
+            for (int k = 0; k < 4; k++)
+            {
+                foreach (var e in sim.Enemies.Values) { e.Speed = 2f; }
+                sim.Explosions.Add(new ExplosionEvent { Position = me.Position + new Vector3(2.5f - k * 1.5f, 1f, 6f + k), Radius = 3f, Color = new Color32(0xff, 0xb3, 0x47, 255) });
+                yield return Settle(0.12f);
+                yield return Shot(folder, "unity-fx-" + k);
+            }
+            // Animation check: soldiers and every trooper type walking past a fixed camera.
+            {
+                var cast = new List<GameObject>();
+                var walker = Models.Soldier(Palette.Player);
+                walker.GetComponent<CharacterRig>().SetWeapon("rifle", 4);
+                cast.Add(walker);
+                var reloader = Models.Soldier(Palette.Teammate);
+                reloader.GetComponent<CharacterRig>().SetWeapon("shotgun", 3);
+                reloader.GetComponent<CharacterRig>().Reload = 0.45f;
+                cast.Add(reloader);
+                foreach (int kind in new[] { Defs.KindGrunt, Defs.KindCharger, Defs.KindShield, Defs.KindHeavyBoss }) cast.Add(Models.Enemy(kind));
+                for (int ci = 0; ci < cast.Count; ci++)
+                {
+                    cast[ci].transform.position = new Vector3(-6.5f + ci * 2.3f + (ci == 5 ? 1.2f : 0), 0, 16f);
+                    cast[ci].transform.rotation = Quaternion.Euler(0, 180, 0);
+                }
+                Client.enabled = false;   // stop the game camera from overriding ours
+                for (int f = 0; f < 50; f++)
+                {
+                    for (int ci = 0; ci < cast.Count; ci++) if (ci != 1) cast[ci].transform.position += Vector3.back * (ci == 5 ? 1.6f : 3.4f) * Time.deltaTime;
+                    Client.Camera.transform.position = new Vector3(-0.5f, 5.2f, cast[0].transform.position.z - 8.5f);
+                    Client.Camera.transform.LookAt(new Vector3(-0.5f, 0.9f, cast[0].transform.position.z));
+                    yield return null;
+                }
+                yield return Shot(folder, "unity-rig");
+                foreach (var c in cast) Destroy(c);
+                Client.enabled = true;
+            }
             for (int region = 1; region <= 2; region++)
             {
                 Client.World.ApplyRegion(region);

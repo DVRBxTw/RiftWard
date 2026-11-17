@@ -35,6 +35,7 @@ namespace RiftWard.Client
         Vector3 magazineRest;
 
         readonly Dictionary<int, GameObject> actorViews = new Dictionary<int, GameObject>();
+        readonly Dictionary<int, float> enemyHp = new Dictionary<int, float>();
         readonly Dictionary<int, List<Transform>> droneViews = new Dictionary<int, List<Transform>>();
         readonly Dictionary<int, TextMesh> nameTags = new Dictionary<int, TextMesh>();
         readonly Dictionary<int, List<Transform>> bladeViews = new Dictionary<int, List<Transform>>();
@@ -62,6 +63,7 @@ namespace RiftWard.Client
             Time.fixedDeltaTime = 1f / 60f;
             var camGo = new GameObject("Camera");
             Camera = camGo.AddComponent<Camera>();
+            Camera.cullingMask &= ~(1 << ModelPreview.Layer);
             Camera.fieldOfView = BaseFov;
             Camera.nearClipPlane = 0.05f;
             Camera.farClipPlane = 260f;
@@ -208,6 +210,9 @@ namespace RiftWard.Client
                 showcase.transform.rotation = Quaternion.Euler(0, 215, 0);
                 showcase.transform.localScale = Vector3.one * 2.5f;
             }
+            // Refreshed on every visit so a new loadout or copy shows up (SetWeapon skips unchanged weapons).
+            string shown = ShowcaseWeapon?.Invoke() ?? "rifle";
+            showcase.GetComponent<CharacterRig>()?.SetWeapon(shown, WeaponRarity?.Invoke(shown) ?? 1);
             showcase.SetActive(true);
             weaponHolder.gameObject.SetActive(false);
             Camera.fieldOfView = BaseFov;
@@ -215,6 +220,10 @@ namespace RiftWard.Client
 
         public void SetThirdPerson(bool on) => thirdPerson = on;
         public void SelectSlot(int slot) => desiredSlot = slot;
+        /// Rarity of the local player's weapons (from the account profile) for the first-person finish.
+        public Func<string, int> WeaponRarity;
+        /// Weapon the lobby showcase soldier holds (the player's first equipped gun).
+        public Func<string> ShowcaseWeapon;
         public void SetView(float newYaw, float newPitch) { yaw = newYaw; pitch = newPitch; }
 
         public static void LockCursor(bool locked)
@@ -251,8 +260,8 @@ namespace RiftWard.Client
             if (!Input.GetMouseButton(0)) releaseFireToResume = false;
             if (Active)
             {
-                yaw = Mathf.Repeat(yaw + Input.GetAxisRaw("Mouse X") * LookSensitivity * 10f + Mathf.PI, Mathf.PI * 2f) - Mathf.PI;
-                pitch = Mathf.Clamp(pitch + Input.GetAxisRaw("Mouse Y") * LookSensitivity * 10f, -Defs.LookLimit, Defs.LookLimit);
+                yaw = Mathf.Repeat(yaw + Input.GetAxisRaw("Mouse X") * LookSensitivity * 10f * GameSettings.Sensitivity + Mathf.PI, Mathf.PI * 2f) - Mathf.PI;
+                pitch = Mathf.Clamp(pitch + Input.GetAxisRaw("Mouse Y") * LookSensitivity * 10f * GameSettings.Sensitivity, -Defs.LookLimit, Defs.LookLimit);
                 if (Input.GetKeyDown(KeyCode.V)) thirdPerson = !thirdPerson;
                 if (Input.GetKeyDown(KeyCode.Alpha1)) desiredSlot = 0;
                 if (Input.GetKeyDown(KeyCode.Alpha2)) desiredSlot = 1;
@@ -330,6 +339,13 @@ namespace RiftWard.Client
         {
             if (shot.Shooter < 0) { GadgetEffect(shot); return; }
             Vector3 origin = shot.Shooter == LocalId && muzzle != null && !thirdPerson ? muzzle.position : shot.Origin;
+            if (actorViews.TryGetValue(shot.Shooter, out var shooterView) && shooterView.activeSelf)
+            {
+                var shooterRig = shooterView.GetComponent<CharacterRig>();
+                if (shooterRig != null) { shooterRig.Fire(); if (shooterRig.Muzzle != null) origin = shooterRig.Muzzle.position; }
+            }
+            int rarity = Sim.Actors.TryGetValue(shot.Shooter, out var shooter) ? shooter.Loadout.RarityOf(shooter.WeaponId) : 1;
+            if (rarity >= 3) { RarityShot(shot, origin, rarity); if (shot.Shooter == LocalId) { Hud.OnLocalShot(shot, Camera); Sfx.Play(shot.Head ? "head" : shot.Hit ? "hit" : "shot", 0.6f); ApplyRecoil(); } return; }
             var beam = new GameObject("Beam");
             var line = beam.AddComponent<LineRenderer>();
             line.positionCount = 2;
@@ -358,14 +374,9 @@ namespace RiftWard.Client
             var line = beam.AddComponent<LineRenderer>();
             if (lightning)
             {
-                // Jagged bolt: jitter the midpoints so each strike looks different.
-                line.positionCount = 7;
-                for (int i = 0; i < 7; i++)
-                {
-                    float t = i / 6f;
-                    var jitter = i == 0 || i == 6 ? Vector3.zero : UnityEngine.Random.insideUnitSphere * 0.35f;
-                    line.SetPosition(i, Vector3.Lerp(shot.Origin, shot.End, t) + jitter);
-                }
+                LightningBolt(shot.Origin, shot.End, line);
+                Destroy(beam);
+                return;
             }
             else
             {
@@ -382,6 +393,43 @@ namespace RiftWard.Client
             if (GameSim.GadgetOwner(shot.Shooter) == LocalId) Sfx.Play(plasma ? "explosion" : lightning ? "head" : "shot", plasma ? 0.35f : 0.12f);
         }
 
+        /// Chain-lightning arc: a white-hot core plus two wider blue strands, each jagged differently, small forks
+        /// branching off, and a flash with light where it lands.
+        void LightningBolt(Vector3 from, Vector3 to, LineRenderer unused)
+        {
+            void Strand(float width, Color color, float glow, float jitter, Vector3 a, Vector3 b, int points)
+            {
+                var go = new GameObject("Bolt");
+                var line = go.AddComponent<LineRenderer>();
+                line.positionCount = points;
+                for (int i = 0; i < points; i++)
+                {
+                    float t = i / (points - 1f);
+                    var offset = i == 0 || i == points - 1 ? Vector3.zero : UnityEngine.Random.insideUnitSphere * jitter * Mathf.Sin(t * Mathf.PI);
+                    line.SetPosition(i, Vector3.Lerp(a, b, t) + offset);
+                }
+                line.startWidth = width; line.endWidth = width * 0.7f;
+                line.sharedMaterial = Build.Mat(color, glow, 0.9f);
+                line.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+                effects.Add((go, UnityEngine.Random.Range(0.1f, 0.18f), Vector3.zero, 0));
+            }
+            int n = Mathf.Clamp((int)(Vector3.Distance(from, to) * 2.5f), 6, 24);
+            Strand(0.14f, Palette.Hex("5aa8ff"), 3f, 0.45f, from, to, n);
+            Strand(0.09f, Palette.Hex("9fd0ff"), 4f, 0.35f, from, to, n);
+            Strand(0.035f, Color.white, 5f, 0.2f, from, to, n);
+            for (int f = 0; f < 2; f++)
+            {
+                var start = Vector3.Lerp(from, to, UnityEngine.Random.Range(0.3f, 0.7f));
+                Strand(0.04f, Palette.Hex("bfe4ff"), 4f, 0.2f, start, start + UnityEngine.Random.onUnitSphere * 1.2f + Vector3.down * 0.3f, 5);
+            }
+            Burst.Sphere(to, Palette.Hex("bfe4ff"), 0.85f, 5f, 0.2f, 1.1f, 0.14f).GetComponent<Burst>().AddLight(Palette.Hex("7fb8ff"), 6f, 5f);
+            for (int i = 0; i < 6; i++)
+            {
+                var spark = Build.Cube(null, to, Vector3.one * 0.06f, Palette.Hex("e6f3ff"), 5f, false);
+                effects.Add((spark, 0.3f, UnityEngine.Random.onUnitSphere * 6f + Vector3.up * 2f, 900f));
+            }
+        }
+
         void RenderGadgets(Actor a, GameObject view)
         {
             if (!droneViews.TryGetValue(a.Id, out var drones)) droneViews[a.Id] = drones = new List<Transform>();
@@ -395,8 +443,12 @@ namespace RiftWard.Client
                 // Keep your own drones out of the first-person camera: wider, higher orbit and smaller.
                 if (firstPerson) offset = new Vector3(offset.x * 1.9f, offset.y + 0.9f, offset.z * 1.9f);
                 drones[i].localScale = Vector3.one * (firstPerson ? 0.7f : 1f);
-                drones[i].position = view.transform.position + offset;
-                drones[i].rotation = Quaternion.Euler(0, t * 140f + i * 90f, 0);
+                Vector3 target = view.transform.position + offset;
+                drones[i].position = Vector3.Lerp(drones[i].position, target, 1f - Mathf.Exp(-9f * Time.deltaTime));
+                float angle = t * 1.6f + i * Mathf.PI * 2f / Mathf.Max(1, drones.Count);
+                var tangent = new Vector3(-Mathf.Sin(angle), 0, Mathf.Cos(angle));
+                var heading = Quaternion.LookRotation(tangent) * Quaternion.Euler(9f, 0, 20f);
+                drones[i].rotation = Quaternion.Slerp(drones[i].rotation, heading, 1f - Mathf.Exp(-6f * Time.deltaTime));
                 drones[i].gameObject.SetActive(a.Alive);
             }
             var cannon = view.transform.Find("Plasma");
@@ -408,7 +460,7 @@ namespace RiftWard.Client
             for (int i = 0; i < blades.Count; i++)
             {
                 blades[i].position = view.transform.position + Defs.BladeOffset(i, blades.Count, t);
-                blades[i].rotation = Quaternion.Euler(0, -t * 600f, 0);
+                blades[i].rotation = Quaternion.Euler(10f, -t * 1100f + i * 40f, 0);
             }
         }
 
@@ -434,6 +486,61 @@ namespace RiftWard.Client
             tag.transform.rotation = Camera.transform.rotation;
         }
 
+        /// 傳奇 / 神話 weapons only: a thick glowing tracer with a white core, a coloured muzzle burst and impact
+        /// sparks; 神話 adds a spiralling energy helix and a ring of shards on every hit.
+        void RarityShot(ShotEvent shot, Vector3 origin, int rarity)
+        {
+            bool myth = rarity >= 4;
+            Color color = Gear.RarityColors[rarity];
+            LineRenderer Line(string name, int points, float width, Color c, float glow)
+            {
+                var go = new GameObject(name);
+                var line = go.AddComponent<LineRenderer>();
+                line.positionCount = points;
+                line.startWidth = width; line.endWidth = width * 0.6f;
+                line.sharedMaterial = Build.Mat(c, glow);
+                line.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+                effects.Add((go, myth ? 0.14f : 0.1f, Vector3.zero, 0));
+                return line;
+            }
+            var outer = Line("RarityBeam", 2, myth ? 0.11f : 0.08f, color, myth ? 5f : 4f);
+            outer.SetPosition(0, origin); outer.SetPosition(1, shot.End);
+            var core = Line("RarityCore", 2, 0.025f, Color.white, 3f);
+            core.SetPosition(0, origin); core.SetPosition(1, shot.End);
+            if (myth)
+            {
+                // Energy helix wrapped around the tracer.
+                Vector3 dir = (shot.End - origin);
+                float length = dir.magnitude;
+                dir /= Mathf.Max(0.001f, length);
+                Vector3 side = Vector3.Cross(dir, Vector3.up).normalized;
+                if (side == Vector3.zero) side = Vector3.right;
+                Vector3 up = Vector3.Cross(side, dir);
+                int n = Mathf.Clamp((int)(length * 4f), 8, 160);
+                var helix = Line("Helix", n, 0.03f, Palette.Hex("ffb0b0"), 4f);
+                for (int i = 0; i < n; i++)
+                {
+                    float t = i / (n - 1f), a = t * length * 5f;
+                    helix.SetPosition(i, origin + dir * length * t + (side * Mathf.Cos(a) + up * Mathf.Sin(a)) * 0.12f);
+                }
+            }
+            bool firstPerson = shot.Shooter == LocalId && !thirdPerson;
+            var flash = Build.Sphere(null, origin, (myth ? 0.4f : 0.3f) * (firstPerson ? 0.25f : 1f), color, 4f, false);
+            flash.GetComponent<MeshRenderer>().sharedMaterial = Build.Mat(color, 4f, 0.6f);
+            effects.Add((flash, 0.07f, Vector3.zero, 0));
+            if (!shot.Hit) return;
+            var burst = Build.Sphere(null, shot.End, shot.Head ? 0.8f : 0.55f, color, 4f, false);
+            burst.GetComponent<MeshRenderer>().sharedMaterial = Build.Mat(color, 4f, 0.55f);
+            effects.Add((burst, 0.12f, Vector3.zero, 0));
+            int shards = myth ? 10 : 5;
+            for (int i = 0; i < shards; i++)
+            {
+                var spark = Build.Cube(null, shot.End, Vector3.one * (myth ? 0.09f : 0.07f), color, 4f, false);
+                var v = UnityEngine.Random.onUnitSphere * (myth ? 7f : 5f) + Vector3.up * 2f;
+                effects.Add((spark, 0.35f, v, 600f));
+            }
+        }
+
         float lastRecoil;
         void ApplyRecoil()
         {
@@ -449,9 +556,22 @@ namespace RiftWard.Client
 
         void ExplosionEffect(ExplosionEvent ex)
         {
-            var ball = Build.Sphere(null, ex.Position, ex.Radius * 1.2f, ex.Color, 2.5f, false);
-            ball.GetComponent<MeshRenderer>().sharedMaterial = Build.Mat(ex.Color, 2.5f, 0.55f);
-            effects.Add((ball, 0.22f, Vector3.zero, 0));
+            Color color = ex.Color;
+            float r = ex.Radius;
+            Burst.Sphere(ex.Position, Color.white, 0.95f, 5f, r * 0.2f, r * 0.9f, 0.09f).GetComponent<Burst>().AddLight(color, 8f, r * 4f);
+            Burst.Sphere(ex.Position, color, 0.7f, 3.5f, r * 0.4f, r * 1.5f, 0.3f);
+            Burst.Sphere(ex.Position, Color.Lerp(color, Color.white, 0.4f), 0.5f, 4f, r * 0.2f, r * 1.2f, 0.18f);
+            Burst.Ring(new Vector3(ex.Position.x, 0.06f, ex.Position.z), color, r * 1.8f, 0.4f);
+            for (int i = 0; i < 5; i++)
+            {
+                var drift = new Vector3(UnityEngine.Random.Range(-0.6f, 0.6f), UnityEngine.Random.Range(1.2f, 2.2f), UnityEngine.Random.Range(-0.6f, 0.6f));
+                Burst.Sphere(ex.Position + UnityEngine.Random.insideUnitSphere * r * 0.4f, Palette.Hex("8a847c"), 0.35f, 0f, r * 0.3f, r * 1.1f, UnityEngine.Random.Range(0.9f, 1.4f), drift);
+            }
+            for (int i = 0; i < 14; i++)
+            {
+                var spark = Build.Cube(null, ex.Position, Vector3.one * 0.08f, Color.Lerp(color, Palette.Hex("fff1c0"), UnityEngine.Random.value), 5f, false);
+                effects.Add((spark, UnityEngine.Random.Range(0.35f, 0.6f), UnityEngine.Random.onUnitSphere * UnityEngine.Random.Range(5f, 10f) + Vector3.up * 4f, 720f));
+            }
             if (Sim.Actors.TryGetValue(LocalId, out var me) && Vector3.Distance(me.Position, ex.Position) < ex.Radius * 3) shake = 0.08f;
             Sfx.Play("explosion", 0.8f);
         }
@@ -460,11 +580,21 @@ namespace RiftWard.Client
         void DeathEffect(GameObject view, Color color, float scale)
         {
             Vector3 center = view.transform.position + Vector3.up * scale;
-            for (int i = 0; i < 10; i++)
+            // The body breaks apart: every armour piece detaches and tumbles away from the centre.
+            int pieces = 0;
+            foreach (var r in view.GetComponentsInChildren<MeshRenderer>())
             {
-                var shard = Build.Cube(null, center + UnityEngine.Random.insideUnitSphere * 0.4f * scale, Vector3.one * UnityEngine.Random.Range(0.12f, 0.3f) * scale, i % 2 == 0 ? color : Palette.Hex("3a2a26"), 0.4f, false);
-                var velocity = (UnityEngine.Random.insideUnitSphere + Vector3.up * 1.2f) * 4f;
-                effects.Add((shard, 0.9f, velocity, UnityEngine.Random.Range(-360f, 360f)));
+                if (pieces++ >= 22 || !r.gameObject.activeInHierarchy) continue;
+                var piece = r.transform;
+                piece.SetParent(null, true);
+                var away = (piece.position - center); away.y = 0;
+                var velocity = away.normalized * UnityEngine.Random.Range(2.5f, 5f) + Vector3.up * UnityEngine.Random.Range(3f, 6f);
+                effects.Add((piece.gameObject, UnityEngine.Random.Range(0.9f, 1.3f), velocity, UnityEngine.Random.Range(-420f, 420f)));
+            }
+            for (int i = 0; i < 6; i++)
+            {
+                var spark = Build.Cube(null, center, Vector3.one * 0.07f * scale, color, 4f, false);
+                effects.Add((spark, 0.5f, UnityEngine.Random.onUnitSphere * 6f + Vector3.up * 3f, 720f));
             }
             var flash = Build.Sphere(null, center, 1.2f * scale, color, 2f, false);
             flash.GetComponent<MeshRenderer>().sharedMaterial = Build.Mat(color, 2f, 0.5f);
@@ -486,7 +616,18 @@ namespace RiftWard.Client
                 }
                 view.transform.position = Vector3.Lerp(view.transform.position, a.Position, 1f - Mathf.Exp(-20f * dt));
                 float lying = a.Alive ? 0f : -80f;
-                view.transform.rotation = Quaternion.Euler(lying, a.Yaw * Mathf.Rad2Deg, 0);
+                var current = view.transform.rotation;
+                view.transform.rotation = Quaternion.Slerp(current, Quaternion.Euler(lying, a.Yaw * Mathf.Rad2Deg, 0), a.Alive ? 1f : 1f - Mathf.Exp(-6f * dt));
+                var rig = view.GetComponent<CharacterRig>();
+                if (rig != null)
+                {
+                    rig.Alive = a.Alive;
+                    rig.Airborne = a.Position.y > 0.08f;
+                    rig.Pitch = a.Id == LocalId ? pitch : 0f;
+                    rig.Reload = a.Reload > 0 && a.ReloadTime > 0 ? 1f - a.Reload / a.ReloadTime : 0f;
+                    int weaponRarity = a.Id == LocalId ? (WeaponRarity?.Invoke(a.WeaponId) ?? 1) : a.Loadout.RarityOf(a.WeaponId);
+                    rig.SetWeapon(a.WeaponId, weaponRarity);
+                }
                 view.SetActive(a.Id != LocalId || thirdPerson);
                 RenderGadgets(a, view);
                 RenderNameTag(a, view);
@@ -510,7 +651,9 @@ namespace RiftWard.Client
                 }
                 view.transform.position = Vector3.Lerp(view.transform.position, e.Position, 1f - Mathf.Exp(-14f * dt));
                 view.transform.rotation = Quaternion.Euler(0, e.Yaw * Mathf.Rad2Deg, 0);
-                var laser = view.transform.Find("Laser");
+                var laser = CharacterRig.Find(view.transform, "Laser");
+                if (enemyHp.TryGetValue(e.Id, out var lastHp) && e.Hp < lastHp - 0.5f) view.GetComponent<CharacterRig>()?.Hit();
+                enemyHp[e.Id] = e.Hp;
                 if (laser != null) laser.gameObject.SetActive(e.State == 1);
             }
             foreach (var id in enemyViews.Keys.Where(id => !Sim.Enemies.ContainsKey(id)).ToList())
@@ -519,12 +662,14 @@ namespace RiftWard.Client
                 DeathEffect(view, Palette.Hex("ff8855"), view.transform.localScale.x);
                 Destroy(view);
                 enemyViews.Remove(id);
+                enemyHp.Remove(id);
             }
 
             foreach (var b in Sim.Bullets.Values)
             {
                 if (!bulletViews.TryGetValue(b.Id, out var view)) bulletViews[b.Id] = view = Models.Projectile(b.Kind);
                 view.transform.position = b.Position;
+                if (b.Kind == BulletKind.Missile && b.Velocity.sqrMagnitude > 0.01f) view.transform.rotation = Quaternion.LookRotation(b.Velocity);
             }
             foreach (var id in bulletViews.Keys.Where(id => !Sim.Bullets.ContainsKey(id)).ToList()) { Destroy(bulletViews[id]); bulletViews.Remove(id); }
 
@@ -579,7 +724,7 @@ namespace RiftWard.Client
             {
                 shownSlot = me.Slot;
                 desiredSlot = me.Slot;
-                muzzle = Models.Viewmodel(me.WeaponId, weaponHolder);
+                muzzle = Models.Viewmodel(me.WeaponId, weaponHolder, WeaponRarity?.Invoke(me.WeaponId) ?? 1);
                 magazine = weaponHolder.Find("Mag");
                 if (magazine != null) magazineRest = magazine.localPosition;
             }

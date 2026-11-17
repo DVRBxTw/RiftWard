@@ -81,8 +81,9 @@ namespace RiftWard.Client
             var account = Ui.Rect(bar, "Account").Place(new Vector2(1, 0.5f), new Vector2(-40, 0), new Vector2(210, 52), new Vector2(1, 0.5f));
             Ui.Label(account, $"{p.Username}  ·  Lv {p.Level}", 15, Palette.Bone, TextAnchor.UpperRight, true).rectTransform.Place(new Vector2(1, 1), Vector2.zero, new Vector2(210, 22), new Vector2(1, 1));
             var links = Ui.HStack(account, 4);
-            links.Place(new Vector2(1, 0), Vector2.zero, new Vector2(p.Admin ? 200 : 136, 24), new Vector2(1, 0));
+            links.Place(new Vector2(1, 0), Vector2.zero, new Vector2(p.Admin ? 250 : 190, 24), new Vector2(1, 0));
             if (p.Admin) Ui.Button(links, "管理員", ShowAdmin, 12, Palette.Danger, new Color(0, 0, 0, 0), new Color(0, 0, 0, 0));
+            Ui.Button(links, "設定", ShowSettings, 12, Palette.Amber, new Color(0, 0, 0, 0), new Color(0, 0, 0, 0));
             Ui.Button(links, "登出", app.Logout, 12, Palette.Muted, new Color(0, 0, 0, 0), new Color(0, 0, 0, 0));
             Ui.Button(links, "離開遊戲", app.Quit, 12, Palette.Muted, new Color(0, 0, 0, 0), new Color(0, 0, 0, 0));
             var chips = new[] { ("金幣", $"{p.Gold}", Palette.Amber), ("裝備鑰匙", p.Keys.ToString(), Palette.Hex("b07cff")), ("武器鑰匙", p.WeaponKeys.ToString(), Palette.Danger) };
@@ -346,6 +347,51 @@ namespace RiftWard.Client
                 tag.rectTransform.Place(new Vector2(1, 0.5f), new Vector2(-16, 0), new Vector2(80, 20), new Vector2(1, 0.5f));
                 if (current) Ui.Box(row.transform, Palette.Amber, "Mark").rectTransform.Place(new Vector2(0, 0.5f), Vector2.zero, new Vector2(3, 74), new Vector2(0, 0.5f));
             }
+            // Copies of the selected weapon: choose which one to use, salvage the rest by hand.
+            if (p.Loadout.Owned.Contains(armoryPick) && p.Loadout.Copies.TryGetValue(armoryPick, out var copies))
+            {
+                int activeCopy = p.Loadout.Active.TryGetValue(armoryPick, out var ac) ? ac : 0;
+                var copyBox = Ui.Rect(pad, "Copies").Place(new Vector2(0, 1), new Vector2(0, -400), new Vector2(400, 170), new Vector2(0, 1));
+                Widgets.Section(copyBox, $"武器庫  ·  {copies.Count} 把").Place(new Vector2(0, 1), Vector2.zero, new Vector2(400, 26), new Vector2(0, 1));
+                var host = Ui.Rect(copyBox, "Host");
+                host.anchorMin = Vector2.zero; host.anchorMax = Vector2.one; host.offsetMin = Vector2.zero; host.offsetMax = new Vector2(0, -30);
+                var copyList = Widgets.ScrollList(host, out _);
+                copyList.parent.GetComponent<RectTransform>().Fill();
+                var order = new List<int>();
+                for (int i = 0; i < copies.Count; i++) order.Add(i);
+                order.Sort((x, y) => copies[y] != copies[x] ? copies[y].CompareTo(copies[x]) : x.CompareTo(y));
+                foreach (int index in order)
+                {
+                    int rarity = Mathf.Clamp(copies[index], 0, 4), idx = index;
+                    bool using_ = index == activeCopy;
+                    var row = Ui.Rect(copyList, "Copy").Sized(36);
+                    Ui.Label(row, Gear.WeaponName(armoryPick, rarity), 14, Gear.RarityColors[rarity], TextAnchor.MiddleLeft, true).rectTransform.Fill().offsetMin = new Vector2(10, 0);
+                    if (using_)
+                    {
+                        Ui.Label(row, "使用中", 12, Palette.Amber, TextAnchor.MiddleRight).rectTransform.Fill().offsetMax = new Vector2(-10, 0);
+                        continue;
+                    }
+                    string weaponId = armoryPick;
+                    var use = Ui.Button(row, "使用", () => ArmoryRequest("/api/weapon/select", new Dictionary<string, object> { ["weapon"] = weaponId, ["index"] = idx, ["rarity"] = rarity }), 12, Palette.Amber);
+                    use.GetComponent<RectTransform>().Place(new Vector2(1, 0.5f), new Vector2(-70, 0), new Vector2(60, 28), new Vector2(1, 0.5f));
+                    // 傳奇 / 神話 need a second click to salvage; the button arms itself for 3 seconds.
+                    Button scrap = null;
+                    float armedUntil = -1f;
+                    scrap = Ui.Button(row, "分解", () =>
+                    {
+                        if (rarity >= 3 && Time.unscaledTime > armedUntil)
+                        {
+                            armedUntil = Time.unscaledTime + 3f;
+                            scrap.SetCaption("確定？");
+                            if (armoryStatus != null) { armoryStatus.color = Palette.Danger; armoryStatus.text = $"再按一次「確定？」分解 {Gear.WeaponName(weaponId, rarity)}，無法復原。"; }
+                            return;
+                        }
+                        ArmoryRequest("/api/weapon/salvage", new Dictionary<string, object> { ["weapon"] = weaponId, ["index"] = idx, ["rarity"] = rarity });
+                    }, 12, rarity >= 3 ? Palette.Danger : Palette.Muted);
+                    scrap.GetComponent<RectTransform>().Place(new Vector2(1, 0.5f), new Vector2(-4, 0), new Vector2(60, 28), new Vector2(1, 0.5f));
+                }
+            }
+
             // Loadout strip
             var strip = Ui.Rect(pad, "Loadout").Place(new Vector2(0, 0), Vector2.zero, new Vector2(400, 80), new Vector2(0, 0));
             Caps(strip, "出擊配置").rectTransform.Place(new Vector2(0, 1), Vector2.zero, new Vector2(200, 18), new Vector2(0, 1));
@@ -370,7 +416,13 @@ namespace RiftWard.Client
             var ds = Ui.VStack(sheet, 14);
             ds.Fill();
             ds.GetComponent<VerticalLayoutGroup>().padding = new RectOffset(32, 32, 26, 24);
-            Ui.Label(ds, wd.Name, 34, Palette.Bone, TextAnchor.UpperLeft, true).Sized(44);
+            int shownRarity = own ? p.Loadout.RarityOf(armoryPick) : 1;
+            string pick = armoryPick;
+            var show = ModelPreview.Create(sheet, t => Models.WeaponDisplay(t, pick, shownRarity), 384, 25f, 8f);
+            show.rectTransform.Place(new Vector2(1, 1), new Vector2(-24, -14), new Vector2(150, 150), new Vector2(1, 1));
+            if (own) RarityFx.Attach(show.rectTransform, shownRarity);
+            if (!own) show.color = new Color(1, 1, 1, 0.35f);
+            Ui.Label(ds, own ? Gear.WeaponName(armoryPick, shownRarity) : wd.Name, 32, own ? Gear.RarityColors[shownRarity] : Palette.Bone, TextAnchor.UpperLeft, true).Sized(44);
             if (own) Ui.Label(ds, $"{Gear.RarityNames[p.Loadout.RarityOf(armoryPick)]}  ·  傷害 ×{Defs.WeaponRarityMult[p.Loadout.RarityOf(armoryPick)]:0.00}", 15, Gear.RarityColors[p.Loadout.RarityOf(armoryPick)], TextAnchor.UpperLeft, true).Sized(22);
             Ui.Label(ds, wd.Description, 15, Palette.Hex("c9c5bb")).Sized(22);
             var st = wd.StatsAt(p.Loadout.Level(armoryPick, "damage"), p.Loadout.Level(armoryPick, "mag"), p.Loadout.Level(armoryPick, "reload"));
@@ -438,11 +490,15 @@ namespace RiftWard.Client
             ArmoryRequest("/api/shop/equip", new Dictionary<string, object> { ["weapons"] = kit.Distinct().Cast<object>().ToList() });
         }
 
+        bool armoryBusy;
         void ArmoryRequest(string path, Dictionary<string, object> data)
         {
-            if (armoryStatus != null) armoryStatus.text = "處理中…";
+            if (armoryBusy) return;   // one request at a time: a double click must not act on a shifted index
+            armoryBusy = true;
+            if (armoryStatus != null) { armoryStatus.color = Palette.Amber; armoryStatus.text = "處理中…"; }
             app.Api.Post(path, data, result =>
             {
+                armoryBusy = false;
                 if (Mode != "armory") return;
                 if (result.Bool("ok")) { app.UpdateProfile(Profile.From(result.Obj("profile"))); ShowArmory(); armoryStatus.text = "完成！裝備已更新。"; }
                 else { armoryStatus.color = Palette.Danger; armoryStatus.text = result.Str("error", "操作失敗"); }
@@ -510,7 +566,7 @@ namespace RiftWard.Client
             var total = new List<string>();
             foreach (var kv in p.Bonus) if (kv.Value > 0) total.Add(Gear.StatText(kv.Key, kv.Value));
             Ui.Label(g, total.Count > 0 ? "總加成  " + string.Join("  ·  ", total) : "尚無加成", 13, Palette.Muted).Sized(20);
-            var slots = Ui.HStack(g, 8).Sized(86);
+            var slots = Ui.HStack(g, 8).Sized(150);
             foreach (var slot in Gear.Slots)
             {
                 var item = p.Equipment.TryGetValue(slot, out var id) ? p.Inventory.Find(i => i.Id == id) : null;
@@ -521,14 +577,23 @@ namespace RiftWard.Client
                     edge.anchorMin = new Vector2(0, 1); edge.anchorMax = new Vector2(1, 1); edge.pivot = new Vector2(0.5f, 1);
                     edge.offsetMin = new Vector2(0, -2); edge.offsetMax = Vector2.zero;
                 }
+                string slotId = slot;
+                int slotRarity = item?.Rarity ?? 0;
+                var model = ModelPreview.Create(cell.transform, t => Models.GearModel(t, slotId, slotRarity));
+                model.rectTransform.Place(new Vector2(0.5f, 1), new Vector2(0, -20), new Vector2(84, 84), new Vector2(0.5f, 1));
+                if (item != null) RarityFx.Attach(model.rectTransform, item.Rarity);
+                if (item == null) model.color = new Color(1, 1, 1, 0.18f);
                 Ui.Label(cell.transform, Gear.SlotNames[slot], 12, Palette.Muted).rectTransform.Place(new Vector2(0, 1), new Vector2(10, -8), new Vector2(150, 16), new Vector2(0, 1));
-                Ui.Label(cell.transform, item != null ? Gear.RarityNames[item.Rarity] : "未裝備", 16, item != null ? item.Color : Palette.Line, TextAnchor.UpperLeft, true)
-                    .rectTransform.Place(new Vector2(0, 1), new Vector2(10, -28), new Vector2(150, 22), new Vector2(0, 1));
+                var title = Ui.Label(cell.transform, item != null ? item.Name : "未裝備", 13, item != null ? item.Color : Palette.Line, TextAnchor.UpperCenter, true).rectTransform;
+                title.anchorMin = new Vector2(0, 1); title.anchorMax = new Vector2(1, 1); title.pivot = new Vector2(0.5f, 1);
+                title.offsetMin = new Vector2(4, -124); title.offsetMax = new Vector2(-4, -104);
                 if (item != null)
                 {
                     var stat = Ui.Label(cell.transform, item.StatText().Replace("  ·  ", "\n"), 10, Palette.Hex("c9c5bb")).rectTransform;
                     stat.anchorMin = new Vector2(0, 0); stat.anchorMax = new Vector2(1, 1);
-                    stat.offsetMin = new Vector2(10, 4); stat.offsetMax = new Vector2(-4, -52);
+                    stat.offsetMin = new Vector2(8, 2); stat.offsetMax = new Vector2(-4, -124);
+                    stat.GetComponent<Text>().alignment = TextAnchor.UpperCenter;
+                    stat.GetComponent<Text>().text = item.StatText();
                 }
             }
             Ui.Label(g, $"背包  {p.Inventory.Count} 件    點選裝備可穿上 / 卸下", 13, Palette.Muted).Sized(20);
@@ -554,6 +619,23 @@ namespace RiftWard.Client
                 }
             }
 
+        }
+
+        // ------------------------------------------------------------ settings
+
+        public void ShowSettings()
+        {
+            var r = Begin("settings");
+            var pad = Page(r, "settings");
+            var sheet = Ui.Box(pad, Palette.Sheet, "Settings").rectTransform;
+            sheet.Place(new Vector2(0.5f, 1), new Vector2(0, -32), new Vector2(640, 600), new Vector2(0.5f, 1));
+            TopRule(sheet, Palette.Amber);
+            var stack = Ui.VStack(sheet, 6);
+            stack.Fill();
+            stack.GetComponent<VerticalLayoutGroup>().padding = new RectOffset(32, 32, 24, 24);
+            Ui.Label(stack, "設定", 30, Palette.Bone, TextAnchor.UpperLeft, true).Sized(40);
+            GameSettings.BuildPanel(stack);
+            Ui.Label(stack, "設定會儲存在這台電腦，下次開啟遊戲自動套用。", 12, Palette.Muted).Sized(24);
         }
 
         // ------------------------------------------------------------ 商城 (supply depot)
@@ -589,7 +671,7 @@ namespace RiftWard.Client
             Caps(s, weaponPool ? "WEAPON SUPPLY" : "GEAR SUPPLY", accent).Sized(16);
             Ui.Label(s, weaponPool ? "武器補給" : "裝備補給", 30, Palette.Bone, TextAnchor.UpperLeft, true).Sized(40);
             var desc = Ui.Rect(s, "Desc").Sized(40);
-            var descText = Ui.Label(desc, weaponPool ? "抽到新武器直接解鎖；同武器更高稀有度會升級，重複則轉為金幣。" : "隨機獲得護甲、槍械模組、戰術靴或戰術晶片。稀世以上附帶副屬性。", 13, Palette.Muted).rectTransform;
+            var descText = Ui.Label(desc, weaponPool ? "每把抽到的武器都會保留在武器庫，可自由切換使用的版本，不要的再手動分解。" : "隨機獲得護甲、槍械模組、戰術靴或戰術晶片。稀世以上附帶副屬性。", 13, Palette.Muted).rectTransform;
             descText.Fill(); descText.offsetMax = new Vector2(-230, 0);
             int keys = weaponPool ? p.WeaponKeys : p.Keys;
             var keyRow = Ui.Rect(s, "Keys").Sized(58);
@@ -651,8 +733,8 @@ namespace RiftWard.Client
                         lastDraw.Add(new GearItem
                         {
                             Slot = "weapon", Rarity = Mathf.Clamp(d.Int("rarity"), 0, Gear.RarityNames.Length - 1),
-                            Title = Defs.Weapons.TryGetValue(id, out var wd) ? wd.Name : id,
-                            Detail = outcome == "new" ? "新武器！已解鎖" : outcome == "upgrade" ? "稀有度提升！" : $"重複 · 轉為 {d.Int("gold")} G",
+                            Title = Gear.WeaponName(id, d.Int("rarity")),
+                            Detail = outcome == "new" ? "新武器！已解鎖" : outcome == "copy" ? "已存入武器庫" : $"武器庫已滿 · 轉為 {d.Int("gold")} G",
                         });
                     }
                 }
@@ -790,7 +872,13 @@ namespace RiftWard.Client
                 var edge = Ui.Box(card, item.Color, "Edge").rectTransform;
                 edge.anchorMin = new Vector2(0, 1); edge.anchorMax = new Vector2(1, 1); edge.pivot = new Vector2(0.5f, 1);
                 edge.offsetMin = new Vector2(0, -4); edge.offsetMax = Vector2.zero;
-                var glow = Ui.Box(card, new Color(item.Color.r, item.Color.g, item.Color.b, 0.08f), "Glow").rectTransform;
+                var glow = Ui.Box(card, new Color(item.Color.r, item.Color.g, item.Color.b, 0.04f + 0.05f * item.Rarity), "Glow").rectTransform;
+                if (item.Rarity >= 3)
+                {
+                    var outline = card.gameObject.AddComponent<Outline>();
+                    outline.effectColor = item.Color;
+                    outline.effectDistance = new Vector2(item.Rarity, item.Rarity);
+                }
                 glow.Fill();
                 Ui.Label(card, Gear.RarityNames[item.Rarity], 13, item.Color, TextAnchor.UpperLeft, true).rectTransform.Place(new Vector2(0, 1), new Vector2(12, -14), new Vector2(140, 18), new Vector2(0, 1));
                 Ui.Label(card, item.Title ?? Gear.SlotNames[item.Slot], item.Title != null ? 16 : 20, Palette.Bone, TextAnchor.UpperLeft, true).rectTransform.Place(new Vector2(0, 1), new Vector2(12, -36), new Vector2(140, 26), new Vector2(0, 1));

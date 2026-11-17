@@ -77,10 +77,24 @@ class ServiceTests(unittest.TestCase):
         code, drawn = self.call("/api/gacha/weapon",{"count":10},auth)
         self.assertEqual((code, len(drawn["weapons"]), drawn["profile"]["weapon_keys"], drawn["profile"]["keys"]), (200, 10, 20, 0))
         lo = drawn["profile"]["loadout"]
-        for w in drawn["weapons"]:
-            self.assertIn(w["weapon"], lo["owned"])
-            self.assertGreaterEqual(lo["rarity"][w["weapon"]], w["rarity"] if w["outcome"] != "duplicate" else 0)
+        # Every drawn weapon is kept as a copy; nothing is replaced or auto-salvaged.
+        self.assertEqual(sum(len(c) for c in lo["copies"].values()), 11)
+        self.assertEqual(lo["copies"]["rifle"][0], 0)
+        self.assertEqual(lo["rarity"]["rifle"], 0)
         self.assertLessEqual(len(lo["equipped"]), 2)
+        gun = next(w for w, c in lo["copies"].items() if len(c) > 1)
+        code, r = self.call("/api/weapon/select", {"weapon": gun, "index": 1}, auth)
+        self.assertEqual((code, r["profile"]["loadout"]["active"][gun], r["profile"]["loadout"]["rarity"][gun]), (200, 1, lo["copies"][gun][1]))
+        self.assertEqual(self.call("/api/weapon/salvage", {"weapon": gun, "index": 1}, auth)[0], 400)
+        gold = r["profile"]["gold"]
+        code, r = self.call("/api/weapon/salvage", {"weapon": gun, "index": 0}, auth)
+        lo2 = r["profile"]["loadout"]
+        self.assertEqual((code, len(lo2["copies"][gun]), lo2["active"][gun]), (200, len(lo["copies"][gun]) - 1, 0))
+        self.assertGreater(r["profile"]["gold"], gold)
+        # A stale rarity (the list changed since the client drew it) is refused instead of hitting another copy.
+        wrong = (lo2["copies"][gun][0] + 1) % 5
+        self.assertEqual(self.call("/api/weapon/salvage", {"weapon": gun, "index": 0, "rarity": wrong}, auth)[0], 400)
+        lo = lo2
         code, equipped = self.call("/api/shop/equip",{"weapons":[lo["owned"][0]]},auth)
         self.assertEqual((code,equipped["profile"]["loadout"]["equipped"]),(200,[lo["owned"][0]]))
         # Legacy loadouts keep their guns, counted as 普通.

@@ -51,6 +51,18 @@ namespace RiftWard.Client
             var key = (color, glow, alpha);
             if (cache.TryGetValue(key, out var m)) return m;
             if (standard == null) standard = Shader.Find("Standard") ?? Shader.Find("Unlit/Color") ?? Shader.Find("Hidden/InternalErrorShader");
+            if (alpha < 1f)
+            {
+                // Translucent effects use the always-available sprite shader: unlit, alpha-blended, no variant stripping.
+                var sprite = Shader.Find("Sprites/Default");
+                if (sprite != null)
+                {
+                    float boost = 1f + Mathf.Min(glow, 4f) * 0.15f;
+                    m = new Material(sprite) { color = new Color(Mathf.Min(1f, color.r * boost), Mathf.Min(1f, color.g * boost), Mathf.Min(1f, color.b * boost), alpha), renderQueue = 3000 };
+                    cache[key] = m;
+                    return m;
+                }
+            }
             m = new Material(standard) { color = new Color(color.r, color.g, color.b, alpha) };
             // Material classes by look: glowing parts are glassy, dark neutral parts read as gunmetal,
             // saturated parts as painted armour, the rest as matte fabric/ground.

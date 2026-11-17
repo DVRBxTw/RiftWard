@@ -6,7 +6,7 @@ namespace RiftWard.Sim
     /// Static game data shared by server and client. Values mirror the Godot 0.4.2 build.
     public static class Defs
     {
-        public const string Version = "0.7.0-unity.1";
+        public const string Version = "0.7.1-unity.1";
 
         // Player movement
         public const float EyeHeight = 1.65f;

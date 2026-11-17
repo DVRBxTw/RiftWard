@@ -22,6 +22,9 @@ namespace RiftWard.Sim
         public Dictionary<string, Dictionary<string, int>> Levels = new Dictionary<string, Dictionary<string, int>>();
         /// Rarity per owned weapon; missing entries count as 普通 (1).
         public Dictionary<string, int> Rarity = new Dictionary<string, int>();
+        /// Every copy drawn per weapon (rarities) and which copy is in use.
+        public Dictionary<string, List<int>> Copies = new Dictionary<string, List<int>>();
+        public Dictionary<string, int> Active = new Dictionary<string, int>();
 
         public int RarityOf(string weapon) => Rarity.TryGetValue(weapon, out var r) ? Mathf.Clamp(r, 0, Defs.WeaponRarityMult.Length - 1) : 1;
 

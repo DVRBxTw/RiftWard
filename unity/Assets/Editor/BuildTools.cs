@@ -23,6 +23,7 @@ namespace RiftWard.EditorTools
             }
             EditorBuildSettings.scenes = new[] { new EditorBuildSettingsScene(ScenePath, true) };
             IncludeShader("Standard");
+            IncludeShader("Sprites/Default");
             PlayerSettings.companyName = "RiftWard";
             PlayerSettings.productName = "RiftWard";
             PlayerSettings.bundleVersion = RiftWard.Sim.Defs.Version;
