@@ -749,11 +749,23 @@ class Handler(BaseHTTPRequestHandler):
         if match:
             path = self.server.releases / (match[1] + "." + match[2])
             if path.is_file():
-                self.send_response(200)
+                total = path.stat().st_size
+                # Resume support: "Range: bytes=N-" continues an interrupted download from byte N.
+                start = 0
+                ranged = re.fullmatch(r"bytes=(\d+)-", self.headers.get("Range", "").strip())
+                if ranged and 0 < int(ranged[1]) < total:
+                    start = int(ranged[1])
+                    self.send_response(206)
+                    self.send_header("Content-Range", f"bytes {start}-{total - 1}/{total}")
+                else:
+                    self.send_response(200)
                 self.send_header("Content-Type", "application/octet-stream")
-                self.send_header("Content-Length", str(path.stat().st_size))
+                self.send_header("Content-Length", str(total - start))
+                self.send_header("Accept-Ranges", "bytes")
                 self.end_headers()
+                self.connection.settimeout(60)   # slow links: allow longer stalls during the big transfer
                 with path.open("rb") as handle:
+                    handle.seek(start)
                     while block := handle.read(65536):
                         self.wfile.write(block)
                 return

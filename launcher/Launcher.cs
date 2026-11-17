@@ -223,8 +223,12 @@ namespace RiftWard.Launcher
             string problem;
             Manifest m;
             string json = null;
-            try { json = Get(origin + "/api/version", 8000); }
-            catch (WebException) { }
+            for (int attempt = 0; attempt < 3 && json == null; attempt++)
+            {
+                try { json = Get(origin + "/api/version", 8000); }
+                catch (WebException) { }
+                catch (IOException) { }
+            }
             if (json == null)
             {
                 if (LaunchOffline()) return;
@@ -277,21 +281,52 @@ namespace RiftWard.Launcher
             }
         }
 
+        /// <summary>Downloads with up to 5 automatic retries; each retry resumes from the bytes already saved
+        /// (HTTP Range), so a dropped connection costs seconds instead of the whole transfer.</summary>
         bool Download(string url, string path, long size)
         {
-            try
+            if (File.Exists(path)) File.Delete(path);
+            string last = null;
+            for (int attempt = 0; attempt < 6; attempt++)
             {
+                if (attempt > 0)
+                {
+                    int a = attempt;
+                    Ui(delegate { detail.Text = "連線中斷，正在第 " + a + " 次重新連線並續傳…"; });
+                    Thread.Sleep(1500 * attempt);
+                }
+                try
+                {
+                    if (DownloadOnce(url, path, size)) return true;
+                    return false;   // a definite failure (already reported)
+                }
+                catch (WebException e) { last = e.Message; }
+                catch (IOException e) { last = e.Message; }
+            }
+            Fail("下載失敗（已自動重試 5 次）：" + last);
+            return false;
+        }
+
+        bool DownloadOnce(string url, string path, long size)
+        {
+            {
+                long have = File.Exists(path) ? new FileInfo(path).Length : 0;
+                if (have >= size) { SetProgress(1); return true; }
                 var req = (HttpWebRequest)WebRequest.Create(url);
                 req.Timeout = 45000;
                 req.ReadWriteTimeout = 45000;
                 req.AllowAutoRedirect = false;
+                if (have > 0) req.AddRange(have);
                 using (var res = (HttpWebResponse)req.GetResponse())
                 using (var input = res.GetResponseStream())
-                using (var output = File.Create(path))
                 {
-                    if (res.StatusCode != HttpStatusCode.OK) { Fail("更新連線失敗（HTTP " + (int)res.StatusCode + "）。"); return false; }
+                    bool resumed = res.StatusCode == HttpStatusCode.PartialContent;
+                    if (res.StatusCode != HttpStatusCode.OK && !resumed) { Fail("更新連線失敗（HTTP " + (int)res.StatusCode + "）。"); return false; }
+                    if (!resumed) have = 0;   // server ignored the range: start over
+                    using (var output = new FileStream(path, resumed ? FileMode.Append : FileMode.Create, FileAccess.Write))
+                    {
                     var buffer = new byte[81920];
-                    long total = 0;
+                    long total = have;
                     int read, lastTick = 0;
                     while ((read = input.Read(buffer, 0, buffer.Length)) > 0)
                     {
@@ -306,14 +341,12 @@ namespace RiftWard.Launcher
                             Ui(delegate { detail.Text = string.Format("{0:0.0} / {1:0.0} MB · 下載後將驗證 SHA-256", t / 1048576.0, size / 1048576.0); });
                         }
                     }
+                    // The stream ended early (connection closed cleanly mid-transfer): retry and resume.
+                    if (total < size) throw new IOException("連線提前結束（" + total + " / " + size + " bytes）");
+                    }
                 }
                 SetProgress(1);
                 return true;
-            }
-            catch (WebException e)
-            {
-                Fail("下載失敗：" + e.Message);
-                return false;
             }
         }
 

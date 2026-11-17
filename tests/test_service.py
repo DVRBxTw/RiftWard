@@ -159,6 +159,15 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(sorted(results), [200, 400, 400, 400])
         self.assertEqual(self.store.profile(aid)["loadout"]["copies"]["pistol"], [1, 4])
 
+    def test_update_download_resume(self):
+        url = self.url + "/updates/" + self.digest + ".pck"
+        with urlopen(Request(url), timeout=5) as r:
+            self.assertEqual((r.status, r.read(), r.headers["Accept-Ranges"]), (200, self.payload, "bytes"))
+        with urlopen(Request(url, headers={"Range": "bytes=5-"}), timeout=5) as r:
+            self.assertEqual((r.status, r.read(), r.headers["Content-Range"]), (206, self.payload[5:], f"bytes 5-{len(self.payload) - 1}/{len(self.payload)}"))
+        with urlopen(Request(url, headers={"Range": "bytes=999-"}), timeout=5) as r:   # out of range: whole file
+            self.assertEqual((r.status, r.read()), (200, self.payload))
+
     def test_admin_grant(self):
         account = self.register()
         auth = {"Authorization":"Bearer "+account["token"]}
