@@ -350,6 +350,32 @@ namespace RiftWard.Launcher
             }
         }
 
+        /// <summary>Removes earlier versions from the update cache (old zips, old extracted game folders and any
+        /// stale partial download), keeping only the version about to start. Anything still in use, such as an
+        /// older game left running, is skipped and removed on a later launch.</summary>
+        void CleanOldUpdates(string keepFolder, string keepZip)
+        {
+            try
+            {
+                if (!Directory.Exists(updateDir)) return;
+                string keepF = Path.GetFullPath(keepFolder).TrimEnd(Path.DirectorySeparatorChar);
+                string keepZ = Path.GetFullPath(keepZip);
+                foreach (string dir in Directory.GetDirectories(updateDir, "game-*"))
+                {
+                    if (string.Equals(Path.GetFullPath(dir).TrimEnd(Path.DirectorySeparatorChar), keepF, StringComparison.OrdinalIgnoreCase)) continue;
+                    try { Directory.Delete(dir, true); } catch (IOException) { } catch (UnauthorizedAccessException) { }
+                }
+                foreach (string file in Directory.GetFiles(updateDir))
+                {
+                    string name = Path.GetFileName(file);
+                    bool cache = name.EndsWith(".zip", StringComparison.OrdinalIgnoreCase) || name == "download.part";
+                    if (!cache || string.Equals(Path.GetFullPath(file), keepZ, StringComparison.OrdinalIgnoreCase)) continue;
+                    try { File.Delete(file); } catch (IOException) { } catch (UnauthorizedAccessException) { }
+                }
+            }
+            catch (Exception) { }   // cleanup must never stop the game from starting
+        }
+
         void Launch(Manifest m, string zip)
         {
             SetStatus("正在安裝遊戲檔案…", "版本 " + m.Version);
@@ -361,6 +387,7 @@ namespace RiftWard.Launcher
             string exe = Path.Combine(folder, "RiftWard.exe");
             if (!File.Exists(exe)) { Fail("遊戲執行檔遺失，請重試。"); return; }
             SetStatus("驗證完成，正在啟動…", "版本 " + m.Version);
+            CleanOldUpdates(folder, zip);
             Process.Start(new ProcessStartInfo(exe) { WorkingDirectory = folder, UseShellExecute = false });
             Ui(delegate { Close(); });
         }
