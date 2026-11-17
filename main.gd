@@ -17,6 +17,13 @@ const DASH_VISUAL_DURATION = 0.32
 const BASE_FOV = 80.0
 const DASH_FOV_BOOST = 7.0
 const WEAPON_REST_POSITION = Vector3(0.27,-0.23,-0.48)
+const MAG_SIZE = 30
+const RELOAD_TIME = 1.6
+const THIRD_PERSON_OFFSET = Vector3(0.75,0.35,3.2)
+const PANEL_BG = Color(0.035,0.07,0.115,0.82)
+const PANEL_EDGE = Color("2b4a63")
+const MUTED = Color("8fa6bb")
+const GOLD = Color("ffd166")
 const MISSIONS = [
 	["01", "邊境訊號", "清除廢墟中的巡邏機群", "20 波 · 第 10、20 波 Boss", 20, 4],
 	["02", "失落反應爐", "深入遺跡，摧毀增援部隊", "20 波 · 第 10、20 波 Boss", 20, 5],
@@ -40,6 +47,14 @@ var health_label: Label
 var objective_label: Label
 var dash_label: Label
 var toast: Label
+var heading_label: Label
+var ammo_label: Label
+var reserve_label: Label
+var reload_bar: ProgressBar
+var health_bar: ProgressBar
+var dash_bar: ProgressBar
+var view_label: Label
+var third_person = false
 var status_label: Label
 var ip_input: LineEdit
 var mission_buttons: Array = []
@@ -102,7 +117,8 @@ func _ready():
 		_start_mission(0)
 
 func _setup_input():
-	for pair in [["forward", KEY_W], ["back", KEY_S], ["left", KEY_A], ["right", KEY_D], ["dash", KEY_SHIFT], ["jump", KEY_SPACE]]:
+	for pair in [["forward", KEY_W], ["back", KEY_S], ["left", KEY_A], ["right", KEY_D], ["dash", KEY_SHIFT], ["jump", KEY_SPACE], ["reload", KEY_R], ["toggle_view", KEY_V]]:
+		if InputMap.has_action(pair[0]): continue
 		InputMap.add_action(pair[0])
 		var ev = InputEventKey.new()
 		ev.physical_keycode = pair[1]
@@ -120,6 +136,57 @@ func _style(color: Color, edge: Color = Color.TRANSPARENT) -> StyleBoxFlat:
 	s.content_margin_bottom = 16
 	return s
 
+func _panel_style(bg: Color = PANEL_BG, accent: Color = CYAN, radius: int = 10) -> StyleBoxFlat:
+	var s = StyleBoxFlat.new()
+	s.bg_color = bg
+	s.border_color = PANEL_EDGE
+	s.set_border_width_all(1)
+	s.border_width_left = 3
+	s.border_color = accent.darkened(0.15)
+	s.set_corner_radius_all(radius)
+	s.shadow_color = Color(0,0,0,0.35)
+	s.shadow_size = 10
+	s.content_margin_left = 20
+	s.content_margin_right = 20
+	s.content_margin_top = 14
+	s.content_margin_bottom = 14
+	return s
+
+func _panel(parent: Node, accent: Color = CYAN, bg: Color = PANEL_BG) -> PanelContainer:
+	var p = PanelContainer.new()
+	p.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	p.add_theme_stylebox_override("panel",_panel_style(bg,accent))
+	parent.add_child(p)
+	return p
+
+func _bar(color: Color, height: float = 10.0, back: Color = Color(1,1,1,0.08)) -> ProgressBar:
+	var b = ProgressBar.new()
+	b.show_percentage = false
+	b.custom_minimum_size.y = height
+	b.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	for pair in [["background",back],["fill",color]]:
+		var s = StyleBoxFlat.new()
+		s.bg_color = pair[1]
+		s.set_corner_radius_all(int(height/2))
+		b.add_theme_stylebox_override(pair[0],s)
+	return b
+
+func _backdrop(parent: Node, left_alpha: float = 0.96, right_alpha: float = 0.25):
+	var g = Gradient.new()
+	g.set_color(0,Color(0.02,0.04,0.075,left_alpha))
+	g.set_color(1,Color(0.02,0.04,0.075,right_alpha))
+	var tex = GradientTexture2D.new()
+	tex.gradient = g
+	tex.fill_from = Vector2(0.3,0)
+	tex.fill_to = Vector2(1,0)
+	var r = TextureRect.new()
+	r.texture = tex
+	r.stretch_mode = TextureRect.STRETCH_SCALE
+	r.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	r.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	parent.add_child(r)
+	return r
+
 func _setup_theme():
 	ui = CanvasLayer.new()
 	add_child(ui)
@@ -134,18 +201,37 @@ func _setup_theme():
 	theme.set_color("font_color", "Button", WHITE)
 	theme.set_color("font_hover_color", "Button", CYAN)
 	theme.set_color("font_disabled_color", "Button", Color("73849a"))
-	theme.set_stylebox("normal", "Button", _style(Color("182b3e"), Color("34495e")))
-	theme.set_stylebox("hover", "Button", _style(Color("224656"), CYAN))
-	theme.set_stylebox("pressed", "Button", _style(Color("285b60"), CYAN))
-	theme.set_stylebox("focus", "Button", _style(Color(0,0,0,0), CYAN))
-	theme.set_stylebox("disabled", "Button", _style(Color("141e2c")))
-	theme.set_stylebox("normal", "LineEdit", _style(INK, Color("34495e")))
-	theme.set_stylebox("focus", "LineEdit", _style(INK, CYAN))
+	theme.set_color("font_pressed_color", "Button", Color("0b1622"))
+	theme.set_color("font_hover_pressed_color", "Button", Color("0b1622"))
+	theme.set_stylebox("normal", "Button", _button_style(Color(0.09,0.16,0.23,0.92), Color("2f4b63")))
+	theme.set_stylebox("hover", "Button", _button_style(Color(0.12,0.27,0.33,0.95), CYAN, true))
+	theme.set_stylebox("pressed", "Button", _button_style(CYAN, CYAN, true))
+	theme.set_stylebox("focus", "Button", _button_style(Color(0,0,0,0), Color(CYAN,0.6)))
+	theme.set_stylebox("disabled", "Button", _button_style(Color(0.06,0.09,0.13,0.85), Color("1d2b3a")))
+	theme.set_stylebox("normal", "LineEdit", _button_style(Color(0.03,0.06,0.1,0.95), Color("2f4b63")))
+	theme.set_stylebox("focus", "LineEdit", _button_style(Color(0.03,0.06,0.1,0.95), CYAN, true))
 	theme.set_color("font_color", "LineEdit", WHITE)
+	theme.set_color("font_placeholder_color", "LineEdit", Color("5f7489"))
+	theme.set_color("caret_color", "LineEdit", CYAN)
+	theme.set_stylebox("panel", "PopupPanel", _panel_style(Color(0.04,0.08,0.13,0.98)))
+	theme.set_stylebox("panel", "AcceptDialog", _panel_style(Color(0.04,0.08,0.13,0.98)))
 	screen = Control.new()
 	screen.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	screen.theme = theme
 	ui.add_child(screen)
+
+func _button_style(color: Color, edge: Color, accent: bool = false) -> StyleBoxFlat:
+	var s = _style(color, edge)
+	s.set_corner_radius_all(8)
+	s.border_width_left = 4 if accent else 2
+	s.content_margin_left = 22
+	s.content_margin_right = 22
+	s.content_margin_top = 12
+	s.content_margin_bottom = 12
+	if accent:
+		s.shadow_color = Color(edge,0.25)
+		s.shadow_size = 8
+	return s
 
 func _label(text: String, size: int = 18, color: Color = WHITE) -> Label:
 	var l = Label.new()
@@ -183,11 +269,7 @@ func _home():
 	if is_instance_valid(showcase): showcase.visible = true
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 	_clear_ui()
-	var shade = ColorRect.new()
-	shade.color = Color(0.025, 0.05, 0.09, 0.9)
-	shade.size = Vector2(570, 800)
-	shade.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	screen.add_child(shade)
+	_backdrop(screen)
 	var left = _box(screen, Vector2(48, 32), 462)
 	left.add_theme_constant_override("separation", 8)
 	left.add_child(_label("R / W     OPERATIONS DIVISION", 14, CYAN))
@@ -227,7 +309,13 @@ func _home():
 func _select(i: int):
 	selected = i
 	for j in range(mission_buttons.size()):
-		mission_buttons[j].modulate = CYAN if j == i else Color.WHITE
+		var b: Button = mission_buttons[j]
+		if j == i:
+			b.add_theme_stylebox_override("normal",_button_style(Color(0.08,0.24,0.28,0.95),CYAN,true))
+			b.add_theme_color_override("font_color",CYAN)
+		else:
+			b.remove_theme_stylebox_override("normal")
+			b.remove_theme_color_override("font_color")
 
 func _connection_text() -> String:
 	if network == "host":
@@ -379,11 +467,14 @@ func _actor_model(color: Color, heavy: bool = false) -> Node3D:
 
 func _add_actor(id: int):
 	if actors.has(id): return
-	actors[id] = {"p":Vector3((actors.size()%4)*2-3,0,10), "hp":100.0, "cd":0.0, "dash":0.0, "v":0.0, "y":0.0}
+	actors[id] = _new_actor(Vector3((actors.size()%4)*2-3,0,10))
+
+func _new_actor(pos: Vector3) -> Dictionary:
+	return {"p":pos, "hp":100.0, "cd":0.0, "dash":0.0, "v":0.0, "y":0.0, "ammo":MAG_SIZE, "mag":MAG_SIZE, "reload":0.0}
 
 func _reset_actors():
 	for id in actors:
-		actors[id] = {"p":Vector3((int(id)%4)*2-3,0,10),"hp":100.0,"cd":0.0,"dash":0.0,"v":0.0,"y":0.0}
+		actors[id] = _new_actor(Vector3((int(id)%4)*2-3,0,10))
 
 func _host(headless: bool):
 	if network != "offline": return
@@ -501,30 +592,96 @@ func _deploy(index: int):
 	hud.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	hud.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	screen.add_child(hud)
-	var v = _box(hud, Vector2(32,24),450)
-	v.add_child(_label("R / W    " + MISSIONS[index][1],24,CYAN))
-	objective_label = _label("部署中…",18)
-	v.add_child(objective_label)
-	var bottom = _box(hud,Vector2(32,674),600)
-	health_label = _label("護盾  100 / 100",28,CYAN)
-	bottom.add_child(health_label)
-	dash_label = _label("Shift 衝刺就緒",16)
-	bottom.add_child(dash_label)
-	bottom.add_child(_label("WASD 移動    LMB 射擊    Space 跳躍    Esc 選單",14,Color("a7bccc")))
+	# Top-left: mission and objective.
+	var top = _panel(hud)
+	top.position = Vector2(24,20)
+	top.custom_minimum_size.x = 380
+	var tv = VBoxContainer.new()
+	tv.add_theme_constant_override("separation",4)
+	top.add_child(tv)
+	heading_label = _label("R / W    " + MISSIONS[index][1],20,CYAN)
+	tv.add_child(heading_label)
+	objective_label = _label("部署中…",16)
+	tv.add_child(objective_label)
+	# Bottom-left: shield + dash.
+	var vitals = _panel(hud)
+	vitals.anchor_top = 1.0
+	vitals.anchor_bottom = 1.0
+	vitals.offset_left = 24
+	vitals.offset_top = -132
+	vitals.offset_right = 404
+	vitals.offset_bottom = -24
+	var vv = VBoxContainer.new()
+	vv.add_theme_constant_override("separation",6)
+	vitals.add_child(vv)
+	health_label = _label("護盾  100 / 100",20,CYAN)
+	vv.add_child(health_label)
+	health_bar = _bar(CYAN,12)
+	vv.add_child(health_bar)
+	dash_label = _label("Shift 衝刺就緒",14,MUTED)
+	vv.add_child(dash_label)
+	dash_bar = _bar(Color("82aaff"),5)
+	dash_bar.max_value = DASH_COOLDOWN
+	vv.add_child(dash_bar)
+	# Bottom-right: ammo.
+	var ammo_panel = _panel(hud,ORANGE)
+	ammo_panel.anchor_left = 1.0
+	ammo_panel.anchor_right = 1.0
+	ammo_panel.anchor_top = 1.0
+	ammo_panel.anchor_bottom = 1.0
+	ammo_panel.offset_left = -284
+	ammo_panel.offset_top = -132
+	ammo_panel.offset_right = -24
+	ammo_panel.offset_bottom = -24
+	var av = VBoxContainer.new()
+	av.add_theme_constant_override("separation",4)
+	ammo_panel.add_child(av)
+	var ammo_row = HBoxContainer.new()
+	ammo_row.alignment = BoxContainer.ALIGNMENT_END
+	ammo_row.add_theme_constant_override("separation",8)
+	av.add_child(ammo_row)
+	ammo_label = _label(str(MAG_SIZE),40,WHITE)
+	ammo_row.add_child(ammo_label)
+	reserve_label = _label("/ %d" % MAG_SIZE,20,MUTED)
+	reserve_label.size_flags_vertical = Control.SIZE_SHRINK_END
+	ammo_row.add_child(reserve_label)
+	reload_bar = _bar(ORANGE,5)
+	reload_bar.max_value = 1.0
+	av.add_child(reload_bar)
+	view_label = _label("R 換彈   ·   V 第一人稱",13,MUTED)
+	view_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	av.add_child(view_label)
+	# Crosshair.
 	var cross = Control.new()
-	cross.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	cross.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
 	cross.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	for offset in [Vector2(-10,-1),Vector2(4,-1),Vector2(-1,-10),Vector2(-1,4)]:
+	for offset in [Vector2(-14,-1),Vector2(6,-1),Vector2(-1,-14),Vector2(-1,6)]:
 		var line = ColorRect.new()
-		line.color = CYAN
+		line.color = Color(CYAN,0.9)
 		line.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		line.set_anchors_preset(Control.PRESET_CENTER)
 		line.position = offset
-		line.size = Vector2(6,2) if offset.y == -1 else Vector2(2,6)
+		line.size = Vector2(8,2) if offset.y == -1 else Vector2(2,8)
 		cross.add_child(line)
+	var dot = ColorRect.new()
+	dot.color = WHITE
+	dot.position = Vector2(-1,-1)
+	dot.size = Vector2(2,2)
+	dot.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	cross.add_child(dot)
 	hud.add_child(cross)
-	toast = _label("",24,ORANGE)
-	toast.position = Vector2(480,150)
+	toast = _label("",22,ORANGE)
+	toast.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	toast.anchor_left = 0.5
+	toast.anchor_right = 0.5
+	toast.offset_left = -360
+	toast.offset_right = 360
+	toast.anchor_top = 0.5
+	toast.anchor_bottom = 0.5
+	toast.offset_top = 60
+	toast.offset_bottom = 100
+	toast.add_theme_color_override("font_outline_color",Color(0,0,0,0.8))
+	toast.add_theme_constant_override("outline_size",6)
+	toast.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	hud.add_child(toast)
 
 func _clean_models():
@@ -549,6 +706,9 @@ func _input(event):
 	if event is InputEventMouseMotion and mode == "playing" and not modal_open and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
 		yaw = wrapf(yaw-event.screen_relative.x*LOOK_SENSITIVITY,-PI,PI)
 		pitch = clampf(pitch-event.screen_relative.y*LOOK_SENSITIVITY,-LOOK_LIMIT,LOOK_LIMIT)
+		get_viewport().set_input_as_handled()
+	if event is InputEventKey and event.pressed and not event.echo and event.physical_keycode == KEY_V and mode == "playing" and not modal_open:
+		third_person = not third_person
 		get_viewport().set_input_as_handled()
 	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_ESCAPE:
 		if mode == "playing" and not modal_open:
@@ -589,8 +749,8 @@ func _physics_process(dt):
 			var active = not modal_open and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED
 			var move = Input.get_vector("left","right","forward","back") if active else Vector2.ZERO
 			var eye: Vector3 = actors[local_id].p+Vector3.UP*EYE_HEIGHT if actors.has(local_id) else camera.position
-			var target = eye+_look_direction()*SHOT_RANGE
-			var packet = {"m":move,"yaw":yaw,"aim":target,"fire":Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT) and active and not release_fire_to_resume,"dash":Input.is_action_pressed("dash") and active,"jump":Input.is_action_pressed("jump") and active}
+			var target = (camera.global_position if third_person else eye)+_look_direction()*SHOT_RANGE
+			var packet = {"m":move,"yaw":yaw,"aim":target,"reload":Input.is_action_pressed("reload") and active,"fire":Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT) and active and not release_fire_to_resume,"dash":Input.is_action_pressed("dash") and active,"jump":Input.is_action_pressed("jump") and active}
 			if network == "client":
 				input_sequence += 1
 				packet["seq"] = input_sequence
@@ -639,7 +799,7 @@ func _broadcast_state():
 		ids.append(id)
 		var a = actors[id]
 		var dash_direction: Vector3 = a.get("dash_direction",Vector3.ZERO)
-		a_data.append_array(PackedFloat32Array([a.p.x,a.p.y,a.p.z,a.hp,a.cd,a.dash,a.y,a.v,a.get("max_hp",100),a.get("speed",6.5),a.get("fire_interval",0.16),a.get("ack",0),a.get("dash_left",0),dash_direction.x,dash_direction.y,dash_direction.z]))
+		a_data.append_array(PackedFloat32Array([a.p.x,a.p.y,a.p.z,a.hp,a.cd,a.dash,a.y,a.v,a.get("max_hp",100),a.get("speed",6.5),a.get("fire_interval",0.16),a.get("ack",0),a.get("dash_left",0),dash_direction.x,dash_direction.y,dash_direction.z,a.get("ammo",MAG_SIZE),a.get("mag",MAG_SIZE),float(a.get("reload",0))/maxf(0.01,float(a.get("reload_time",RELOAD_TIME)))]))
 	for id in enemies:
 		var e = enemies[id]
 		e_data.append_array(PackedFloat32Array([id,e.p.x,e.p.y,e.p.z,e.hp,e.y,1.0 if e.boss else 0.0,e.get("max_hp",e.hp)]))
@@ -647,13 +807,16 @@ func _broadcast_state():
 
 @rpc("authority", "call_remote", "unreliable_ordered")
 func _snapshot(ids: PackedInt32Array, a: PackedFloat32Array, e: PackedFloat32Array, w: int, k: int, t: float):
-	if a.size() != ids.size()*16 or e.size()%8 != 0: return
+	var stride = 19 if a.size() == ids.size()*19 else 16
+	if a.size() != ids.size()*stride or e.size()%8 != 0: return
 	var old_position: Vector3 = actors[local_id].p if actors.has(local_id) else Vector3.ZERO
 	var had_local = actors.has(local_id)
 	actors.clear()
 	for i in range(ids.size()):
-		var j = i*16
+		var j = i*stride
 		actors[ids[i]] = {"p":Vector3(a[j],a[j+1],a[j+2]),"hp":a[j+3],"cd":a[j+4],"dash":a[j+5],"y":a[j+6],"v":a[j+7],"max_hp":a[j+8],"speed":a[j+9],"fire_interval":a[j+10],"ack":int(a[j+11]),"dash_left":a[j+12],"dash_direction":Vector3(a[j+13],a[j+14],a[j+15])}
+		if stride == 19:
+			actors[ids[i]].merge({"ammo":int(a[j+16]),"mag":int(a[j+17]),"reload_ratio":a[j+18]},true)
 	if actors.has(local_id):
 		var local_actor = actors[local_id]
 		while not pending_movement.is_empty() and int(pending_movement[0].packet.seq) <= local_actor.ack:
@@ -713,9 +876,14 @@ func _simulate(dt: float):
 		_move_actor(a,p,dt)
 		a["ack"] = int(p.get("seq",0))
 		if a.hp <= 0: continue
-		if p.get("fire",false) and a.cd <= 0:
-			a.cd = float(a.get("fire_interval",0.16))
-			_fire(id, p.get("aim", a.p+Vector3(0,1,-30)))
+		_update_ammo(a,p,dt)
+		if p.get("fire",false) and a.cd <= 0 and float(a.get("reload",0)) <= 0:
+			if int(a.get("ammo",MAG_SIZE)) > 0:
+				a.cd = float(a.get("fire_interval",0.16))
+				a["ammo"] = int(a.get("ammo",MAG_SIZE))-1
+				_fire(id, p.get("aim", a.p+Vector3(0,1,-30)))
+				if a.ammo <= 0: _start_reload(a)
+			else: _start_reload(a)
 	var alive = []
 	for id in actors:
 		if actors[id].hp > 0: alive.append(id)
@@ -751,6 +919,18 @@ func _simulate(dt: float):
 				wave += 1
 				_spawn_wave()
 				wave_delay = 2.0
+
+func _start_reload(a: Dictionary):
+	if float(a.get("reload",0)) > 0 or int(a.get("ammo",MAG_SIZE)) >= int(a.get("mag",MAG_SIZE)): return
+	a["reload"] = float(a.get("reload_time",RELOAD_TIME))
+
+func _update_ammo(a: Dictionary, p: Dictionary, dt: float):
+	var r = float(a.get("reload",0))
+	if r > 0:
+		r = maxf(0,r-dt)
+		a["reload"] = r
+		if r <= 0: a["ammo"] = int(a.get("mag",MAG_SIZE))
+	elif p.get("reload",false): _start_reload(a)
 
 func _spawn_wave():
 	var count = mini(24,MISSIONS[selected][5]+ceili(wave/2.0)+maxi(0,actors.size()-1)*2)
@@ -828,7 +1008,7 @@ func _render_models(dt: float):
 		v.position = v.position.lerp(actors[id].p,1.0-exp(-20.0*dt))
 		v.rotation.y = actors[id].y
 		v.rotation.x = -0.18*_dash_animation_strength(actors[id])
-		v.visible = actors[id].hp > 0 and id != local_id
+		v.visible = actors[id].hp > 0 and (id != local_id or third_person)
 	for id in visuals.keys():
 		if not actors.has(id):
 			visuals[id].queue_free()
@@ -854,7 +1034,7 @@ func _render_models(dt: float):
 
 func _update_camera(dt: float):
 	if dedicated: return
-	weapon.visible = mode == "playing" and actors.has(local_id) and actors[local_id].hp > 0
+	weapon.visible = mode == "playing" and actors.has(local_id) and actors[local_id].hp > 0 and not third_person
 	if mode == "playing" and actors.has(local_id):
 		var position: Vector3 = actors[local_id].p
 		if not local_position_initialized:
@@ -864,6 +1044,9 @@ func _update_camera(dt: float):
 		camera_correction *= exp(-18.0*dt)
 		camera.position = local_previous_position.lerp(position,blend)+camera_correction+Vector3.UP*EYE_HEIGHT
 		camera.rotation = Vector3(pitch,yaw,0)
+		if third_person:
+			camera.position += Basis.from_euler(Vector3(pitch,yaw,0))*THIRD_PERSON_OFFSET
+			camera.position.y = maxf(0.4,camera.position.y)
 		# Recoil moves only the view model, preserving the centered aim ray.
 		shake = maxf(0,shake-dt)
 		var animation_offset = blend/float(Engine.physics_ticks_per_second)
@@ -891,9 +1074,25 @@ func _update_hud():
 	objective_label.text = "波次 %d / %d    ·    剩餘 %d    ·    擊破 %d\n%s" % [wave,MISSIONS[selected][4],enemies.size(),kills,_format_time(elapsed)]
 	if actors.has(local_id):
 		var a = actors[local_id]
-		health_label.text = "護盾  %d / 100" % a.hp
-		health_label.modulate = ORANGE if a.hp <= 30 else CYAN
+		var max_hp = float(a.get("max_hp",100))
+		health_label.text = "護盾  %d / %d" % [a.hp,max_hp]
+		health_label.modulate = ORANGE if a.hp <= max_hp*0.3 else Color.WHITE
+		if is_instance_valid(health_bar):
+			health_bar.max_value = max_hp
+			health_bar.value = a.hp
+			health_bar.modulate = ORANGE if a.hp <= max_hp*0.3 else Color.WHITE
+			dash_bar.value = DASH_COOLDOWN-a.dash
 		dash_label.text = "Shift 衝刺就緒" if a.dash <= 0 else "衝刺冷卻  %.1f s" % a.dash
+		if is_instance_valid(ammo_label):
+			var ammo = int(a.get("ammo",MAG_SIZE))
+			var mag = int(a.get("mag",MAG_SIZE))
+			var ratio = float(a.get("reload_ratio",float(a.get("reload",0))/float(a.get("reload_time",RELOAD_TIME))))
+			ammo_label.text = "換彈中" if ratio > 0 else str(ammo)
+			ammo_label.add_theme_font_size_override("font_size",26 if ratio > 0 else 40)
+			ammo_label.modulate = ORANGE if ratio > 0 or ammo <= mag/5 else Color.WHITE
+			reserve_label.text = "/ %d" % mag
+			reload_bar.value = 1.0-ratio if ratio > 0 else float(ammo)/maxf(1,mag)
+			view_label.text = "R 換彈   ·   V %s" % ("第三人稱" if third_person else "第一人稱")
 		toast.text = "你已倒下 · 隊友仍可完成任務" if a.hp <= 0 else ("點擊畫面恢復滑鼠瞄準" if not modal_open and Input.mouse_mode != Input.MOUSE_MODE_CAPTURED else ("下一波即將抵達" if enemies.is_empty() else ""))
 
 func _finish(success: bool):
@@ -919,10 +1118,18 @@ func _finish_remote(success: bool, duration: float, defeated: int, index: int):
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 	_clear_ui()
 	var bg = ColorRect.new()
-	bg.color = Color(0.02,0.04,0.07,0.86)
+	bg.color = Color(0.02,0.04,0.07,0.88)
 	bg.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	screen.add_child(bg)
-	var v = _box(screen,Vector2(390,180),500)
+	var center = CenterContainer.new()
+	center.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	screen.add_child(center)
+	var card = _panel(center,CYAN if success else ORANGE,Color(0.04,0.08,0.13,0.96))
+	card.mouse_filter = Control.MOUSE_FILTER_PASS
+	card.custom_minimum_size.x = 560
+	var v = VBoxContainer.new()
+	v.add_theme_constant_override("separation",14)
+	card.add_child(v)
 	v.add_child(_label("MISSION COMPLETE" if success else "SIGNAL LOST",18,CYAN if success else ORANGE))
 	v.add_child(_label("任務完成" if success else "任務失敗",48))
 	v.add_child(_label(MISSIONS[selected][1],24))

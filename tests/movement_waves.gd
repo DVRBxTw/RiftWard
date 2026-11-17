@@ -90,7 +90,7 @@ func _run():
 	for pick in range(20): game._apply_buff(1,0)
 	assert(is_equal_approx(game.actors[1].damage,damage_before+112.0))
 	game.wave = 20
-	game.buff_wave = 19
+	game.pending_levels = 1
 	game._simulate(0.01)
 	assert(game.buff_pending)
 	game._apply_buff(1,0)

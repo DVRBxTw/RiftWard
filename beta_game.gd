@@ -9,8 +9,19 @@ const BUFFS = [
 	["動能靴", "移動速度增加 12%", "speed"],
 	["強化護盾", "護盾上限 +30，立即恢復 30", "max_hp"],
 	["修復協議", "每波開始恢復 15 點護盾", "regen"],
-	["弱點分析", "增加 20% 機率造成雙倍傷害", "critical"]
+	["弱點分析", "增加 20% 機率造成雙倍傷害", "critical"],
+	["擴充彈匣", "彈匣容量 +10 發，換彈速度加快 15%", "mag"]
 ]
+const BUFF_ICONS = ["✦", "⚡", "➤", "⬢", "✚", "◎", "▤"]
+const XP_BASE = 100.0
+const XP_GROWTH = 1.35
+var xp = 0
+var level = 1
+var xp_need = 100
+var pending_levels = 0
+var xp_bar: ProgressBar
+var level_label: Label
+var xp_label: Label
 const REGIONS = [
 	["灰燼前哨", "帝國先遣隊已占領邊境。\n清掃前哨，找出通往城內的路。", Color("263a50"), Color("66f5d0")],
 	["熔核工廠", "反應爐正在替入侵艦隊供能。\n穿過熔核工廠，切斷帝國的能源。", Color("493429"), Color("ffad66")],
@@ -41,7 +52,7 @@ var logging_out = false
 var session_path = SESSION_PATH
 var api_port = 24771
 const BOSS_HUD_WIDTH = 640.0
-const BOSS_HUD_CENTER_OFFSET = 200.0
+const BOSS_HUD_CENTER_OFFSET = 0.0
 const BOSS_HUD_TOP = 24.0
 const BOSS_BAR_HEIGHT = 16.0
 var boss_panel: PanelContainer
@@ -362,13 +373,13 @@ func _home():
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 	showcase.visible = true
 	_clear_ui()
-	_dim(screen)
+	_backdrop(screen,0.97,0.35)
 	var left = _box(screen,Vector2(56,32),496)
 	left.add_theme_constant_override("separation",8)
 	left.add_child(_label("RIFTWARD  /  " + VERSION,16,CYAN))
-	left.add_child(_label("抵抗軍基地",38))
+	left.add_child(_label("抵抗軍基地",42))
 	left.add_child(_label("槍手："+str(profile.get("username","")),18))
-	left.add_child(_label("區域依序解鎖 · 每波選擇戰術加成",18,CYAN))
+	left.add_child(_label("區域依序解鎖 · 升級選擇戰術加成",18,CYAN))
 	for i in range(REGIONS.size()):
 		var region = REGIONS[i]
 		var locked = i > int(profile.get("unlocked",0))
@@ -403,10 +414,10 @@ func _home():
 	description.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	description.custom_minimum_size = Vector2(584,176)
 	right.add_child(description)
-	var controls = _label("自由 360° 轉身 · 第一人稱射擊\nWASD 移動 / 左鍵射擊 / Shift 衝刺\nSpace 跳躍 / Esc 選單",20)
+	var controls = _label("WASD 移動 / 左鍵射擊 / R 換彈\nShift 衝刺 / Space 跳躍 / V 切換視角 / Esc 選單",20)
 	controls.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	right.add_child(controls)
-	var briefing = _label("基地 \n每波結束三選一 Buff，任務內可疊加。\n清除區域後回基地，裝備加成會重置。",18,CYAN)
+	var briefing = _label("擊敗敵人獲得經驗值，升級時三選一 Buff。\n等級越高，敵人越強。彈匣打空會自動換彈。",18,CYAN)
 	briefing.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	right.add_child(briefing)
 	_select(clampi(selected,0,int(profile.get("unlocked",0))))
@@ -451,9 +462,38 @@ func _reset_actors():
 	for id in actors: _set_actor_stats(id)
 
 func _set_actor_stats(id: int):
-	actors[id].merge({"max_hp":100.0,"damage":BASE_WEAPON_DAMAGE,"speed":6.5,"fire_interval":0.16,"regen":0,"critical":0.0},true)
+	actors[id].merge({"max_hp":100.0,"damage":BASE_WEAPON_DAMAGE,"speed":6.5,"fire_interval":0.16,"regen":0,"critical":0.0,"mag":MAG_SIZE,"ammo":MAG_SIZE,"reload":0.0,"reload_time":RELOAD_TIME},true)
+
+static func xp_for_level(lv: int) -> int:
+	return int(round(XP_BASE*pow(XP_GROWTH,lv-1)))
+
+func _level_scale() -> float:
+	return 1.0+0.08*(level-1)
+
+func _gain_xp(amount: int):
+	if tutorial_running: return
+	xp += amount
+	while xp >= xp_need:
+		xp -= xp_need
+		level += 1
+		xp_need = xp_for_level(level)
+		pending_levels += 1
+
+@rpc("authority", "call_remote", "unreliable_ordered")
+func _xp_sync(current: int, need: int, lv: int):
+	xp = current
+	xp_need = need
+	level = lv
+
+func _broadcast_state():
+	super._broadcast_state()
+	if not test_mode: _xp_sync.rpc(xp,xp_need,level)
 
 func _start_mission(index: int):
+	xp = 0
+	level = 1
+	xp_need = xp_for_level(1)
+	pending_levels = 0
 	buff_pending = false
 	buff_wave = -1
 	buff_choices.clear()
@@ -472,11 +512,34 @@ func _deploy(index: int):
 	buffs_picked = 0
 	super._deploy(index)
 	_apply_region(index)
-	if not test_mode and is_instance_valid(hud):
-		var heading = hud.get_child(0).get_child(0)
-		heading.text = "R / W    "+REGIONS[index][0]
+	if not test_mode and is_instance_valid(heading_label):
+		heading_label.text = "R / W    "+REGIONS[index][0]
 	if not dedicated and is_instance_valid(hud):
+		_build_xp_hud()
 		_build_boss_hud()
+
+func _build_xp_hud():
+	var panel = _panel(hud,GOLD)
+	panel.anchor_left = 0.5
+	panel.anchor_right = 0.5
+	panel.offset_left = -230
+	panel.offset_right = 230
+	panel.offset_top = 20
+	var v = VBoxContainer.new()
+	v.add_theme_constant_override("separation",6)
+	panel.add_child(v)
+	var row = HBoxContainer.new()
+	v.add_child(row)
+	level_label = _label("Lv. 1",20,GOLD)
+	row.add_child(level_label)
+	var spacer = Control.new()
+	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row.add_child(spacer)
+	xp_label = _label("0 / 100 XP",14,MUTED)
+	xp_label.size_flags_vertical = Control.SIZE_SHRINK_END
+	row.add_child(xp_label)
+	xp_bar = _bar(GOLD,8)
+	v.add_child(xp_bar)
 
 func _build_boss_hud():
 	boss_panel = PanelContainer.new()
@@ -487,7 +550,7 @@ func _build_boss_hud():
 	boss_panel.anchor_right = 0.5
 	boss_panel.offset_left = BOSS_HUD_CENTER_OFFSET-BOSS_HUD_WIDTH/2.0
 	boss_panel.offset_right = BOSS_HUD_CENTER_OFFSET+BOSS_HUD_WIDTH/2.0
-	boss_panel.offset_top = BOSS_HUD_TOP
+	boss_panel.offset_top = BOSS_HUD_TOP+80
 	var content = VBoxContainer.new()
 	content.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	content.add_theme_constant_override("separation",8)
@@ -558,7 +621,8 @@ func _simulate(dt: float):
 			for id in buff_choices.keys(): _apply_buff(id,buff_choices[id][0])
 			_resolve_buffs()
 		return
-	if enemies.is_empty() and wave > 0 and buff_wave != wave:
+	if pending_levels > 0:
+		pending_levels -= 1
 		_begin_buffs()
 		return
 	super._simulate(dt)
@@ -569,16 +633,19 @@ func _spawn_wave():
 	var elapsed_waves = max(0,wave-1)
 	var region = float(selected)
 	var party_scale = 1.0+0.6*max(0,actors.size()-1)
+	# Each player level makes newly spawned enemies tougher.
+	var lv_hp = _level_scale()
+	var lv_dmg = 1.0+0.05*(level-1)
 	for id in enemies:
 		var e = enemies[id]
 		if e.boss:
 			var base_health = 3000.0 if wave == 10 else 7000.0
-			e.hp = base_health*(1.0+0.18*region)*party_scale
-			e.damage = (20.0+3.0*region)*(1.0+0.03*elapsed_waves)
+			e.hp = base_health*(1.0+0.18*region)*party_scale*lv_hp
+			e.damage = (20.0+3.0*region)*(1.0+0.03*elapsed_waves)*lv_dmg
 			e.speed = 1.6*(1.0+0.1*region)*(1.0+minf(0.2,0.01*elapsed_waves))
 		else:
-			e.hp = (55.0+10.0*region)*(1.0+0.08*elapsed_waves)
-			e.damage = (10.0+2.0*region)*(1.0+0.04*elapsed_waves)
+			e.hp = (55.0+10.0*region)*(1.0+0.08*elapsed_waves)*lv_hp
+			e.damage = (10.0+2.0*region)*(1.0+0.04*elapsed_waves)*lv_dmg
 			e.speed = (2.1+0.3*region)*(1.0+minf(0.25,0.015*elapsed_waves))
 		e.max_hp = e.hp
 	for id in actors:
@@ -595,15 +662,15 @@ func _begin_buffs():
 	if buff_choices.is_empty(): _resolve_buffs()
 
 func _offer_to(id: int):
-	var pool = [0,1,2,3,4,5]
+	var pool = range(BUFFS.size())
 	pool.shuffle()
 	var offer = pool.slice(0,3)
 	buff_choices[id] = offer
-	if id == 1: _buff_offer(offer,wave)
-	else: _buff_offer.rpc_id(id,offer,wave)
+	if id == 1: _buff_offer(offer,level)
+	else: _buff_offer.rpc_id(id,offer,level)
 
 @rpc("authority", "call_remote", "reliable")
-func _buff_offer(offer: Array, completed_wave: int):
+func _buff_offer(offer: Array, new_level: int):
 	if dedicated: return
 	modal_open = true
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
@@ -611,19 +678,44 @@ func _buff_offer(offer: Array, completed_wave: int):
 	buff_overlay = Control.new()
 	buff_overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	screen.add_child(buff_overlay)
-	_dim(buff_overlay)
-	var v = _box(buff_overlay,Vector2(240,128),800)
-	v.add_child(_label("第 %d 波已清除" % completed_wave,34,CYAN))
-	v.add_child(_label("選擇一項本次任務加成 · 可疊加 · 30 秒後自動選擇",18))
+	var shade = ColorRect.new()
+	shade.color = Color(0.015,0.03,0.06,0.82)
+	shade.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	buff_overlay.add_child(shade)
+	var center = CenterContainer.new()
+	center.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	buff_overlay.add_child(center)
+	var v = VBoxContainer.new()
+	v.add_theme_constant_override("separation",18)
+	v.alignment = BoxContainer.ALIGNMENT_CENTER
+	center.add_child(v)
+	var kicker = _label("LEVEL UP",16,GOLD)
+	kicker.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	v.add_child(kicker)
+	var title = _label("等級提升 · Lv. %d" % new_level,40)
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	v.add_child(title)
+	var sub = _label("選擇一項加成（可疊加）· 敵人也會隨等級變強 · 30 秒後自動選擇",16,MUTED)
+	sub.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	v.add_child(sub)
+	var cards = HBoxContainer.new()
+	cards.add_theme_constant_override("separation",20)
+	cards.alignment = BoxContainer.ALIGNMENT_CENTER
+	v.add_child(cards)
+	var buttons: Array = []
 	for index in offer:
-		_button(BUFFS[index][0]+"\n"+BUFFS[index][1],func():
-			for child in v.get_children():
-				if child is Button: child.disabled = true
+		var b = _button("%s\n\n%s\n\n%s" % [BUFF_ICONS[index],BUFFS[index][0],BUFFS[index][1]],func():
+			for other in buttons: other.disabled = true
 			if network == "client": _choose_buff.rpc_id(1,index)
 			else:
 				_apply_buff(1,index)
-				if buff_choices.is_empty(): _resolve_buffs(),v,96)
-	var waiting = _label("選擇後等待隊友；所有人選完就繼續作戰。",18,CYAN)
+				if buff_choices.is_empty(): _resolve_buffs(),cards,260)
+		b.custom_minimum_size.x = 240
+		b.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		b.add_theme_font_size_override("font_size",19)
+		buttons.append(b)
+	var waiting = _label("選擇後等待隊友；所有人選完就繼續作戰。",16,CYAN)
+	waiting.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	v.add_child(waiting)
 
 @rpc("any_peer", "call_remote", "reliable")
@@ -648,6 +740,10 @@ func _apply_buff(id: int, index: int):
 			a.hp = minf(a.max_hp,a.hp+30)
 		4: a.regen = a.get("regen",0)+15
 		5: a.critical = minf(0.8,a.get("critical",0.0)+0.2)
+		6:
+			a.mag = int(a.get("mag",MAG_SIZE))+10
+			a.reload_time = maxf(0.5,float(a.get("reload_time",RELOAD_TIME))*0.85)
+			if float(a.get("reload",0)) <= 0: a.ammo = a.mag
 	buff_choices.erase(id)
 	if id != 1: _buff_applied.rpc_id(id,index,a.get("max_hp",100))
 	else: _buff_applied(index,a.get("max_hp",100))
@@ -677,8 +773,12 @@ func _fire(id: int, target: Vector3):
 		return
 	var original_damage = actors[id].get("damage",BASE_WEAPON_DAMAGE)
 	if randf()<actors[id].get("critical",0.0): actors[id].damage = original_damage*2
+	var before = enemies.duplicate()
 	super._fire(id,target)
 	actors[id].damage = original_damage
+	for eid in before:
+		if not enemies.has(eid):
+			_gain_xp(300 if before[eid].get("boss",false) else 20+5*selected)
 
 func _update_hud():
 	super._update_hud()
@@ -688,7 +788,12 @@ func _update_hud():
 		var messages = ["教學 1/3：移動滑鼠，轉動第一人稱視角", "教學 2/3：按 WASD 移動一段距離", "教學 3/3：找到前方訓練機器人，左鍵射擊", "教學完成，正在儲存…", "正在連接基地…"]
 		objective_label.text = messages[tutorial_step]
 	elif actors.has(local_id):
-		health_label.text = "護盾 %d / %d   ·   加成 %d" % [actors[local_id].hp,actors[local_id].get("max_hp",100),buffs_picked]
+		health_label.text = "護盾  %d / %d      加成 ×%d" % [actors[local_id].hp,actors[local_id].get("max_hp",100),buffs_picked]
+	if is_instance_valid(xp_bar):
+		xp_bar.max_value = maxi(1,xp_need)
+		xp_bar.value = xp
+		level_label.text = "Lv. %d" % level
+		xp_label.text = "%d / %d XP   ·   敵人強度 ×%.2f" % [xp,xp_need,_level_scale()]
 
 func _update_boss_hud():
 	if not is_instance_valid(boss_panel): return

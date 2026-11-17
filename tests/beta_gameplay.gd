@@ -26,6 +26,20 @@ func _run():
 	assert(game.actors[1].damage == 28)
 	game.wave = 1
 	game.enemies.clear()
+	# Ammo: emptying the magazine triggers an automatic reload.
+	game.actors[1].ammo = 1
+	game.inputs[1] = {"fire":true,"aim":Vector3(0,1,-30),"yaw":0.0}
+	game._simulate(0.01)
+	assert(game.actors[1].ammo == 0 and game.actors[1].reload > 0)
+	game.inputs[1] = {"yaw":0.0}
+	game._simulate(2.0)
+	assert(game.actors[1].ammo == game.MAG_SIZE)
+	game.wave = 1
+	game.wave_delay = 99
+	game.enemies.clear()
+	# Experience: crossing the threshold queues a level-up buff and raises the next threshold.
+	game._gain_xp(game.xp_need)
+	assert(game.level == 2 and game.xp_need > 100)
 	game._simulate(0.01)
 	assert(game.buff_pending and game.buff_choices[1].size() == 3)
 	assert(game.modal_open and is_instance_valid(game.buff_overlay))
@@ -36,10 +50,11 @@ func _run():
 	assert(is_equal_approx(game.actors[1].damage,33.6))
 	game._resolve_buffs()
 	assert(not game.buff_pending and not game.modal_open)
-	game._simulate(1.1)
+	game.wave_delay = 0
+	game._simulate(0.01)
 	assert(game.wave == 2 and game.enemies.size()>0)
 	var stronger = game.enemies.values()[0]
-	assert(stronger.hp > 55 and stronger.damage > 10)
+	assert(stronger.hp > (55.0*1.08)*1.07 and stronger.damage > 10)
 	game._apply_buff(1,3)
 	assert(game.actors[1].max_hp == 130)
 	game._apply_buff(1,4)

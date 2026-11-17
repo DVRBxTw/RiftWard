@@ -25,15 +25,13 @@ func setup(host: Node, api_base: String):
 	_host = host
 	_api_base = api_base.trim_suffix("/")
 	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	var shade = ColorRect.new()
-	shade.color = SURFACE
-	shade.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	shade.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	add_child(shade)
+	host._backdrop(self, 0.9, 0.55)
 	var center = CenterContainer.new()
 	center.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	add_child(center)
-	var form: VBoxContainer = host._box(center, Vector2.ZERO, FORM_WIDTH)
+	var card: PanelContainer = host._panel(center, host.CYAN, Color(0.04, 0.08, 0.13, 0.95))
+	card.mouse_filter = Control.MOUSE_FILTER_PASS
+	var form: VBoxContainer = host._box(card, Vector2.ZERO, FORM_WIDTH)
 	form.add_theme_constant_override("separation", 8)
 	form.add_child(host._label("RIFTWARD  /  BETA", 18, host.CYAN))
 	_heading = host._label("建立遊戲帳號", 32)
