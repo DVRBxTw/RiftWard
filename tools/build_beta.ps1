@@ -1,4 +1,4 @@
-param([string]$Version = '0.4.0-beta.1')
+param([string]$Version = '0.4.1-beta.1')
 $ErrorActionPreference = 'Stop'
 $project = Split-Path $PSScriptRoot -Parent
 $engine = Join-Path $PSScriptRoot 'Godot_v4.5.1-stable_win64_console.exe'

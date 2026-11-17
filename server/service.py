@@ -20,7 +20,7 @@ HOST = "192.168.213.100"
 PORT = 24771
 ITERATIONS = 310_000
 USERNAME = re.compile(r"[A-Za-z0-9_]{3,24}\Z")
-VERSION = "0.4.0-beta.1"
+VERSION = "0.4.1-beta.1"
 
 # Armory catalog. The game client mirrors these numbers for display only;
 # every purchase is priced and validated here.
@@ -48,6 +48,10 @@ class Store:
             with keyfile.open("x", encoding="ascii") as handle:
                 handle.write(secrets.token_hex(32))
         self.server_key = keyfile.read_text(encoding="ascii").strip()
+        # Operators list admin usernames here, one per line; re-read on every check.
+        self.admin_file = directory / "admins.txt"
+        if not self.admin_file.exists():
+            self.admin_file.write_text("# 每行一個管理員帳號名稱（不分大小寫）\n", encoding="utf-8")
         with self.connect() as db:
             db.executescript("""
                 PRAGMA journal_mode=WAL;
@@ -98,7 +102,51 @@ class Store:
         result = dict(row)
         result["tutorial_complete"] = bool(result["tutorial_complete"])
         result["loadout"] = self._parse_loadout(result.get("loadout"))
+        result["admin"] = self.is_admin(result["username"])
         return result
+
+    def is_admin(self, username: str) -> bool:
+        try:
+            lines = self.admin_file.read_text(encoding="utf-8-sig").splitlines()
+        except OSError:
+            return False
+        names = {line.strip().lower() for line in lines if line.strip() and not line.strip().startswith("#")}
+        return username.lower() in names
+
+    def list_players(self):
+        with self.connect() as db:
+            rows = db.execute("SELECT a.username,p.gold,p.unlocked FROM accounts a JOIN progress p ON p.account_id=a.id "
+                              "ORDER BY a.username COLLATE NOCASE LIMIT 500").fetchall()
+        return [dict(row) for row in rows]
+
+    def admin_grant(self, username, gold, weapon):
+        if not isinstance(gold, int) or not 0 <= gold <= 100000:
+            raise ValueError("金幣數量需為 0–100000")
+        if weapon not in (None, "") and weapon not in WEAPON_PRICES:
+            raise ValueError("找不到此武器")
+        if gold == 0 and not weapon:
+            raise ValueError("請選擇要發放的金幣或武器")
+        if not isinstance(username, str) or not (username == "*" or USERNAME.fullmatch(username)):
+            raise ValueError("請輸入正確的玩家帳號")
+        with self.connect() as db:
+            if username == "*":
+                ids = [row[0] for row in db.execute("SELECT id FROM accounts")]
+            else:
+                row = db.execute("SELECT id FROM accounts WHERE username=?", (username,)).fetchone()
+                if row is None:
+                    raise ValueError("找不到此玩家")
+                ids = [row[0]]
+            db.execute("UPDATE progress SET gold=gold+? WHERE account_id IN (%s)" % ",".join("?" * len(ids)),
+                       (gold, *ids)) if ids else None
+        if weapon:
+            for account_id in ids:
+                profile = self.profile(account_id)
+                loadout = profile["loadout"]
+                if weapon not in loadout["owned"]:
+                    loadout["owned"].append(weapon)
+                    with self.connect() as db:
+                        db.execute("UPDATE progress SET loadout=? WHERE account_id=?", (json.dumps(loadout), account_id))
+        return len(ids)
 
     @staticmethod
     def _parse_loadout(raw):
@@ -375,6 +423,21 @@ class Handler(BaseHTTPRequestHandler):
             self._json(200, {"ok": True, "profile": profile, "game_online": bool(self.server.game_online())})
         elif self.path == "/api/tutorial":
             self._json(200, {"ok": True, "profile": store.tutorial(profile["id"])})
+        elif self.path.startswith("/api/admin/"):
+            if not profile.get("admin"):
+                self._json(403, {"ok": False, "error": "需要管理員權限"})
+                return
+            if self.path == "/api/admin/players":
+                self._json(200, {"ok": True, "players": store.list_players()})
+            elif self.path == "/api/admin/grant":
+                try:
+                    count = store.admin_grant(data.get("username"), data.get("gold", 0), data.get("weapon"))
+                except ValueError as exc:
+                    self._json(400, {"ok": False, "error": str(exc)})
+                    return
+                self._json(200, {"ok": True, "count": count, "profile": store.profile(profile["id"])})
+            else:
+                self._json(404, {"ok": False, "error": "找不到此服務"})
         elif self.path in ("/api/shop/buy", "/api/shop/upgrade"):
             try:
                 if self.path.endswith("buy"):

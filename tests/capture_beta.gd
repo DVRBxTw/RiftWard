@@ -18,7 +18,7 @@ func _run():
 	game.test_mode = false
 	game._show_account()
 	await _capture(game,"account")
-	game.profile = {"id":999,"username":"Beta_Demo","unlocked":2,"tutorial_complete":true,"gold":1240,"loadout":{"owned":["pistol","rifle"],"levels":{"pistol":{"damage":3,"mag":1},"rifle":{"reload":2}}}}
+	game.profile = {"id":999,"username":"Beta_Demo","unlocked":2,"tutorial_complete":true,"admin":true,"gold":1240,"loadout":{"owned":["pistol","rifle"],"levels":{"pistol":{"damage":3,"mag":1},"rifle":{"reload":2}}}}
 	game._show_story()
 	await _capture(game,"story")
 	game._home()
@@ -26,6 +26,8 @@ func _run():
 	await _capture(game,"home")
 	game._show_armory()
 	await _capture(game,"armory")
+	game._show_admin()
+	await _capture(game,"admin")
 	game._start_mission(1)
 	game.wave = 1
 	game.enemies.clear()
@@ -60,6 +62,9 @@ func _run():
 	game.wave = 10
 	game.enemies.clear()
 	game._spawn_wave()
+	for e in game.enemies.values():
+		if e.boss: e.p = game.actors[1].p+Vector3(0,0,-12)
+		else: e.p = Vector3(30,0,30)
 	game._render_models(1)
 	game._update_hud()
 	await _capture(game,"boss")

@@ -4,10 +4,10 @@ extends "res://beta_game.gd"
 
 const WEAPON_ORDER = ["pistol", "rifle", "shotgun", "sniper"]
 const WEAPONS = {
-	"pistol": {"name":"P-9 制式手槍", "short":"手槍", "desc":"初始武器。彈匣小、換彈快，穩定可靠。", "dmg":28.0, "interval":0.24, "mag":12, "reload":1.1, "pellets":1, "spread":0.0, "head":2.0, "zoom":0.85, "price":0},
-	"rifle": {"name":"AR-27 突擊步槍", "short":"步槍", "desc":"全自動高射速，適合壓制大群敵人。", "dmg":17.0, "interval":0.1, "mag":30, "reload":1.8, "pellets":1, "spread":0.012, "head":2.0, "zoom":0.75, "price":400},
-	"shotgun": {"name":"SG-8 霰彈槍", "short":"霰彈", "desc":"一次射出 7 顆彈丸，近距離威力驚人。", "dmg":11.0, "interval":0.8, "mag":6, "reload":2.2, "pellets":7, "spread":0.07, "head":1.5, "zoom":0.85, "price":600},
-	"sniper": {"name":"LR-50 狙擊槍", "short":"狙擊", "desc":"單發高傷害，爆頭 3 倍。右鍵開鏡。", "dmg":95.0, "interval":1.0, "mag":5, "reload":2.4, "pellets":1, "spread":0.0, "head":3.0, "zoom":0.35, "price":800}
+	"pistol": {"name":"P-9 制式手槍", "short":"手槍", "desc":"初始武器。彈匣小、換彈快，穩定可靠。", "dmg":28.0, "interval":0.24, "mag":12, "reload":1.1, "pellets":1, "spread":0.0, "head":2.0, "zoom":0.85, "price":0, "recoil":0.022, "sway":0.006},
+	"rifle": {"name":"AR-27 突擊步槍", "short":"步槍", "desc":"全自動高射速，適合壓制大群敵人。", "dmg":17.0, "interval":0.1, "mag":30, "reload":1.8, "pellets":1, "spread":0.012, "head":2.0, "zoom":0.75, "price":400, "recoil":0.011, "sway":0.007},
+	"shotgun": {"name":"SG-8 霰彈槍", "short":"霰彈", "desc":"一次射出 7 顆彈丸，近距離威力驚人。", "dmg":11.0, "interval":0.8, "mag":6, "reload":2.2, "pellets":7, "spread":0.07, "head":1.5, "zoom":0.85, "price":600, "recoil":0.065, "sway":0.015},
+	"sniper": {"name":"LR-50 狙擊槍", "short":"狙擊", "desc":"單發高傷害，爆頭 3 倍。右鍵開鏡。", "dmg":95.0, "interval":1.0, "mag":5, "reload":2.4, "pellets":1, "spread":0.0, "head":3.0, "zoom":0.35, "price":800, "recoil":0.09, "sway":0.01}
 }
 const UPGRADE_KEYS = ["damage", "mag", "reload"]
 const UPGRADE_NAMES = {"damage":"傷害", "mag":"彈匣", "reload":"換彈"}
@@ -19,7 +19,9 @@ const KINDS = [
 	["衝鋒兵", Color("ff4d6d"), 0.9],
 	["狙擊兵", Color("b47cff"), 1.0],
 	["自爆蟲", Color("ffd23f"), 0.75],
-	["護盾兵", Color("5aa9ff"), 1.0]
+	["護盾兵", Color("5aa9ff"), 1.0],
+	["帝國重裝兵", Color("ff5533"), 2.2],
+	["帝國指揮官", Color("ffb347"), 2.6]
 ]
 const SNIPER_BULLET_SPEED = 14.0
 const SNIPER_WARNING = 0.9
@@ -72,6 +74,12 @@ var reload_sounds: Dictionary = {}
 var last_reload_ratio = 0.0
 var last_reload_slot = -1
 var reload_sfx_log: Array = []
+var recoil_pending = 0.0
+var last_recoil_time = -1.0
+var admin_settings = {"dmg":1.0,"speed":1.0,"god":false,"ammo":false}
+var admin_by_id: Dictionary = {}
+var admin_status: Label
+var admin_players: VBoxContainer
 
 # ---------------------------------------------------------------- weapons
 
@@ -106,15 +114,16 @@ func _set_actor_stats(id: int):
 	super._set_actor_stats(id)
 	var a = actors[id]
 	var lo = _loadout_for(id)
-	a.merge({"owned":lo.owned,"levels":lo.levels,"slot":0,"ammo_by":{},"dmg_mult":1.0,"rate_mult":1.0,"mag_bonus":0,"reload_mult":1.0,"skill_mult":1.0,"lifesteal":0,"explode":0,"skill_cd":0.0,"revive":0.0},true)
+	a.merge({"owned":lo.owned,"levels":lo.levels,"slot":0,"ammo_by":{},"dmg_mult":1.0,"rate_mult":1.0,"mag_bonus":0,"reload_mult":1.0,"skill_mult":1.0,"lifesteal":0,"explode":0,"skill_cd":0.0,"revive":0.0,"admin_speed":1.0,"admin_dmg":1.0,"god":false,"inf_ammo":false},true)
 	_refresh_weapon(a)
 	a["ammo"] = a.mag
 	a["reload"] = 0.0
+	_apply_admin(id)
 
 func _refresh_weapon(a: Dictionary):
 	var wid = WEAPON_ORDER[clampi(int(a.get("slot",0)),0,3)]
 	var st = weapon_stats(wid,a.get("levels",{}).get(wid,{}))
-	a["damage"] = st.damage*float(a.get("dmg_mult",1.0))
+	a["damage"] = st.damage*float(a.get("dmg_mult",1.0))*float(a.get("admin_dmg",1.0))
 	a["fire_interval"] = maxf(0.045,st.interval*float(a.get("rate_mult",1.0)))
 	a["mag"] = st.mag+int(a.get("mag_bonus",0))
 	a["reload_time"] = maxf(0.35,st.reload*float(a.get("reload_mult",1.0)))
@@ -235,15 +244,17 @@ func _spawn_wave():
 		if wave >= 4: pool.append(2)
 		if wave >= 5: pool.append(4)
 		for e in enemies.values():
-			if e.boss:
-				e["kind_id"] = 0
-				e["phase"] = 1
-				continue
+			if e.boss: continue
 			var kind = 0
 			if not pool.is_empty() and randf() < 0.55: kind = pool.pick_random()
 			_apply_kind(e,kind)
 	var has_boss = false
-	for e in enemies.values(): has_boss = has_boss or e.boss
+	for e in enemies.values():
+		if e.boss:
+			has_boss = true
+			e["kind_id"] = 6 if wave >= 20 else 5
+			e["scale"] = KINDS[e.kind_id][2]
+			e["phase"] = 1
 	_announce_all("⚠  BOSS 來襲" if has_boss else "第 %d 波" % wave)
 
 func _apply_kind(e: Dictionary, kind: int):
@@ -377,6 +388,11 @@ func _simulate_players(dt: float):
 		var a = actors[id]
 		var p: Dictionary = inputs.get(id,{})
 		a["skill_cd"] = maxf(0,float(a.get("skill_cd",0))-dt)
+		if a.get("god",false):
+			a["hp"] = float(a.get("max_hp",100))
+		if a.get("inf_ammo",false) and a.hp > 0:
+			a["ammo"] = int(a.get("mag",MAG_SIZE))
+			a["reload"] = 0.0
 		if a.hp <= 0:
 			var helped = false
 			for other in actors:
@@ -527,7 +543,7 @@ func _explosion_fx(pos: Vector3, radius: float, color: Color):
 # ---------------------------------------------------------------- client visuals
 
 func _enemy_model(e: Dictionary) -> Node3D:
-	if e.get("boss",false): return _actor_model(Color("ff5533"),true)
+	if e.get("boss",false): return _boss_model(int(e.get("kind_id",5)))
 	var kind = clampi(int(e.get("kind_id",0)),0,KINDS.size()-1)
 	var color: Color = KINDS[kind][1]
 	var root = _actor_model(color)
@@ -1001,3 +1017,309 @@ func _armory_request(path: String, data: Dictionary):
 		_show_armory()
 		armory_status.text = str(result.get("error","操作失敗"))
 		armory_status.add_theme_color_override("font_color",ORANGE)
+
+
+# ---------------------------------------------------------------- recoil
+
+@rpc("authority", "call_remote", "unreliable")
+func _shot_fx(origin: Vector3, end: Vector3, hit: bool, shooter: int, head: bool = false, dealt: float = 0.0, killed: bool = false):
+	super._shot_fx(origin,end,hit,shooter,head,dealt,killed)
+	if dedicated or shooter != local_id or not actors.has(local_id): return
+	# One kick per trigger pull, even for multi-pellet weapons.
+	if clock_time-last_recoil_time < 0.03: return
+	last_recoil_time = clock_time
+	var w = WEAPONS[WEAPON_ORDER[clampi(int(actors[local_id].get("slot",0)),0,3)]]
+	var kick = float(w.recoil)*(0.85+randf()*0.3)
+	pitch = clampf(pitch+kick,-LOOK_LIMIT,LOOK_LIMIT)
+	yaw = wrapf(yaw+randf_range(-1.0,1.0)*float(w.sway),-PI,PI)
+	recoil_pending += kick*0.65
+	shake = 0.02+kick*0.9
+
+func _update_camera(dt: float):
+	if recoil_pending > 0.0001 and mode == "playing":
+		var back = recoil_pending*minf(1.0,dt*9.0)
+		pitch = clampf(pitch-back,-LOOK_LIMIT,LOOK_LIMIT)
+		recoil_pending -= back
+	super._update_camera(dt)
+
+# ---------------------------------------------------------------- boss soldiers
+
+func _boss_model(kind: int) -> Node3D:
+	var root = Node3D.new()
+	var commander = kind == 6
+	var armor = Color("3a2a2a") if not commander else Color("2c2438")
+	var plate = Color("6b3a30") if not commander else Color("8a6a3a")
+	var glow: Color = KINDS[clampi(kind,5,6)][1]
+	for x in [-0.18,0.18]:
+		_cube(root,Vector3(x,0.42,0),Vector3(0.26,0.84,0.3),armor)
+		_cube(root,Vector3(x,0.08,-0.05),Vector3(0.3,0.16,0.42),Color("1c1a1f"))
+		_cube(root,Vector3(x,0.55,-0.16),Vector3(0.2,0.18,0.04),plate)
+	_cube(root,Vector3(0,0.9,0),Vector3(0.62,0.2,0.34),Color("221d24"))
+	_cube(root,Vector3(0,1.25,0),Vector3(0.78,0.62,0.44),armor)
+	_cube(root,Vector3(0,1.28,-0.23),Vector3(0.6,0.46,0.04),plate)
+	_cube(root,Vector3(0,1.3,-0.255),Vector3(0.36,0.05,0.02),glow,2.5)
+	for x in [-0.56,0.56]:
+		_cube(root,Vector3(x,1.55,0),Vector3(0.36,0.22,0.5),plate)
+		_cube(root,Vector3(x,1.18,0),Vector3(0.22,0.6,0.24),armor)
+		_cube(root,Vector3(x,0.86,-0.06),Vector3(0.24,0.16,0.28),Color("1c1a1f"))
+	_cube(root,Vector3(0,1.6,0),Vector3(0.22,0.12,0.22),Color("1c1a1f"))
+	_cube(root,Vector3(0,1.72,0),Vector3(0.42,0.36,0.44),plate)
+	_cube(root,Vector3(0,1.72,-0.225),Vector3(0.34,0.08,0.02),glow,3)
+	# Heavy cannon held at the hip.
+	_cube(root,Vector3(0.56,1.0,-0.42),Vector3(0.24,0.26,0.95),Color("1a1a20"))
+	_cube(root,Vector3(0.56,1.0,-0.95),Vector3(0.16,0.16,0.2),Color("2e2e36"))
+	_cube(root,Vector3(0.56,1.0,-1.06),Vector3(0.12,0.12,0.03),glow,3)
+	_cube(root,Vector3(0.56,1.15,-0.4),Vector3(0.06,0.04,0.6),glow,1.5)
+	if commander:
+		_cube(root,Vector3(0,2.0,0.02),Vector3(0.06,0.24,0.46),glow,1.2)
+		var cape = _cube(root,Vector3(0,1.05,0.3),Vector3(0.74,1.1,0.04),Color("5a1f2a"))
+		cape.rotation_degrees.x = 8
+		for x in [-0.56,0.56]:
+			_cube(root,Vector3(x,1.68,0),Vector3(0.3,0.06,0.44),glow,1.2)
+	var ring = TorusMesh.new()
+	ring.inner_radius = 0.55
+	ring.outer_radius = 0.6
+	_mesh(root,ring,Vector3(0,0.03,0),_mat(glow,1.2))
+	root.scale = Vector3.ONE*float(KINDS[clampi(kind,5,6)][2])
+	return root
+
+func _update_boss_hud():
+	super._update_boss_hud()
+	if not is_instance_valid(boss_panel) or not boss_panel.visible: return
+	for enemy in enemies.values():
+		if not enemy.get("boss",false): continue
+		var kind = clampi(int(enemy.get("kind_id",5)),5,6)
+		var maximum = maxf(1.0,float(enemy.get("max_hp",enemy.hp)))
+		boss_name_label.text = "%s%s   %d / %d" % [KINDS[kind][0],"  ·  狂暴" if int(enemy.get("state",0)) == 2 else "",ceili(float(enemy.hp)),ceili(maximum)]
+		return
+
+# ---------------------------------------------------------------- admin
+
+func _is_admin(id: int) -> bool:
+	if verified.has(id): return bool(verified[id].get("admin",false))
+	return id == local_id and not dedicated and bool(profile.get("admin",false))
+
+@rpc("any_peer", "call_remote", "reliable")
+func _admin_apply(settings: Dictionary):
+	var id = multiplayer.get_remote_sender_id() if multiplayer.get_remote_sender_id() != 0 else local_id
+	if not _is_admin(id): return
+	admin_by_id[id] = {
+		"dmg": clampf(float(settings.get("dmg",1.0)),1.0,20.0),
+		"speed": clampf(float(settings.get("speed",1.0)),0.5,3.0),
+		"god": bool(settings.get("god",false)),
+		"ammo": bool(settings.get("ammo",false))
+	}
+	_apply_admin(id)
+
+func _apply_admin(id: int):
+	if not actors.has(id) or not admin_by_id.has(id) or not _is_admin(id): return
+	var a = actors[id]
+	var s = admin_by_id[id]
+	var old_speed = float(a.get("admin_speed",1.0))
+	a["speed"] = float(a.get("speed",6.5))/old_speed*float(s.speed)
+	a["admin_speed"] = float(s.speed)
+	a["admin_dmg"] = float(s.dmg)
+	a["god"] = s.god
+	a["inf_ammo"] = s.ammo
+	_refresh_weapon(a)
+
+func _send_admin():
+	if not bool(profile.get("admin",false)): return
+	if network == "client": _admin_apply.rpc_id(1,admin_settings)
+	else: _admin_apply(admin_settings)
+
+@rpc("authority", "call_remote", "reliable")
+func _account_ok(user: Dictionary):
+	super._account_ok(user)
+	_send_admin()
+
+func _home():
+	super._home()
+	if test_mode or dedicated or mode != "home" or not bool(profile.get("admin",false)): return
+	var admin_button = _button("⚙  管理員",_show_admin,screen,40)
+	admin_button.anchor_left = 1.0
+	admin_button.anchor_right = 1.0
+	admin_button.offset_left = -200
+	admin_button.offset_right = -48
+	admin_button.offset_top = 136
+	admin_button.offset_bottom = 176
+	admin_button.add_theme_color_override("font_color",ORANGE)
+	admin_button.add_theme_font_size_override("font_size",16)
+
+func _show_pause_menu():
+	super._show_pause_menu()
+	if not bool(profile.get("admin",false)) or not is_instance_valid(pause_overlay): return
+	var buttons = pause_overlay.find_children("*","VBoxContainer",true,false)
+	if buttons.is_empty(): return
+	var b = _button("⚙  管理員能力",func():
+		var overlay = Control.new()
+		overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		pause_overlay.add_child(overlay)
+		var center = CenterContainer.new()
+		center.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		overlay.add_child(center)
+		var card = _panel(center,ORANGE,Color(0.04,0.08,0.13,0.98))
+		card.mouse_filter = Control.MOUSE_FILTER_PASS
+		card.custom_minimum_size.x = 460
+		var v = VBoxContainer.new()
+		v.add_theme_constant_override("separation",10)
+		card.add_child(v)
+		_admin_ability_panel(v)
+		_button("關閉",func(): overlay.queue_free(),v,44),buttons[0],44)
+	b.add_theme_color_override("font_color",ORANGE)
+
+func _admin_ability_panel(v: VBoxContainer):
+	v.add_child(_label("ADMIN  ·  管理員能力",14,ORANGE))
+	v.add_child(_label("只對你自己的角色生效，立即同步到伺服器。",14,MUTED))
+	for spec in [["dmg","攻擊力倍率",1.0,20.0,0.5,"×%.1f"],["speed","移動速度倍率",0.5,3.0,0.1,"×%.1f"]]:
+		var row = HBoxContainer.new()
+		row.add_theme_constant_override("separation",10)
+		v.add_child(row)
+		var name_label = _label(spec[1],16)
+		name_label.custom_minimum_size.x = 130
+		row.add_child(name_label)
+		var slider = HSlider.new()
+		slider.min_value = spec[2]
+		slider.max_value = spec[3]
+		slider.step = spec[4]
+		slider.value = float(admin_settings[spec[0]])
+		slider.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		slider.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		slider.custom_minimum_size.x = 180
+		row.add_child(slider)
+		var value_label = _label(spec[5] % slider.value,16,GOLD)
+		value_label.custom_minimum_size.x = 56
+		row.add_child(value_label)
+		var key = spec[0]
+		var fmt = spec[5]
+		slider.value_changed.connect(func(value):
+			admin_settings[key] = value
+			value_label.text = fmt % value
+			_send_admin())
+	for spec in [["god","無敵（不會受到傷害）"],["ammo","無限彈藥（不需換彈）"]]:
+		var toggle = CheckButton.new()
+		toggle.text = spec[1]
+		toggle.button_pressed = bool(admin_settings[spec[0]])
+		var key = spec[0]
+		toggle.toggled.connect(func(on):
+			admin_settings[key] = on
+			_send_admin())
+		v.add_child(toggle)
+
+func _show_admin():
+	if test_mode or not bool(profile.get("admin",false)): return
+	mode = "admin"
+	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+	_clear_ui()
+	_backdrop(screen,0.97,0.8)
+	var header = _box(screen,Vector2(48,24),700)
+	header.add_theme_constant_override("separation",0)
+	header.add_child(_label("ADMIN CONSOLE",14,ORANGE))
+	header.add_child(_label("管理員控制台",36))
+	var row = HBoxContainer.new()
+	row.add_theme_constant_override("separation",20)
+	row.position = Vector2(48,112)
+	screen.add_child(row)
+	# Left: grant rewards.
+	var grant = _panel(row,GOLD,Color(0.035,0.07,0.115,0.94))
+	grant.mouse_filter = Control.MOUSE_FILTER_PASS
+	grant.custom_minimum_size = Vector2(640,600)
+	var gv = VBoxContainer.new()
+	gv.add_theme_constant_override("separation",10)
+	grant.add_child(gv)
+	gv.add_child(_label("發放福利",22,GOLD))
+	gv.add_child(_label("輸入玩家帳號，或從下方名單點選；留空並按「發給全部玩家」即可全服發放。",14,MUTED))
+	var target = LineEdit.new()
+	target.placeholder_text = "玩家帳號"
+	target.custom_minimum_size.y = 44
+	gv.add_child(target)
+	var fields = HBoxContainer.new()
+	fields.add_theme_constant_override("separation",10)
+	gv.add_child(fields)
+	var gold_input = SpinBox.new()
+	gold_input.min_value = 0
+	gold_input.max_value = 100000
+	gold_input.step = 50
+	gold_input.value = 500
+	gold_input.suffix = "G"
+	gold_input.custom_minimum_size = Vector2(200,44)
+	fields.add_child(gold_input)
+	var weapon_pick = OptionButton.new()
+	weapon_pick.add_item("不發放武器")
+	for wid in WEAPON_ORDER.slice(1):
+		weapon_pick.add_item("解鎖 "+WEAPONS[wid].name)
+	weapon_pick.custom_minimum_size = Vector2(260,44)
+	weapon_pick.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	fields.add_child(weapon_pick)
+	var actions = HBoxContainer.new()
+	actions.add_theme_constant_override("separation",10)
+	gv.add_child(actions)
+	var send = func(all: bool):
+		var weapon_id = "" if weapon_pick.selected <= 0 else WEAPON_ORDER[weapon_pick.selected]
+		var who = "*" if all else target.text.strip_edges()
+		_admin_grant(who,int(gold_input.value),weapon_id)
+	var one = _button("發給指定玩家",func(): send.call(false),actions,46)
+	var everyone = _button("發給全部玩家",func(): send.call(true),actions,46)
+	for b in [one,everyone]: b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	everyone.add_theme_color_override("font_color",GOLD)
+	admin_status = _label("",15,CYAN)
+	admin_status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	gv.add_child(admin_status)
+	gv.add_child(_label("玩家名單",16,MUTED))
+	var scroll = ScrollContainer.new()
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	scroll.custom_minimum_size.y = 220
+	gv.add_child(scroll)
+	admin_players = VBoxContainer.new()
+	admin_players.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	scroll.add_child(admin_players)
+	admin_players.set_meta("target",target)
+	# Right: self abilities.
+	var self_panel = _panel(row,ORANGE,Color(0.035,0.07,0.115,0.94))
+	self_panel.mouse_filter = Control.MOUSE_FILTER_PASS
+	self_panel.custom_minimum_size = Vector2(500,0)
+	self_panel.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+	var sv = VBoxContainer.new()
+	sv.add_theme_constant_override("separation",12)
+	self_panel.add_child(sv)
+	_admin_ability_panel(sv)
+	var back = _button("←  返回基地",_home,screen,44)
+	back.anchor_top = 1.0
+	back.anchor_bottom = 1.0
+	back.offset_left = 48
+	back.offset_right = 248
+	back.offset_top = -64
+	back.offset_bottom = -20
+	_admin_load_players()
+
+func _admin_load_players():
+	var result = await _api("/api/admin/players",{})
+	if mode != "admin" or not is_instance_valid(admin_players): return
+	for child in admin_players.get_children(): child.queue_free()
+	if not result.get("ok",false):
+		admin_status.text = str(result.get("error","無法讀取玩家名單"))
+		return
+	var target: LineEdit = admin_players.get_meta("target")
+	for player in result.players:
+		var name = str(player.get("username",""))
+		var b = _button("%s      ◆ %d G      已解鎖 %d 區" % [name,int(player.get("gold",0)),int(player.get("unlocked",0))+1],func(): target.text = name,admin_players,38)
+		b.alignment = HORIZONTAL_ALIGNMENT_LEFT
+		b.add_theme_font_size_override("font_size",15)
+
+func _admin_grant(username: String, gold: int, weapon_id: String):
+	if username.is_empty():
+		admin_status.text = "請輸入玩家帳號，或按「發給全部玩家」。"
+		admin_status.add_theme_color_override("font_color",ORANGE)
+		return
+	admin_status.text = "發放中…"
+	var result = await _api("/api/admin/grant",{"username":username,"gold":gold,"weapon":weapon_id})
+	if mode != "admin" or not is_instance_valid(admin_status): return
+	if result.get("ok",false):
+		profile = result.profile
+		if network == "client": _refresh_profile.rpc_id(1)
+		admin_status.add_theme_color_override("font_color",CYAN)
+		admin_status.text = "已發放給 %d 位玩家。（玩家在任務結束或重新登入後看到最新金幣）" % int(result.count)
+		_admin_load_players()
+	else:
+		admin_status.add_theme_color_override("font_color",ORANGE)
+		admin_status.text = str(result.get("error","發放失敗"))

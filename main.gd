@@ -1052,7 +1052,7 @@ func _fire_ray(id: int, origin: Vector3, direction: Vector3, primary: bool):
 		var boss = e.boss
 		var scale = float(e.get("scale",1.5 if boss else 1.0))
 		# Head and body are separate hit spheres; the head sits on top of the model.
-		var spheres = [[e.p+Vector3(0,HEAD_HEIGHT*scale,0),HEAD_RADIUS*scale*(1.07 if boss else 1.0),true],[e.p+Vector3(0,1.0*scale*(0.93 if boss else 1.0),0),(1.4 if boss else 0.75*scale),false]]
+		var spheres = [[e.p+Vector3(0,HEAD_HEIGHT*scale,0),HEAD_RADIUS*scale*(1.07 if boss else 1.0),true],[e.p+Vector3(0,1.0*scale*(0.93 if boss else 1.0),0),(0.64*scale if boss else 0.75*scale),false]]
 		for sp in spheres:
 			var along = (sp[0]-origin).dot(direction)
 			if along > 0 and along < nearest and sp[0].distance_to(origin+direction*along) < sp[1]:

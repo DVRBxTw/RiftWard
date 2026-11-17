@@ -73,6 +73,21 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(self.call("/api/shop/upgrade",{"weapon":"rifle","stat":"damage"},auth)[0],400)
         self.assertEqual(self.call("/api/shop/upgrade",{"weapon":"pistol","stat":"speed"},auth)[0],400)
 
+    def test_admin_grant(self):
+        account = self.register()
+        auth = {"Authorization":"Bearer "+account["token"]}
+        self.assertFalse(account["profile"]["admin"])
+        self.assertEqual(self.call("/api/admin/grant",{"username":"Beta_Test","gold":100},auth)[0],403)
+        self.store.admin_file.write_text("# admins\nbeta_test\n",encoding="utf-8")
+        code, players = self.call("/api/admin/players",{},auth)
+        self.assertEqual((code,players["players"][0]["username"]),(200,"Beta_Test"))
+        code, granted = self.call("/api/admin/grant",{"username":"Beta_Test","gold":250,"weapon":"sniper"},auth)
+        self.assertEqual((code,granted["count"],granted["profile"]["gold"]),(200,1,250))
+        self.assertIn("sniper",granted["profile"]["loadout"]["owned"])
+        self.assertEqual(self.call("/api/admin/grant",{"username":"*","gold":10},auth)[1]["profile"]["gold"],260)
+        self.assertEqual(self.call("/api/admin/grant",{"username":"nobody_here","gold":10},auth)[0],400)
+        self.assertEqual(self.call("/api/admin/grant",{"username":"Beta_Test","gold":-5},auth)[0],400)
+
     def test_auth_and_persistence(self):
         account = self.register()
         self.assertFalse(account["profile"]["tutorial_complete"])

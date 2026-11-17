@@ -1,6 +1,6 @@
 extends "res://main.gd"
 
-const VERSION = "0.4.0-beta.1"
+const VERSION = "0.4.1-beta.1"
 const SESSION_PATH = "user://login-session.cfg"
 const BASE_WEAPON_DAMAGE = 28.0
 const BUFFS = [
@@ -748,7 +748,7 @@ func _simulate_bullets(dt: float):
 		if target == -1:
 			e.shot_cd = 0.5
 			continue
-		var origin: Vector3 = e.p+Vector3(0,1.2*(1.5 if e.boss else 1.0),0)
+		var origin: Vector3 = e.p+Vector3(0,1.15*float(e.get("scale",1.5 if e.boss else 1.0)),0)
 		var aim: Vector3 = (actors[target].p+Vector3(0,1.0,0)-origin).normalized()
 		_enemy_shoot(e,origin,aim)
 	for bid in bullets.keys():

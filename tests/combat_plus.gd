@@ -80,6 +80,41 @@ func _run():
 	game.enemies[boss_id].hp = game.enemies[boss_id].max_hp*0.4
 	game._simulate_enemy_kinds(0.01)
 	assert(game.enemies[boss_id].phase == 2 and game.enemies.size() == count+4)
+	# Bosses are giant soldiers: wave 10 heavy trooper, wave 20 commander.
+	assert(game.enemies[boss_id].kind_id == 5 and game.enemies[boss_id].scale > 2.0)
+	game.enemies.clear()
+	game.wave = 20
+	game._spawn_wave()
+	for e in game.enemies.values():
+		if e.boss: assert(e.kind_id == 6)
+	# Admin abilities only apply to admins.
+	game.enemies.clear()
+	game.profile["admin"] = false
+	game.admin_settings = {"dmg":5.0,"speed":2.0,"god":true,"ammo":true}
+	var base_damage = a.damage
+	game._admin_apply(game.admin_settings)
+	assert(is_equal_approx(a.damage,base_damage) and not a.get("god",false))
+	game.profile["admin"] = true
+	var base_speed = a.speed
+	game._admin_apply(game.admin_settings)
+	assert(is_equal_approx(a.damage,base_damage*5.0) and is_equal_approx(a.speed,base_speed*2.0))
+	a.hp = 10
+	a.ammo = 0
+	game.inputs[1] = {"yaw":0.0}
+	game._simulate_players(0.01)
+	assert(a.hp == a.max_hp and a.ammo == a.mag)
+	game._set_actor_stats(1)
+	assert(game.actors[1].god and is_equal_approx(game.actors[1].speed,6.5*2.0))
+	# Recoil kicks the view up and then recovers part of it.
+	game.mode = "playing"
+	game.pitch = 0.0
+	game.recoil_pending = 0.0
+	game.last_recoil_time = -1.0
+	game._shot_fx(Vector3.ZERO,Vector3(0,0,-5),false,1)
+	var kicked = game.pitch
+	assert(kicked > 0.01)
+	for i in range(30): game._update_camera(0.016)
+	assert(game.pitch < kicked and game.pitch > 0)
 	# Reload sound plays mag-out, mag-in and rack in step with the reload bar.
 	var r = {"hp":100.0,"slot":0,"ammo":0,"mag":12,"reload_ratio":0.0}
 	game._reload_audio_tick(r)
