@@ -167,7 +167,13 @@ namespace RiftWard.Client
                     string grade = r.ReadString();
                     var record = new[] { r.ReadInt32(), r.ReadInt32(), r.ReadInt32(), r.ReadInt32() };
                     Client.MarkFinished(success);
-                    Client.Menus.ShowResult(success, finishedRegion, kills, elapsed, gold, (Profile?.Gold ?? 0) + gold, grade, record);
+                    int finishedWave = Client.Sim?.Wave ?? 0;
+                    var progress = Profile == null ? null : new Menus.ResultProgress
+                    {
+                        Xp = Defs.MissionXp(record[0], finishedWave, success), Level = Profile.Level, LevelXp = Profile.LevelXp,
+                        Wave = finishedWave, BestWave = Profile.BestWave,
+                    };
+                    Client.Menus.ShowResult(success, finishedRegion, kills, elapsed, gold, (Profile?.Gold ?? 0) + gold, grade, record, progress);
                     Debug.Log($"UNITY_CLIENT_RESULT success={success} gold={gold} picks={testPicks}");
                     if (netTest) StartCoroutine(TestFinish(success, gold));
                     break;
@@ -410,6 +416,7 @@ namespace RiftWard.Client
 
         IEnumerator Capture(string folder)
         {
+            Hints.Enabled = false;   // keep page shots clean; the hint gets its own shot
             Directory.CreateDirectory(folder);
             Screen.SetResolution(1280, 800, FullScreenMode.Windowed);
             Screens.ShowAccount();
@@ -462,6 +469,11 @@ namespace RiftWard.Client
             Screens.ShowArmory();
             yield return Settle(0.5f);
             yield return Shot(folder, "unity-armory-rarity");
+            Hints.Maybe(Screens.Root, "armory", true);
+            yield return Settle(0.3f);
+            yield return Shot(folder, "unity-hint");
+            Screens.ShowArmory();
+            yield return Settle(0.3f);
             Screens.BulkSalvage("weapon");
             yield return Settle(0.3f);
             yield return Shot(folder, "unity-salvage-weapon");
@@ -472,6 +484,9 @@ namespace RiftWard.Client
             Screens.ShowSettings();
             yield return Settle(0.3f);
             yield return Shot(folder, "unity-settings");
+            foreach (var sr in Screens.Root.GetComponentsInChildren<UnityEngine.UI.ScrollRect>()) sr.verticalNormalizedPosition = 0f;
+            yield return Settle(0.2f);
+            yield return Shot(folder, "unity-settings-keys");
             Screens.PlayChestDemo(new List<GearItem>(demo.Inventory), 4);
             yield return Settle(1.0f);
             yield return Shot(folder, "unity-chest-charge");
@@ -532,7 +547,7 @@ namespace RiftWard.Client
             yield return Settle(0.2f);
             yield return Shot(folder, "unity-pause");
             Client.Menus.HideAll();
-            Client.Menus.ShowResult(true, 0, 86, 742, 740, 1980, "A", new[] { 41, 13, 290, 176 });
+            Client.Menus.ShowResult(true, 0, 86, 742, 740, 1980, "A", new[] { 41, 13, 290, 176 }, new Menus.ResultProgress { Xp = 241, Level = 3, LevelXp = 180, Wave = 20, BestWave = 14 });
             yield return Settle(0.2f);
             yield return Shot(folder, "unity-result");
             Client.Menus.HideAll();

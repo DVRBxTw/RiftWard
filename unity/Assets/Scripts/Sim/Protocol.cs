@@ -61,9 +61,9 @@ namespace RiftWard.Sim
             return i;
         }
 
-        public static void Write(this BinaryWriter w, AdminSettings s) { w.Write(s.Damage); w.Write(s.Speed); w.Write(s.God); w.Write(s.InfiniteAmmo); w.Write(s.Fly); }
+        public static void Write(this BinaryWriter w, AdminSettings s) { w.Write(s.Damage); w.Write(s.Speed); w.Write(s.God); w.Write(s.InfiniteAmmo); w.Write(s.Fly); w.Write(s.AutoAim); }
         public static AdminSettings ReadAdmin(this BinaryReader r) =>
-            new AdminSettings { Damage = r.ReadSingle(), Speed = r.ReadSingle(), God = r.ReadBoolean(), InfiniteAmmo = r.ReadBoolean(), Fly = r.ReadBoolean() }.Clamped();
+            new AdminSettings { Damage = r.ReadSingle(), Speed = r.ReadSingle(), God = r.ReadBoolean(), InfiniteAmmo = r.ReadBoolean(), Fly = r.ReadBoolean(), AutoAim = r.ReadBoolean() }.Clamped();
 
         // ------------------------------------------------------------ snapshot
 
@@ -84,6 +84,7 @@ namespace RiftWard.Sim
                 w.Write(a.Name ?? ""); w.Write((byte)a.Drones); w.Write(a.Plasma);
                 w.Write((byte)a.OrbitLevel); w.Write(a.DroneEvolved); w.Write(a.PlasmaEvolved);
                 w.Write((byte)a.Loadout.RarityOf(a.WeaponId));
+                w.Write((short)Mathf.RoundToInt(a.Pitch * 10000f));   // aim pitch so teammates' rigs aim up / down
             }
             w.Write(sim.Enemies.Count);
             foreach (var e in sim.Enemies.Values)
@@ -125,6 +126,7 @@ namespace RiftWard.Sim
                 a.Name = r.ReadString(); a.Drones = r.ReadByte(); a.Plasma = r.ReadBoolean();
                 a.OrbitLevel = r.ReadByte(); a.DroneEvolved = r.ReadBoolean(); a.PlasmaEvolved = r.ReadBoolean();
                 a.Loadout.Rarity[a.WeaponId] = r.ReadByte();
+                a.Pitch = r.ReadInt16() / 10000f;
                 a.Speed = speed;
                 if (id == localId) { ack = a.Ack; localSpeed = speed; localFly = fly; }
             }

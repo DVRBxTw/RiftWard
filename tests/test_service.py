@@ -1,3 +1,4 @@
+import random
 import hashlib
 import importlib.util
 import json
@@ -108,6 +109,55 @@ class ServiceTests(unittest.TestCase):
         with self.store.connect() as db:
             db.execute("UPDATE progress SET loadout=? WHERE account_id=?", ('{"owned":["pistol","sniper"],"equipped":["pistol"]}', aid))
         self.assertEqual(self.store.profile(aid)["loadout"]["rarity"], {"pistol": 1, "sniper": 1})
+
+    def test_pity_copies_and_concurrency(self):
+        account = self.register()
+        aid = account["profile"]["id"]
+        self.assertEqual(account["profile"]["pity"], {"gear": 50, "weapon": 50})
+        # Pity: a run that never rolled 傳奇+ is forced up on the 50th draw.
+        rng = random.Random(1)
+        pity, rarity = 0, 0
+        for _ in range(49):
+            pity = service.roll_rarity(type("R", (), {"choices": lambda self, pop, weights: [min(pop[0], 1)]})(), pity)[1]
+        rarity, pity = service.roll_rarity(rng, pity)
+        self.assertGreaterEqual(rarity, 3)
+        self.assertEqual(pity, 0)
+        # The counter persists per pool and is reported as draws left.
+        with self.store.connect() as db:
+            db.execute("UPDATE progress SET weapon_keys=10, pity=? WHERE account_id=?", (json.dumps({"weapon": 45}), aid))
+        code, drawn = self.call("/api/gacha/weapon", {"count": 10}, {"Authorization": "Bearer " + account["token"]})
+        self.assertEqual(code, 200)
+        self.assertTrue(any(w["rarity"] >= 3 for w in drawn["weapons"][:5]))
+        # Copy limit: a full armory turns the draw into gold.
+        lo = self.store.profile(aid)["loadout"]
+        for w in list(service.WEAPON_WEIGHTS):
+            if w not in lo["owned"]:
+                lo["owned"].append(w); lo["active"][w] = 0
+            lo["copies"][w] = [1] * service.WEAPON_COPY_LIMIT
+        self.store._save_loadout(aid, lo)
+        with self.store.connect() as db:
+            db.execute("UPDATE progress SET weapon_keys=1 WHERE account_id=?", (aid,))
+        code, drawn = self.call("/api/gacha/weapon", {"count": 1}, {"Authorization": "Bearer " + account["token"]})
+        self.assertEqual((code, drawn["weapons"][0]["outcome"]), (200, "full"))
+        self.assertGreater(drawn["weapons"][0]["gold"], 0)
+        # Salvaging a copy in front of the active one shifts the active index back.
+        lo = self.store.profile(aid)["loadout"]
+        lo["copies"]["rifle"] = [0, 1, 2]; lo["active"]["rifle"] = 2
+        self.store._save_loadout(aid, lo)
+        p = self.store.salvage_weapon_copy(aid, "rifle", 0)
+        self.assertEqual((p["loadout"]["copies"]["rifle"], p["loadout"]["active"]["rifle"], p["loadout"]["rarity"]["rifle"]), ([1, 2], 1, 2))
+        # Concurrent salvages of the same stale copy: exactly one succeeds, the other is refused.
+        lo = self.store.profile(aid)["loadout"]
+        lo["copies"]["pistol"] = [0, 1, 4]; lo["active"]["pistol"] = 2
+        self.store._save_loadout(aid, lo)
+        results = []
+        def hit():
+            results.append(self.call("/api/weapon/salvage", {"weapon": "pistol", "index": 0, "rarity": 0}, {"Authorization": "Bearer " + account["token"]})[0])
+        threads = [threading.Thread(target=hit) for _ in range(4)]
+        for t in threads: t.start()
+        for t in threads: t.join()
+        self.assertEqual(sorted(results), [200, 400, 400, 400])
+        self.assertEqual(self.store.profile(aid)["loadout"]["copies"]["pistol"], [1, 4])
 
     def test_admin_grant(self):
         account = self.register()

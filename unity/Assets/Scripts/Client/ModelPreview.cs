@@ -13,7 +13,9 @@ namespace RiftWard.Client
 
         Transform stage, pivot;
         RenderTexture texture;
-        float spin;
+        Camera cam;
+        float spin, renderTimer;
+        const float RenderInterval = 1f / 30f;   // previews redraw at 30 fps instead of every frame
 
         public static RawImage Create(Transform parent, Action<Transform> build, int resolution = 256, float spinSpeed = 35f, float tilt = 12f)
         {
@@ -60,6 +62,10 @@ namespace RiftWard.Client
             cam.farClipPlane = 12f;
             preview.texture = new RenderTexture(resolution, resolution, 16, RenderTextureFormat.ARGB32) { antiAliasing = 4 };
             cam.targetTexture = preview.texture;
+            cam.enabled = false;           // rendered by hand in Update, only while the preview is on screen
+            preview.cam = cam;
+            preview.renderTimer = (index % 4) * RenderInterval / 4f;   // stagger previews across frames
+            cam.Render();
             image.texture = preview.texture;
             return image;
         }
@@ -87,6 +93,11 @@ namespace RiftWard.Client
         void Update()
         {
             if (pivot != null) pivot.Rotate(0, spin * Time.unscaledDeltaTime, 0, Space.World);
+            renderTimer -= Time.unscaledDeltaTime;
+            if (renderTimer > 0 || cam == null) return;
+            renderTimer += RenderInterval;
+            if (renderTimer < 0) renderTimer = RenderInterval;
+            cam.Render();
         }
 
         void OnDestroy()

@@ -22,6 +22,8 @@ namespace RiftWard.Client
 
         public float Accuracy => Shots > 0 ? (float)Hits / Shots : 0f;
         public int Level = 1, LevelXp, LevelNeed = 150, Keys, WeaponKeys, TalentPoints;
+        /// Draws left until 傳奇+ is guaranteed, per pool.
+        public int GearPity = 50, WeaponPity = 50;
         public Dictionary<string, int> Talents = new Dictionary<string, int>();
         public List<GearItem> Inventory = new List<GearItem>();
         public Dictionary<string, string> Equipment = new Dictionary<string, string>();
@@ -74,6 +76,8 @@ namespace RiftWard.Client
             }
             p.Level = Mathf.Max(1, d.Int("level", 1)); p.LevelXp = d.Int("level_xp"); p.LevelNeed = Mathf.Max(1, d.Int("level_need", 150));
             p.Keys = d.Int("keys"); p.WeaponKeys = d.Int("weapon_keys"); p.TalentPoints = d.Int("talent_points");
+            var pity = d.Obj("pity");
+            if (pity != null) { p.GearPity = pity.Int("gear", 50); p.WeaponPity = pity.Int("weapon", 50); }
             var talents = d.Obj("talents");
             if (talents != null) foreach (var kv in talents) p.Talents[kv.Key] = kv.Value is double n ? (int)n : 0;
             foreach (var o in d.Arr("inventory") ?? new List<object>()) if (o is Dictionary<string, object> item) p.Inventory.Add(GearItem.From(item));

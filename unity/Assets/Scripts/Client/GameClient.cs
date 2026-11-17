@@ -275,9 +275,9 @@ namespace RiftWard.Client
             {
                 yaw = Mathf.Repeat(yaw + Input.GetAxisRaw("Mouse X") * LookSensitivity * 10f * GameSettings.Sensitivity + Mathf.PI, Mathf.PI * 2f) - Mathf.PI;
                 pitch = Mathf.Clamp(pitch + Input.GetAxisRaw("Mouse Y") * LookSensitivity * 10f * GameSettings.Sensitivity, -Defs.LookLimit, Defs.LookLimit);
-                if (Input.GetKeyDown(KeyCode.V)) thirdPerson = !thirdPerson;
-                if (Input.GetKeyDown(KeyCode.Alpha1)) desiredSlot = 0;
-                if (Input.GetKeyDown(KeyCode.Alpha2)) desiredSlot = 1;
+                if (Bindings.Pressed(Bindings.Action.View)) thirdPerson = !thirdPerson;
+                if (Bindings.Pressed(Bindings.Action.Slot1)) desiredSlot = 0;
+                if (Bindings.Pressed(Bindings.Action.Slot2)) desiredSlot = 1;
                 float wheel = Input.mouseScrollDelta.y;
                 if (Mathf.Abs(wheel) > 0.01f && Sim.Actors.TryGetValue(LocalId, out var me))
                     desiredSlot = (desiredSlot + 1) % Mathf.Max(1, me.Loadout.Equipped.Count);
@@ -293,16 +293,16 @@ namespace RiftWard.Client
             Vector3 origin = thirdPerson ? Camera.transform.position : eye;
             var input = new PlayerInput
             {
-                Move = active ? new Vector2((Input.GetKey(KeyCode.D) ? 1 : 0) - (Input.GetKey(KeyCode.A) ? 1 : 0), (Input.GetKey(KeyCode.W) ? 1 : 0) - (Input.GetKey(KeyCode.S) ? 1 : 0)) : Vector2.zero,
+                Move = active ? new Vector2((Bindings.Held(Bindings.Action.Right) ? 1 : 0) - (Bindings.Held(Bindings.Action.Left) ? 1 : 0), (Bindings.Held(Bindings.Action.Forward) ? 1 : 0) - (Bindings.Held(Bindings.Action.Back) ? 1 : 0)) : Vector2.zero,
                 Yaw = yaw, Pitch = pitch,
                 Aim = origin + GameSim.LookDirection(yaw, pitch) * Defs.ShotRange,
                 Fire = BenchFire || (active && Input.GetMouseButton(0) && !releaseFireToResume),
-                Dash = active && (Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift)),
-                Jump = active && Input.GetKey(KeyCode.Space),
-                Descend = active && (Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl)),
-                Reload = active && Input.GetKey(KeyCode.R),
-                Skill = active && Input.GetKey(KeyCode.Q),
-                Interact = active && Input.GetKey(KeyCode.E),
+                Dash = active && Bindings.Held(Bindings.Action.Dash),
+                Jump = active && Bindings.Held(Bindings.Action.Jump),
+                Descend = active && Bindings.Held(Bindings.Action.Descend),
+                Reload = active && Bindings.Held(Bindings.Action.Reload),
+                Skill = active && Bindings.Held(Bindings.Action.Skill),
+                Interact = active && Bindings.Held(Bindings.Action.Interact),
                 Slot = desiredSlot,
             };
             SubmitInput(input);
@@ -651,7 +651,7 @@ namespace RiftWard.Client
                 {
                     rig.Alive = a.Alive;
                     rig.Airborne = a.Position.y > 0.08f;
-                    rig.Pitch = a.Id == LocalId ? pitch : 0f;
+                    rig.Pitch = a.Id == LocalId ? pitch : a.Pitch;
                     rig.Reload = a.Reload > 0 && a.ReloadTime > 0 ? 1f - a.Reload / a.ReloadTime : 0f;
                     int weaponRarity = a.Id == LocalId ? (WeaponRarity?.Invoke(a.WeaponId) ?? 1) : a.Loadout.RarityOf(a.WeaponId);
                     rig.SetWeapon(a.WeaponId, weaponRarity);

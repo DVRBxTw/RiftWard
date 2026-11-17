@@ -288,6 +288,8 @@ namespace RiftWard.Sim
             foreach (var a in Actors.Values)
             {
                 Inputs.TryGetValue(a.Id, out var input);
+                a.Pitch = input.Pitch;
+                a.PerkHaste = Mathf.Max(0, a.PerkHaste - dt);
                 MoveActor(a, input, dt);
                 a.Ack = input.Seq;
                 if (!a.Alive) continue;
@@ -296,7 +298,8 @@ namespace RiftWard.Sim
                 {
                     if (a.Ammo > 0)
                     {
-                        a.FireCooldown = a.FireInterval;
+                        // P-9 perk: faster fire for a moment after a kill.
+                        a.FireCooldown = a.FireInterval / (a.PerkHaste > 0 ? 1f + PerkStrength(a, 0.4f) : 1f);
                         a.Ammo--;
                         Vector3 aim = input.Aim == Vector3.zero ? a.Position + Vector3.up + LookDirection(a.Yaw, 0) * 30f : input.Aim;
                         Fire(a.Id, aim);
@@ -508,19 +511,47 @@ namespace RiftWard.Sim
 
         // ------------------------------------------------------------ player fire
 
+        /// Perk effect for the actor's current weapon: 0 below 傳奇, the base value at 傳奇, double at 神話.
+        static float PerkStrength(Actor a, float value)
+        {
+            int rarity = a.Loadout.RarityOf(a.WeaponId);
+            return rarity >= 4 ? value * 2f : rarity >= 3 ? value : 0f;
+        }
+
+        /// Admin auto-aim: the visible enemy head closest to the crosshair within a 30 degree cone.
+        Vector3? AutoAimTarget(Vector3 origin, Vector3 aim)
+        {
+            Vector3? best = null;
+            float bestAngle = 30f;
+            foreach (var e in Enemies.Values)
+            {
+                var head = e.Position + Vector3.up * Defs.HeadHeight * e.Scale;
+                var to = head - origin;
+                float distance = to.magnitude;
+                if (distance < 0.1f || distance > Defs.ShotRange) continue;
+                float angle = Vector3.Angle(aim, to);
+                if (angle >= bestAngle || RayBlock(origin, to / distance, distance) < distance - 0.05f) continue;
+                bestAngle = angle; best = head;
+            }
+            return best;
+        }
+
         public void Fire(int id, Vector3 target)
         {
             var a = Actors[id];
             Vector3 origin = a.Position + Vector3.up * Defs.EyeHeight;
             Vector3 aim = (target - origin).normalized;
+            if (a.IsAdmin && a.Admin.AutoAim && AutoAimTarget(origin, aim) is Vector3 lockOn) aim = (lockOn - origin).normalized;
             float damage = a.Damage;
-            if (Rand01() < a.Critical) damage *= 2f;
+            // AR-27 perk: a banked guaranteed crit from an earlier headshot.
+            if (a.PerkCrits > 0) { a.PerkCrits--; damage *= 2f; }
+            else if (Rand01() < a.Critical) damage *= 2f;
             a.StatShots++;
             int hitsBefore = a.StatHits;
             for (int i = 0; i < a.Pellets; i++)
             {
                 Vector3 dir = aim;
-                if (a.Spread > 0)
+                if (a.Spread > 0 && !(a.IsAdmin && a.Admin.AutoAim))
                     dir = (aim + new Vector3(Rand(-a.Spread, a.Spread), Rand(-a.Spread, a.Spread) * 0.7f, Rand(-a.Spread, a.Spread))).normalized;
                 FireRay(a, origin, dir, damage);
             }
@@ -559,9 +590,16 @@ namespace RiftWard.Sim
             {
                 a.StatHits++;
                 if (head) a.StatHeadshots++;
-                dealt = damage * (head ? a.HeadMultiplier : 1f) * DamageMultiplier(best, dir, head);
+                float headMult = head ? a.HeadMultiplier * (a.WeaponId == "sniper" ? 1f + PerkStrength(a, 0.4f) : 1f) : 1f;
+                dealt = damage * headMult * DamageMultiplier(best, dir, head);
                 best.Hp -= dealt;
-                if (best.Hp <= 0) { KillEnemy(best, a.Id); killed = true; }
+                if (head && a.WeaponId == "rifle" && PerkStrength(a, 1f) > 0) a.PerkCrits = Mathf.RoundToInt(PerkStrength(a, 1f));
+                if (best.Hp <= 0)
+                {
+                    KillEnemy(best, a.Id); killed = true;
+                    if (a.WeaponId == "shotgun") a.Hp = Mathf.Min(a.MaxHp, a.Hp + PerkStrength(a, 6f));
+                    if (a.WeaponId == "pistol" && PerkStrength(a, 1f) > 0) a.PerkHaste = 2f;
+                }
             }
             Shots.Add(new ShotEvent { Shooter = a.Id, Origin = origin, End = end, Hit = best != null, Head = head, Dealt = dealt, Killed = killed });
         }

@@ -149,13 +149,19 @@ namespace RiftWard.Client
 
         // ------------------------------------------------------------ result
 
-        public void ShowResult(bool success, int region, int kills, float elapsed, int gold, int totalGold, string grade = "", int[] record = null)
+        /// Account progress shown on the result sheet (online missions only).
+        public sealed class ResultProgress
+        {
+            public int Xp, Level, LevelXp, Wave, BestWave;
+        }
+
+        public void ShowResult(bool success, int region, int kills, float elapsed, int gold, int totalGold, string grade = "", int[] record = null, ResultProgress progress = null)
         {
             HideAll();
             GameClient.LockCursor(false);
             var root = Scrim(canvas.transform, 0.9f);
             result = root.gameObject;
-            var sheet = Sheet(root, success ? Palette.Amber : Palette.Danger, new Vector2(600, 480));
+            var sheet = Sheet(root, success ? Palette.Amber : Palette.Danger, new Vector2(600, progress != null ? 500 : 480));
             if (!string.IsNullOrEmpty(grade))
             {
                 var g = Ui.Label(sheet, grade, 96, grade == "S" ? Palette.Amber : Palette.Bone, TextAnchor.UpperRight, true);
@@ -175,9 +181,31 @@ namespace RiftWard.Client
                 Ui.Label(stack, $"個人擊殺  {record[0]}      爆頭  {record[1]}      命中率  {accuracy:0}%", 16, Palette.Muted).Sized(24);
             }
             Ui.Label(stack, gold >= 0 ? $"獲得金幣  +{gold} G      持有  {totalGold} G" : "離線任務不發放金幣；連線至基地後出擊才會獲得金幣。", gold >= 0 ? 20 : 15, gold >= 0 ? Palette.Amber : Palette.Muted).Sized(28);
+            if (progress != null) ProgressBlock(stack, progress);
             var row = Ui.HStack(stack, 10).Sized(52);
             Ui.Button(row, "返回主頁", () => { HideAll(); LeaveRequested?.Invoke(); }, 18);
             Ui.Button(row, "再次挑戰", () => { HideAll(); RetryRequested?.Invoke(); }, 18, Palette.Amber, null, Palette.Amber);
+        }
+
+        /// XP gained, a bar that fills from the old to the new amount (level-ups called out) and a record badge.
+        void ProgressBlock(Transform stack, ResultProgress p)
+        {
+            int level = p.Level, into = p.LevelXp + p.Xp, ups = 0;
+            while (into >= Defs.AccountLevelNeed(level) && level < 99) { into -= Defs.AccountLevelNeed(level); level++; ups++; }
+            var head = Ui.Rect(stack, "XpHead").Sized(24);
+            Ui.Label(head, $"獲得經驗  +{p.Xp} XP", 18, Palette.Bone, TextAnchor.MiddleLeft, true).rectTransform.Fill();
+            Ui.Label(head, ups > 0 ? $"升級！ Lv {p.Level} → Lv {level}   天賦點 +{ups}" : $"Lv {level}   {into} / {Defs.AccountLevelNeed(level)}", 15,
+                ups > 0 ? Palette.Amber : Palette.Muted, TextAnchor.MiddleRight, ups > 0).rectTransform.Fill();
+            var track = Ui.Box(stack, new Color(1, 1, 1, 0.08f), "XpTrack").Sized(8);
+            float before = ups > 0 ? 0f : (float)p.LevelXp / Defs.AccountLevelNeed(level);
+            float after = (float)into / Defs.AccountLevelNeed(level);
+            var old = Ui.Box(track.transform, Palette.Muted, "Before").rectTransform;
+            old.anchorMin = Vector2.zero; old.anchorMax = new Vector2(before, 1); old.offsetMin = old.offsetMax = Vector2.zero;
+            var gain = Ui.Box(track.transform, Palette.Amber, "Gain").rectTransform;
+            gain.anchorMin = new Vector2(before, 0); gain.anchorMax = new Vector2(Mathf.Max(before, after), 1); gain.offsetMin = gain.offsetMax = Vector2.zero;
+            bool record = p.Wave > p.BestWave;
+            Ui.Label(stack, record ? $"新紀錄！最高波次 {p.BestWave} → {p.Wave}" : $"本次到達第 {p.Wave} 波    最高紀錄 第 {p.BestWave} 波", 14,
+                record ? Palette.Hex("ffcf4a") : Palette.Muted, TextAnchor.UpperLeft, record).Sized(20);
         }
 
         public void HideAll()

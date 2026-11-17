@@ -461,16 +461,17 @@ namespace RiftWard.Client
                 if (Changed(ammoMax, local.Mag)) ammoMax.text = $"/ {local.Mag}";
                 reloadBar.Value = reloading ? 1f - local.Reload / local.ReloadTime : (float)local.Ammo / Mathf.Max(1, local.Mag);
                 reloadBar.Color = reloading ? Palette.Amber : Palette.Bone;
-                lowAmmo.text = lowMag && local.Alive ? (local.Ammo == 0 ? "彈匣已空 · 按 R 換彈" : "彈藥不足 · 按 R 換彈") : "";
+                lowAmmo.text = lowMag && local.Alive ? (local.Ammo == 0 ? $"彈匣已空 · 按 {Bindings.Name(Bindings.Action.Reload)} 換彈" : $"彈藥不足 · 按 {Bindings.Name(Bindings.Action.Reload)} 換彈") : "";
                 lowAmmo.color = new Color(Palette.Amber.r, Palette.Amber.g, Palette.Amber.b, 0.6f + 0.4f * Mathf.Sin(Time.time * 8f));
-                if (Changed(hint, thirdPerson ? 1 : 0)) hint.text = $"R 換彈  ·  右鍵 瞄準  ·  V {(thirdPerson ? "第三人稱" : "第一人稱")}  ·  Esc 選單";
+                if (Changed(hint, (thirdPerson ? 1 : 0) | ((long)Bindings.Key(Bindings.Action.Reload) << 1) | ((long)Bindings.Key(Bindings.Action.View) << 20)))
+                    hint.text = $"{Bindings.Name(Bindings.Action.Reload)} 換彈  ·  右鍵 瞄準  ·  {Bindings.Name(Bindings.Action.View)} {(thirdPerson ? "第三人稱" : "第一人稱")}  ·  Esc 選單";
                 revive.text = "";
                 if (!local.Alive && sim.Actors.Count > 1)
-                    revive.text = $"你已倒地 · 等待隊友按住 E 救援  {Mathf.RoundToInt(100 * local.Revive / Defs.ReviveTime)}%";
+                    revive.text = $"你已倒地 · 等待隊友按住 {Bindings.Name(Bindings.Action.Interact)} 救援  {Mathf.RoundToInt(100 * local.Revive / Defs.ReviveTime)}%";
                 else
                     foreach (var other in sim.Actors.Values)
                         if (other.Id != local.Id && !other.Alive && Vector3.Distance(other.Position, local.Position) < 2.4f)
-                            revive.text = $"按住 E 救援隊友  {Mathf.RoundToInt(100 * other.Revive / Defs.ReviveTime)}%";
+                            revive.text = $"按住 {Bindings.Name(Bindings.Action.Interact)} 救援隊友  {Mathf.RoundToInt(100 * other.Revive / Defs.ReviveTime)}%";
 
                 UpdateRadar(sim, local, fwd, right);
             }

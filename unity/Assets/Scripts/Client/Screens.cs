@@ -13,6 +13,7 @@ namespace RiftWard.Client
         readonly AppRoot app;
         readonly Canvas canvas;
         RectTransform root;
+        public RectTransform Root => root;
         public string Mode { get; private set; } = "";
 
         public Screens(AppRoot app)
@@ -27,6 +28,7 @@ namespace RiftWard.Client
             Mode = mode;
             root = Ui.Rect(canvas.transform, mode).Fill();
             if (backdrop) Ui.Box(root, new Color(0.063f, 0.067f, 0.075f, 0.94f), "Backdrop").rectTransform.Fill();
+            Hints.Maybe(root, mode);
             GameClient.LockCursor(false);
             return root;
         }
@@ -313,7 +315,7 @@ namespace RiftWard.Client
                 Ui.Label(cell, label, 12, Palette.Muted).Sized(18);
                 Ui.Label(cell, value, 22, Palette.Bone, TextAnchor.UpperLeft, true).Sized(28);
             }
-            Caps(b2, "WASD 移動 · 左鍵射擊 · 右鍵瞄準 · R 換彈 · 1/2 換槍 · Q 手榴彈 · Shift 衝刺 · E 救援 · V 視角").Sized(40);
+            Caps(b2, Bindings.Summary()).Sized(40);
         }
 
         // ------------------------------------------------------------ armory
@@ -427,6 +429,14 @@ namespace RiftWard.Client
             if (!own) show.color = new Color(1, 1, 1, 0.35f);
             Ui.Label(ds, own ? Gear.WeaponName(armoryPick, shownRarity) : wd.Name, 32, own ? Gear.RarityColors[shownRarity] : Palette.Bone, TextAnchor.UpperLeft, true).Sized(44);
             if (own) Ui.Label(ds, $"{Gear.RarityNames[p.Loadout.RarityOf(armoryPick)]}  ·  傷害 ×{Defs.WeaponRarityMult[p.Loadout.RarityOf(armoryPick)]:0.00}", 15, Gear.RarityColors[p.Loadout.RarityOf(armoryPick)], TextAnchor.UpperLeft, true).Sized(22);
+            // 傳奇+ perk; below 傳奇 show what 傳奇 would unlock, as a goal.
+            var perk = Defs.Perk(armoryPick, own ? Mathf.Max(3, shownRarity) : 3);
+            if (perk.HasValue)
+            {
+                bool active = own && shownRarity >= 3;
+                Ui.Label(ds, active ? $"專屬屬性【{perk.Value.name}】 {perk.Value.text}" : $"傳奇以上解鎖【{perk.Value.name}】 {perk.Value.text}",
+                    13, active ? Gear.RarityColors[shownRarity] : Palette.Muted, TextAnchor.UpperLeft, active).Sized(20);
+            }
             Ui.Label(ds, wd.Description, 15, Palette.Hex("c9c5bb")).Sized(22);
             var st = wd.StatsAt(p.Loadout.Level(armoryPick, "damage"), p.Loadout.Level(armoryPick, "mag"), p.Loadout.Level(armoryPick, "reload"));
             st.Damage *= Defs.WeaponRarityMult[own ? p.Loadout.RarityOf(armoryPick) : 1];
@@ -778,6 +788,8 @@ namespace RiftWard.Client
             Ui.Label(keyRow, weaponPool ? "持有武器鑰匙" : "持有裝備鑰匙", 12, Palette.Muted).rectTransform.Place(new Vector2(0, 1), Vector2.zero, new Vector2(160, 18), new Vector2(0, 1));
             Icons.Key(keyRow, 34, weaponPool ? Gear.WeaponKeyColor : Gear.GearKeyColor).rectTransform.Place(new Vector2(0, 1), new Vector2(0, -20), new Vector2(34, 34), new Vector2(0, 1));
             Ui.Label(keyRow, keys.ToString(), 36, accent, TextAnchor.UpperLeft, true).rectTransform.Place(new Vector2(0, 1), new Vector2(42, -16), new Vector2(160, 42), new Vector2(0, 1));
+            int pityLeft = weaponPool ? p.WeaponPity : p.GearPity;
+            Ui.Label(s, pityLeft <= 1 ? "保底：下一抽必出傳奇以上！" : $"保底：再 {pityLeft} 抽內必出傳奇以上", 13, pityLeft <= 10 ? Gear.RarityColors[3] : Palette.Muted, TextAnchor.UpperLeft, pityLeft <= 10).Sized(18);
             var odds = Ui.HStack(s, 4).Sized(20);
             int[] weights = { 50, 30, 14, 5, 1 };
             for (int i = 0; i < Gear.RarityNames.Length; i++) Ui.Label(odds, $"{Gear.RarityNames[i]} {weights[i]}%", 12, Gear.RarityColors[i]);
@@ -1115,6 +1127,7 @@ namespace RiftWard.Client
             Widgets.Toggle(parent, "無敵（不會受到傷害）", s.God, on => { s.God = on; app.PushAdmin(); }).Sized(46);
             Widgets.Toggle(parent, "無限彈藥（不需換彈）", s.InfiniteAmmo, on => { s.InfiniteAmmo = on; app.PushAdmin(); }).Sized(46);
             Widgets.Toggle(parent, "飛行（Space 上升 · Ctrl 下降）", s.Fly, on => { s.Fly = on; app.PushAdmin(); }).Sized(46);
+            Widgets.Toggle(parent, "自動瞄準（鎖定準星附近 30° 內可見敵人的頭部）", s.AutoAim, on => { s.AutoAim = on; app.PushAdmin(); }).Sized(46);
         }
 
         static void SliderRow(Transform parent, string label, float min, float max, float value, Action<float> changed)

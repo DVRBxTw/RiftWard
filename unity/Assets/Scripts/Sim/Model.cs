@@ -48,12 +48,12 @@ namespace RiftWard.Sim
     public sealed class AdminSettings
     {
         public float Damage = 1f, Speed = 1f;
-        public bool God, InfiniteAmmo, Fly;
+        public bool God, InfiniteAmmo, Fly, AutoAim;
 
         public AdminSettings Clamped() => new AdminSettings
         {
             Damage = Mathf.Clamp(Damage, 1f, 20f), Speed = Mathf.Clamp(Speed, 0.5f, 3f),
-            God = God, InfiniteAmmo = InfiniteAmmo, Fly = Fly,
+            God = God, InfiniteAmmo = InfiniteAmmo, Fly = Fly, AutoAim = AutoAim,
         };
     }
 
@@ -62,7 +62,10 @@ namespace RiftWard.Sim
         public int Id;
         public Vector3 Position;
         public float Hp = 100f, MaxHp = 100f;
-        public float Yaw, VerticalVelocity;
+        public float Yaw, Pitch, VerticalVelocity;
+        /// 傳奇+ weapon perks: guaranteed crits left (AR-27) and haste time left (P-9).
+        public int PerkCrits;
+        public float PerkHaste;
         public float FireCooldown, DashCooldown, DashLeft;
         public Vector3 DashDirection;
         public int Ack;

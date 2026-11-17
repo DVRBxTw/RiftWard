@@ -6,7 +6,27 @@ namespace RiftWard.Sim
     /// Static game data shared by server and client. Values mirror the Godot 0.4.2 build.
     public static class Defs
     {
-        public const string Version = "0.7.2-unity.1";
+        /// 傳奇+ weapon perk: name and description for a weapon at a rarity (null below 傳奇). 神話 doubles the effect.
+        public static (string name, string text)? Perk(string weapon, int rarity)
+        {
+            if (rarity < 3) return null;
+            bool myth = rarity >= 4;
+            switch (weapon)
+            {
+                case "rifle": return ("致命節奏", $"爆頭後，接下來 {(myth ? 2 : 1)} 發必定暴擊");
+                case "shotgun": return ("近身汲取", $"擊殺敵人回復 {(myth ? 12 : 6)} 點護盾");
+                case "sniper": return ("弱點洞察", $"爆頭傷害 +{(myth ? 80 : 40)}%");
+                case "pistol": return ("連擊快槍", $"擊殺後 2 秒內射速 +{(myth ? 70 : 40)}%");
+                default: return null;
+            }
+        }
+
+        /// Account XP for a mission; mirrors mission_xp() in server/service.py.
+        public static int MissionXp(int kills, int wave, bool victory) => Mathf.Max(0, kills) + Mathf.Max(0, wave) * 5 + (victory ? 100 : 0);
+        /// XP needed to go from this account level to the next; mirrors level_for() in server/service.py.
+        public static int AccountLevelNeed(int level) => 100 + 50 * level;
+
+        public const string Version = "0.7.3-unity.1";
 
         // Player movement
         public const float EyeHeight = 1.65f;

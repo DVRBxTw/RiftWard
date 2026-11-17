@@ -76,9 +76,34 @@ namespace RiftWard.Client
                 Screen.SetResolution(Fullscreen ? Screen.currentResolution.width : 1600, Fullscreen ? Screen.currentResolution.height : 900, mode);
         }
 
-        /// Builds the options panel into a vertical stack (used by the lobby page and the pause menu).
-        public static void BuildPanel(Transform stack)
+        /// Only resolutions the monitor can show are offered (larger ones would overflow a window or be rescaled).
+        static bool Fits(int index)
         {
+            int w = Display.main.systemWidth, h = Display.main.systemHeight;
+            if (w <= 0 || h <= 0) { w = Screen.currentResolution.width; h = Screen.currentResolution.height; }
+            return Resolutions[index].w <= w && Resolutions[index].h <= h;
+        }
+
+        static void NextResolution()
+        {
+            for (int step = 0; step < Resolutions.Length + 1; step++)
+            {
+                Resolution = Resolution + 1 >= Resolutions.Length ? -1 : Resolution + 1;
+                if (Resolution < 0 || Fits(Resolution)) return;
+            }
+            Resolution = -1;
+        }
+
+        /// Builds the options panel into a vertical stack (used by the lobby page and the pause menu).
+        public static void BuildPanel(Transform container)
+        {
+            // Scrollable: the key list makes the panel taller than the sheets that host it.
+            var host = Ui.Rect(container, "SettingsScroll");
+            host.gameObject.AddComponent<LayoutElement>().flexibleHeight = 1;
+            var stack = Widgets.ScrollList(host, out _);
+            stack.parent.GetComponent<RectTransform>().Fill();
+            stack.parent.GetComponent<Image>().color = new Color(0, 0, 0, 0);
+            stack.GetComponent<VerticalLayoutGroup>().padding = new RectOffset(0, 12, 0, 8);
             Text Row(string label, out RectTransform right)
             {
                 var row = Ui.Rect(stack, "Row").Sized(44);
@@ -107,8 +132,7 @@ namespace RiftWard.Client
 
             Widgets.Section(stack, "畫面").Sized(26);
             Cycle("顯示模式", () => Fullscreen ? "全螢幕" : "視窗化", () => Fullscreen = !Fullscreen);
-            Cycle("解析度 / 比例", () => Resolution >= 0 && Resolution < Resolutions.Length ? Resolutions[Resolution].label : "自動（螢幕原生）",
-                () => Resolution = Resolution + 1 >= Resolutions.Length ? -1 : Resolution + 1);
+            Cycle("解析度 / 比例", () => Resolution >= 0 && Resolution < Resolutions.Length ? Resolutions[Resolution].label : "自動（螢幕原生）", NextResolution);
             Cycle("畫質", () => QualityNames[Quality] + (Quality == 0 ? "（關閉光暈後製）" : ""), () => Quality = (Quality + 1) % QualityNames.Length);
             Cycle("幀率上限", () => FrameCaps[FrameCap].label, () => FrameCap = (FrameCap + 1) % FrameCaps.Length);
             Widgets.Section(stack, "音效").Sized(26);
@@ -117,6 +141,8 @@ namespace RiftWard.Client
             Slide("戰鬥音效", 0, 1, () => Effects, v => Effects = v, v => $"{v * 100:0}%");
             Widgets.Section(stack, "操作").Sized(26);
             Slide("滑鼠靈敏度", 0.2f, 3f, () => Sensitivity, v => Sensitivity = v, v => $"{v:0.00}×");
+            Widgets.Section(stack, "按鍵").Sized(26);
+            Bindings.BuildRows(stack);
         }
     }
 }

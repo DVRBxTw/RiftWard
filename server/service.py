@@ -66,9 +66,23 @@ def level_for(xp: int):
     return level, xp, 100 + 50 * level
 
 
-def roll_item(rng):
+PITY_LIMIT = 50   # the 50th draw without 傳奇 or better is guaranteed to be 傳奇+
+
+
+def roll_rarity(rng, pity):
+    """Returns (rarity, new pity count). Pity counts draws since the last 傳奇+; at the limit the draw is forced
+    up to 傳奇 or 神話 (kept at their 5:1 ratio)."""
+    if pity + 1 >= PITY_LIMIT:
+        rarity = rng.choices([3, 4], weights=RARITY_WEIGHTS[3:])[0]
+    else:
+        rarity = rng.choices(range(len(RARITIES)), weights=RARITY_WEIGHTS)[0]
+    return rarity, 0 if rarity >= 3 else pity + 1
+
+
+def roll_item(rng, rarity=None):
     slot = rng.choice(list(GEAR_SLOTS))
-    rarity = rng.choices(range(len(RARITIES)), weights=RARITY_WEIGHTS)[0]
+    if rarity is None:
+        rarity = rng.choices(range(len(RARITIES)), weights=RARITY_WEIGHTS)[0]
     primary = GEAR_SLOTS[slot]
     stats = {primary: GEAR_VALUES[primary][rarity]}
     if rarity >= 2:  # rare and better carry a random secondary stat at half strength
@@ -95,8 +109,20 @@ def sync_rarity(loadout):
     loadout["rarity"] = {w: loadout["copies"][w][loadout["active"][w]] for w in loadout["owned"]}
 
 
+def _locked(method):
+    """Serialises a Store mutation: the HTTP server handles requests on parallel threads, and two overlapping
+    read-modify-write calls (e.g. a double-clicked salvage) could otherwise overwrite each other."""
+    def wrapper(self, *args, **kwargs):
+        with self.lock:
+            return method(self, *args, **kwargs)
+    wrapper.__name__ = method.__name__
+    wrapper.__doc__ = method.__doc__
+    return wrapper
+
+
 class Store:
     def __init__(self, directory: Path):
+        self.lock = threading.RLock()
         directory.mkdir(parents=True, exist_ok=True)
         self.path = directory / "players.sqlite3"
         keyfile = directory / "server.key"
@@ -134,7 +160,7 @@ class Store:
             if "stats" not in columns:
                 db.execute("ALTER TABLE progress ADD COLUMN stats TEXT NOT NULL DEFAULT '{}'")
             for column, ddl in (("xp", "INTEGER NOT NULL DEFAULT 0"), ("keys", "INTEGER NOT NULL DEFAULT 0"), ("weapon_keys", "INTEGER NOT NULL DEFAULT 0"),
-                                ("talents", "TEXT NOT NULL DEFAULT '{}'"), ("gear", "TEXT NOT NULL DEFAULT '{}'")):
+                                ("talents", "TEXT NOT NULL DEFAULT '{}'"), ("gear", "TEXT NOT NULL DEFAULT '{}'"), ("pity", "TEXT NOT NULL DEFAULT '{}'")):
                 if column not in columns:
                     db.execute(f"ALTER TABLE progress ADD COLUMN {column} {ddl}")
 
@@ -172,6 +198,8 @@ class Store:
         gear = self._parse_gear(result.pop("gear"))
         result["talents"] = talents
         result["talent_points"] = max(0, level - 1 - sum(talents.values()))
+        pity = self._pity(account_id)
+        result["pity"] = {pool: PITY_LIMIT - count for pool, count in pity.items()}   # draws left until 傳奇+ is guaranteed
         result["inventory"] = gear["inventory"]
         result["equipment"] = gear["equipped"]
         bonus = {k: talents[k] * per for k, per in TALENTS.items()}
@@ -204,6 +232,19 @@ class Store:
         equipped = {k: v for k, v in (data.get("equipped") or {}).items() if k in GEAR_SLOTS and v in ids}
         return {"inventory": inventory[:INVENTORY_LIMIT], "equipped": equipped}
 
+    def _pity(self, account_id):
+        with self.connect() as db:
+            row = db.execute("SELECT pity FROM progress WHERE account_id=?", (account_id,)).fetchone()
+        try:
+            data = json.loads(row[0]) if row else {}
+        except (TypeError, ValueError):
+            data = {}
+        return {pool: max(0, min(PITY_LIMIT - 1, data.get(pool, 0))) if isinstance(data.get(pool), int) else 0 for pool in ("gear", "weapon")}
+
+    def _save_pity(self, account_id, pity):
+        with self.connect() as db:
+            db.execute("UPDATE progress SET pity=? WHERE account_id=?", (json.dumps(pity), account_id))
+
     def _save_gear(self, account_id, gear):
         with self.connect() as db:
             db.execute("UPDATE progress SET gear=? WHERE account_id=?", (json.dumps(gear, ensure_ascii=False), account_id))
@@ -213,6 +254,7 @@ class Store:
             row = db.execute("SELECT gear FROM progress WHERE account_id=?", (account_id,)).fetchone()
         return self._parse_gear(row[0] if row else "{}")
 
+    @_locked
     def assign_talent(self, account_id: int, talent, points):
         if talent not in TALENTS:
             raise ValueError("找不到此天賦")
@@ -229,11 +271,13 @@ class Store:
             db.execute("UPDATE progress SET talents=? WHERE account_id=?", (json.dumps(talents), account_id))
         return self.profile(account_id)
 
+    @_locked
     def reset_talents(self, account_id: int):
         with self.connect() as db:
             db.execute("UPDATE progress SET talents='{}' WHERE account_id=?", (account_id,))
         return self.profile(account_id)
 
+    @_locked
     def draw(self, account_id: int, count):
         if count not in (1, 10):
             raise ValueError("一次只能抽 1 或 10 次")
@@ -245,11 +289,17 @@ class Store:
         if not changed:
             raise ValueError("鑰匙不足")
         rng = random.SystemRandom()
-        items = [roll_item(rng) for _ in range(count)]
+        pity = self._pity(account_id)
+        items = []
+        for _ in range(count):
+            rarity, pity["gear"] = roll_rarity(rng, pity["gear"])
+            items.append(roll_item(rng, rarity))
         gear["inventory"].extend(items)
         self._save_gear(account_id, gear)
+        self._save_pity(account_id, pity)
         return items, self.profile(account_id)
 
+    @_locked
     def draw_weapons(self, account_id: int, count):
         if count not in (1, 10):
             raise ValueError("一次只能抽 1 或 10 次")
@@ -260,10 +310,11 @@ class Store:
             raise ValueError("武器鑰匙不足")
         rng = random.SystemRandom()
         loadout = self.profile(account_id)["loadout"]
+        pity = self._pity(account_id)
         results, gold, refund = [], 0, 0
         for _ in range(count):
             weapon = rng.choices(list(WEAPON_WEIGHTS), weights=list(WEAPON_WEIGHTS.values()))[0]
-            rarity = rng.choices(range(len(RARITIES)), weights=RARITY_WEIGHTS)[0]
+            rarity, pity["weapon"] = roll_rarity(rng, pity["weapon"])
             if weapon not in loadout["owned"]:
                 loadout["owned"].append(weapon)
                 loadout["copies"][weapon] = [rarity]
@@ -280,7 +331,7 @@ class Store:
             results.append({"weapon": weapon, "rarity": rarity, "outcome": outcome, "gold": DUPLICATE_GOLD[rarity] if outcome == "full" else 0})
         sync_rarity(loadout)
         with self.connect() as db:
-            db.execute("UPDATE progress SET loadout=?, gold=gold+? WHERE account_id=?", (json.dumps(loadout), gold, account_id))
+            db.execute("UPDATE progress SET loadout=?, gold=gold+?, pity=? WHERE account_id=?", (json.dumps(loadout), gold, json.dumps(pity), account_id))
         return results, self.profile(account_id)
 
     def _weapon_copy(self, account_id, weapon, index, rarity=None):
@@ -300,11 +351,13 @@ class Store:
             db.execute("UPDATE progress SET loadout=?, gold=gold+? WHERE account_id=?", (json.dumps(loadout), gold, account_id))
         return self.profile(account_id)
 
+    @_locked
     def select_weapon_copy(self, account_id: int, weapon, index, rarity=None):
         loadout = self._weapon_copy(account_id, weapon, index, rarity)
         loadout["active"][weapon] = index
         return self._save_loadout(account_id, loadout)
 
+    @_locked
     def salvage_weapon_copy(self, account_id: int, weapon, index, rarity=None):
         loadout = self._weapon_copy(account_id, weapon, index, rarity)
         if index == loadout["active"][weapon]:
@@ -314,6 +367,7 @@ class Store:
             loadout["active"][weapon] -= 1
         return self._save_loadout(account_id, loadout, DUPLICATE_GOLD[rarity])
 
+    @_locked
     def equip_gear(self, account_id: int, item_id):
         gear = self._raw_gear(account_id)
         item = next((i for i in gear["inventory"] if i["id"] == item_id), None)
@@ -326,6 +380,7 @@ class Store:
         self._save_gear(account_id, gear)
         return self.profile(account_id)
 
+    @_locked
     def salvage(self, account_id: int, item_id):
         """Breaks an unequipped item down for gold."""
         gear = self._raw_gear(account_id)
@@ -340,6 +395,7 @@ class Store:
             db.execute("UPDATE progress SET gold=gold+? WHERE account_id=?", (GEAR_SALVAGE_GOLD[item["rarity"]], account_id))
         return self.profile(account_id)
 
+    @_locked
     def salvage_bulk(self, account_id: int, kind, rarities, confirm=False):
         """Salvages every unequipped item (gear) or every inactive copy (weapons) of the chosen rarities.
         Anything 傳奇 or above needs confirm=True, so a stray request can never wipe the best loot."""
@@ -381,6 +437,7 @@ class Store:
             loadout["copies"][weapon] = kept
         return count, gold, self._save_loadout(account_id, loadout, gold)
 
+    @_locked
     def add_xp(self, account_id: int, xp: int):
         with self.connect() as db:
             db.execute("UPDATE progress SET xp=xp+? WHERE account_id=?", (max(0, min(5000, xp)), account_id))
@@ -397,6 +454,7 @@ class Store:
             data = {}
         return {k: int(data.get(k, 0)) if isinstance(data.get(k, 0), int) else 0 for k in cls.STAT_KEYS}
 
+    @_locked
     def record_stats(self, account_id: int, stats):
         """Adds one mission's combat record (reported by the game server) to lifetime stats."""
         if not isinstance(stats, dict):
@@ -436,6 +494,7 @@ class Store:
                               "ORDER BY a.username COLLATE NOCASE LIMIT 500").fetchall()
         return [dict(row) for row in rows]
 
+    @_locked
     def admin_grant(self, username, gold, weapon, keys=0, weapon_keys=0):
         if not isinstance(gold, int) or not 0 <= gold <= 100000:
             raise ValueError("金幣數量需為 0–100000")
@@ -509,6 +568,7 @@ class Store:
             loadout["equipped"] = loadout["owned"][:2]
         return loadout
 
+    @_locked
     def equip(self, account_id: int, weapons):
         profile = self.profile(account_id)
         if profile is None or not isinstance(weapons, list) or not 1 <= len(weapons) <= 2:
@@ -529,6 +589,7 @@ class Store:
                 raise ValueError("金幣不足")
         return self.profile(account_id)
 
+    @_locked
     def buy_weapon(self, account_id: int, weapon):
         profile = self.profile(account_id)
         if profile is None or weapon not in WEAPON_PRICES:
@@ -542,6 +603,7 @@ class Store:
             loadout["equipped"].append(weapon)
         return self._spend(account_id, WEAPON_PRICES[weapon], loadout)
 
+    @_locked
     def upgrade_weapon(self, account_id: int, weapon, stat):
         profile = self.profile(account_id)
         if profile is None or weapon not in WEAPON_PRICES or stat not in UPGRADE_STATS:
@@ -556,6 +618,7 @@ class Store:
         levels[stat] = level + 1
         return self._spend(account_id, upgrade_cost(weapon, level), loadout)
 
+    @_locked
     def reward(self, account_id: int, gold):
         if self.profile(account_id) is None or not isinstance(gold, int) or not 0 <= gold <= MAX_REWARD:
             raise ValueError("獎勵不合法")
@@ -608,11 +671,13 @@ class Store:
                              (hashlib.sha256(token.encode()).hexdigest(), int(time.time()))).fetchone()
         return self.profile(row["account_id"]) if row else None
 
+    @_locked
     def tutorial(self, account_id: int):
         with self.connect() as db:
             db.execute("UPDATE progress SET tutorial_complete=1 WHERE account_id=?", (account_id,))
         return self.profile(account_id)
 
+    @_locked
     def complete_mission(self, account_id: int, mission: int):
         profile = self.profile(account_id)
         if profile is None or not isinstance(mission, int) or not 0 <= mission <= profile["unlocked"]:
