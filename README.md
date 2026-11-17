@@ -37,8 +37,8 @@ Windows 第一人稱合作 PvE 射擊（Unity 6）。你是地球遠征軍的士
 |---|---|
 | `unity/` | Unity 6 專案。`Assets/Scripts/Sim` 純 C# 戰鬥模擬（伺服器與客戶端共用），`Assets/Scripts/Client` 畫面、UI、連線 |
 | `server/` | Python 帳號 / 更新服務與伺服器啟動腳本 |
-| `launcher/` | Godot 啟動器（下載與驗證更新） |
-| `tools/build_unity.ps1` | 一鍵打包：Unity 編譯 → 遊戲 zip 與更新清單 → 伺服器檔案 → 啟動器 |
+| `launcher/` | C# 啟動器（下載、驗證 SHA-256、安全解壓並啟動遊戲），用 `tools/build_launcher.ps1` 編譯，不需安裝 SDK |
+| `tools/build_unity.ps1` | 一鍵打包：Unity 編譯 → 遊戲 zip 與更新清單 → 伺服器檔案 → 啟動器與自我測試 |
 | `tools/package_beta.py` | 產生玩家下載用的 RiftWard-Windows.zip |
 
 測試：
