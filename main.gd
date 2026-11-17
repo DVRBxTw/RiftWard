@@ -390,7 +390,6 @@ func _host(headless: bool):
 
 func _join(ip: String):
 	if network != "offline":
-	if is_instance_valid(status_label): status_label.text = "正在連線至基地..."
 		return
 	if ip.is_empty():
 		status_label.text = "請輸入伺服器 IP 位址"

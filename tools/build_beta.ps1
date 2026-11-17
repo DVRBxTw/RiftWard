@@ -6,6 +6,13 @@ $build = Join-Path $project 'build'
 $gameDir = Join-Path $build 'game'
 $releases = Join-Path $build 'releases'
 $launcher = Join-Path $project 'launcher'
+foreach ($script in @('main.gd','beta_game.gd')) {
+    $validation = & $engine --headless --path $project --script ('res://' + $script) --check-only 2>&1
+    if ($LASTEXITCODE -ne 0 -or ($validation -match 'SCRIPT ERROR:|ERROR:')) {
+        $validation | Write-Output
+        throw ('Script validation failed: ' + $script)
+    }
+}
 New-Item -ItemType Directory -Force -Path $gameDir,$releases,(Join-Path $build 'server') | Out-Null
 Copy-Item -LiteralPath (Join-Path $project 'ui-font.ttf') -Destination (Join-Path $launcher 'ui-font.ttf') -Force
 & $engine --headless --path $project --editor --import --quit
