@@ -12,11 +12,14 @@ const LOOK_LIMIT = PI * 85.0 / 180.0
 const SHOT_RANGE = 65.0
 const DASH_DURATION = 0.18
 const DASH_DISTANCE = 4.0
-const DASH_COOLDOWN = 2.8
+const DASH_COOLDOWN = 4.5
 const DASH_VISUAL_DURATION = 0.32
 const BASE_FOV = 80.0
 const DASH_FOV_BOOST = 7.0
 const WEAPON_REST_POSITION = Vector3(0.27,-0.23,-0.48)
+const HEAD_HEIGHT = 1.65
+const HEAD_RADIUS = 0.3
+const HEADSHOT_MULTIPLIER = 2.0
 const MAG_SIZE = 30
 const RELOAD_TIME = 1.6
 const THIRD_PERSON_OFFSET = Vector3(0.75,0.35,3.2)
@@ -55,6 +58,10 @@ var health_bar: ProgressBar
 var dash_bar: ProgressBar
 var view_label: Label
 var third_person = false
+var hit_flash = 0.0
+var head_flash = 0.0
+var hit_marker: Label
+var pause_overlay: Control
 var status_label: Label
 var ip_input: LineEdit
 var mission_buttons: Array = []
@@ -261,6 +268,7 @@ func _clear_ui():
 		screen.remove_child(child)
 		child.queue_free()
 	mission_buttons.clear()
+	pause_overlay = null
 	hud = null
 	toast = null
 
@@ -669,6 +677,17 @@ func _deploy(index: int):
 	dot.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	cross.add_child(dot)
 	hud.add_child(cross)
+	hit_marker = _label("",18,WHITE)
+	hit_marker.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	hit_marker.set_anchors_preset(Control.PRESET_CENTER)
+	hit_marker.offset_left = -120
+	hit_marker.offset_right = 120
+	hit_marker.offset_top = 18
+	hit_marker.offset_bottom = 44
+	hit_marker.add_theme_color_override("font_outline_color",Color(0,0,0,0.8))
+	hit_marker.add_theme_constant_override("outline_size",5)
+	hit_marker.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	hud.add_child(hit_marker)
 	toast = _label("",22,ORANGE)
 	toast.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	toast.anchor_left = 0.5
@@ -715,18 +734,48 @@ func _input(event):
 			get_viewport().set_input_as_handled()
 			modal_open = true
 			Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
-			var popup = ConfirmationDialog.new()
-			popup.title = "離開任務？"
-			popup.dialog_text = "離開將結束本次任務。連線玩家可先取消繼續戰鬥。"
-			popup.ok_button_text = "返回主頁"
-			popup.cancel_button_text = "繼續戰鬥"
-			popup.confirmed.connect(func():
-				if network == "client": _disconnect("已離開伺服器")
-				else: _return_home()
-				popup.queue_free())
-			popup.canceled.connect(func(): modal_open = false; Input.mouse_mode = Input.MOUSE_MODE_CAPTURED; popup.queue_free())
-			screen.add_child(popup)
-			popup.popup_centered()
+			_show_pause_menu()
+		elif mode == "playing" and is_instance_valid(pause_overlay):
+			get_viewport().set_input_as_handled()
+			_close_pause_menu()
+
+func _show_pause_menu():
+	pause_overlay = Control.new()
+	pause_overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	screen.add_child(pause_overlay)
+	var shade = ColorRect.new()
+	shade.color = Color(0.015,0.03,0.06,0.78)
+	shade.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	pause_overlay.add_child(shade)
+	var center = CenterContainer.new()
+	center.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	pause_overlay.add_child(center)
+	var card = _panel(center,CYAN,Color(0.04,0.08,0.13,0.97))
+	card.mouse_filter = Control.MOUSE_FILTER_PASS
+	card.custom_minimum_size.x = 440
+	var v = VBoxContainer.new()
+	v.add_theme_constant_override("separation",12)
+	card.add_child(v)
+	v.add_child(_label("PAUSED",14,CYAN))
+	v.add_child(_label("戰術選單",32))
+	var note = _label("退出後會回到基地主頁，本次任務進度不保留。" if network != "client" else "退出後回到基地主頁；隊友仍可繼續任務。",15,MUTED)
+	note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	v.add_child(note)
+	_button("▶  繼續戰鬥",_close_pause_menu,v,52)
+	var leave = _button("退出到主頁",func():
+		_close_pause_menu(false)
+		_leave_mission(),v,48)
+	leave.add_theme_color_override("font_color",ORANGE)
+
+func _close_pause_menu(resume: bool = true):
+	if is_instance_valid(pause_overlay): pause_overlay.queue_free()
+	pause_overlay = null
+	modal_open = false
+	if resume and mode == "playing": Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
+
+func _leave_mission():
+	if network == "client": _disconnect("已離開伺服器")
+	else: _return_home()
 
 func _notification(what):
 	if what == NOTIFICATION_APPLICATION_FOCUS_OUT and mode == "playing":
@@ -946,25 +995,29 @@ func _fire(id: int, target: Vector3):
 	var direction = (target-origin).normalized()
 	var best = -1
 	var nearest = SHOT_RANGE
+	var head = false
 	for eid in enemies:
-		var center: Vector3 = enemies[eid].p+Vector3(0,1.0,0)
-		var along = (center-origin).dot(direction)
-		var radius = 1.4 if enemies[eid].boss else 0.85
-		if along > 0 and along < nearest and center.distance_to(origin+direction*along)<radius:
-			best = eid
-			nearest = along
+		var boss = enemies[eid].boss
+		# Head and body are separate hit spheres; the head sits on top of the model.
+		var spheres = [[enemies[eid].p+Vector3(0,HEAD_HEIGHT*(1.5 if boss else 1.0),0),HEAD_RADIUS*(1.6 if boss else 1.0),true],[enemies[eid].p+Vector3(0,1.0*(1.4 if boss else 1.0),0),1.4 if boss else 0.75,false]]
+		for s in spheres:
+			var along = (s[0]-origin).dot(direction)
+			if along > 0 and along < nearest and s[0].distance_to(origin+direction*along) < s[1]:
+				best = eid
+				nearest = along
+				head = s[2]
 	var end = origin+direction*nearest
 	if best != -1:
-		enemies[best].hp -= float(actors[id].get("damage",28))
+		enemies[best].hp -= float(actors[id].get("damage",28))*(HEADSHOT_MULTIPLIER if head else 1.0)
 		if enemies[best].hp <= 0:
 			kills += 1
 			enemies.erase(best)
 	shots += 1
-	if network == "host": _shot_fx.rpc(origin,end,best != -1,id)
-	_shot_fx(origin,end,best != -1,id)
+	if network == "host": _shot_fx.rpc(origin,end,best != -1,id,head)
+	_shot_fx(origin,end,best != -1,id,head)
 
 @rpc("authority", "call_remote", "unreliable")
-func _shot_fx(origin: Vector3, end: Vector3, hit: bool, shooter: int):
+func _shot_fx(origin: Vector3, end: Vector3, hit: bool, shooter: int, head: bool = false):
 	if dedicated: return
 	if shooter == local_id and is_instance_valid(muzzle): origin = muzzle.global_position
 	var length = origin.distance_to(end)
@@ -975,11 +1028,14 @@ func _shot_fx(origin: Vector3, end: Vector3, hit: bool, shooter: int):
 		var ball = SphereMesh.new()
 		ball.radius = 0.2
 		ball.height = 0.4
-		var spark = _mesh(self,ball,end,_mat(ORANGE,3))
+		var spark = _mesh(self,ball,end,_mat(GOLD if head else ORANGE,3))
+		if head: spark.scale = Vector3.ONE*1.5
 		effects.append([spark,0.12])
 	if shooter == local_id:
 		shake = 0.035
-		_tone(740 if hit else 360,0.045,0.1)
+		if hit: hit_flash = 0.18
+		head_flash = 0.35 if head else head_flash
+		_tone(1100 if head else (740 if hit else 360),0.045,0.1)
 
 func _tone(freq: float, duration: float, volume: float):
 	if dedicated or DisplayServer.get_name() == "headless": return
@@ -1034,6 +1090,11 @@ func _render_models(dt: float):
 
 func _update_camera(dt: float):
 	if dedicated: return
+	hit_flash = maxf(0,hit_flash-dt)
+	head_flash = maxf(0,head_flash-dt)
+	if is_instance_valid(hit_marker):
+		hit_marker.text = "爆頭 ×2" if head_flash > 0 else ("✕" if hit_flash > 0 else "")
+		hit_marker.modulate = GOLD if head_flash > 0 else WHITE
 	weapon.visible = mode == "playing" and actors.has(local_id) and actors[local_id].hp > 0 and not third_person
 	if mode == "playing" and actors.has(local_id):
 		var position: Vector3 = actors[local_id].p

@@ -62,6 +62,28 @@ func _run():
 	game.enemies.clear()
 	game._spawn_wave()
 	assert(game.actors[1].hp == 65)
+	# Headshots deal double damage, body shots deal normal damage.
+	game._start_mission(0)
+	game.actors[1].critical = 0.0
+	game.enemies.clear()
+	var origin = game.actors[1].p+Vector3.UP*game.EYE_HEIGHT
+	game.enemies[500] = {"p":origin+Vector3(0,-game.EYE_HEIGHT,-10),"hp":500.0,"max_hp":500.0,"speed":0.0,"cd":INF,"y":0.0,"boss":false}
+	var target = game.enemies[500].p
+	game._fire(1,target+Vector3(0,game.HEAD_HEIGHT,0))
+	assert(is_equal_approx(game.enemies[500].hp,500.0-56.0))
+	game._fire(1,target+Vector3(0,0.8,0))
+	assert(is_equal_approx(game.enemies[500].hp,500.0-56.0-28.0))
+	# Enemies fire slow bullets that damage players on contact.
+	game.enemies[500].shot_cd = 0.0
+	game.enemies[500].damage = 10.0
+	game._simulate_bullets(0.01)
+	assert(game.bullets.size() == 1)
+	var bullet = game.bullets.values()[0]
+	assert(bullet.v.length() <= game.BULLET_SPEED+0.01)
+	game.enemies.clear()
+	var hp_before = game.actors[1].hp
+	for step in range(200): game._simulate_bullets(0.02)
+	assert(game.actors[1].hp < hp_before and game.bullets.is_empty())
 	game._start_mission(0)
 	assert(game.actors[1].damage == 28 and game.actors[1].max_hp == 100)
 	game.profile.tutorial_complete = true

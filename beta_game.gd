@@ -22,6 +22,16 @@ var pending_levels = 0
 var xp_bar: ProgressBar
 var level_label: Label
 var xp_label: Label
+const BULLET_SPEED = 7.5
+const BOSS_BULLET_SPEED = 6.0
+const BULLET_RANGE = 24.0
+const BULLET_LIFE = 4.5
+const BULLET_HIT_RADIUS = 0.55
+const MAX_BULLETS = 140
+var bullets: Dictionary = {}
+var next_bullet = 0
+var bullet_visuals: Dictionary = {}
+var left_mission = false
 const REGIONS = [
 	["灰燼前哨", "帝國先遣隊已占領邊境。\n清掃前哨，找出通往城內的路。", Color("263a50"), Color("66f5d0")],
 	["熔核工廠", "反應爐正在替入侵艦隊供能。\n穿過熔核工廠，切斷帝國的能源。", Color("493429"), Color("ffad66")],
@@ -373,53 +383,101 @@ func _home():
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 	showcase.visible = true
 	_clear_ui()
-	_backdrop(screen,0.97,0.35)
-	var left = _box(screen,Vector2(56,32),496)
-	left.add_theme_constant_override("separation",8)
-	left.add_child(_label("RIFTWARD  /  " + VERSION,16,CYAN))
-	left.add_child(_label("抵抗軍基地",42))
-	left.add_child(_label("槍手："+str(profile.get("username","")),18))
-	left.add_child(_label("區域依序解鎖 · 升級選擇戰術加成",18,CYAN))
+	_backdrop(screen,0.95,0.2)
+	var region_color: Color = REGIONS[selected][3]
+	# Top bar: title on the left, pilot card on the right.
+	var title = _box(screen,Vector2(48,28),520)
+	title.add_theme_constant_override("separation",0)
+	title.add_child(_label("RIFTWARD  ·  " + VERSION,14,CYAN))
+	title.add_child(_label("裂隙守衛  抵抗軍基地",36))
+	var pilot = _panel(screen,region_color)
+	pilot.anchor_left = 1.0
+	pilot.anchor_right = 1.0
+	pilot.offset_left = -360
+	pilot.offset_right = -48
+	pilot.offset_top = 32
+	var pv = VBoxContainer.new()
+	pv.add_theme_constant_override("separation",2)
+	pilot.add_child(pv)
+	pv.add_child(_label("槍手  " + str(profile.get("username","")),20))
+	status_label = _label(str(profile.get("save_error",_connection_text())),14,CYAN)
+	status_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	pv.add_child(status_label)
+	# Left column: region list and actions.
+	var left = _box(screen,Vector2(48,128),470)
+	left.add_theme_constant_override("separation",10)
+	left.add_child(_label("選擇部署區域",16,MUTED))
 	for i in range(REGIONS.size()):
 		var region = REGIONS[i]
 		var locked = i > int(profile.get("unlocked",0))
-		var button = _button("%02d  %s%s\n%s" % [i+1,region[0]," [尚未解鎖]" if locked else "",MISSIONS[i][3]],func(): _choose_mission(i),left,88)
+		var button = _button("%02d   %s%s
+%s" % [i+1,region[0],"   🔒 尚未解鎖" if locked else "",MISSIONS[i][3]],func(): _choose_mission(i),left,84)
 		button.alignment = HORIZONTAL_ALIGNMENT_LEFT
 		button.disabled = locked
 		mission_buttons.append(button)
-	var launch = _button("部署到選定區域",_request_start,left,56)
+	var gap = Control.new()
+	gap.custom_minimum_size.y = 6
+	left.add_child(gap)
+	var launch = _button("▶   部署到 " + REGIONS[selected][0],_request_start,left,64)
+	launch.add_theme_font_size_override("font_size",22)
+	launch.add_theme_stylebox_override("normal",_button_style(Color(0.35,0.16,0.08,0.95),ORANGE,true))
+	launch.add_theme_stylebox_override("hover",_button_style(Color(0.5,0.22,0.1,0.98),ORANGE,true))
+	launch.add_theme_stylebox_override("pressed",_button_style(ORANGE,ORANGE,true))
 	launch.disabled = network != "client" or local_id != leader_id
-	_button("重新連接基地",func():
-		if network == "offline": _connect_base(),left,48)
-	_button("重看故事與教學",func():
+	if launch.disabled and network == "client": launch.text = "等待隊長部署"
+	var actions = HBoxContainer.new()
+	actions.add_theme_constant_override("separation",8)
+	left.add_child(actions)
+	var story_button = _button("故事與教學",func():
 		if network != "offline":
 			multiplayer.multiplayer_peer = OfflineMultiplayerPeer.new()
 			network = "offline"
 		story_index = 0
-		_show_story(),left,48)
-	var session_actions = HBoxContainer.new()
-	session_actions.add_theme_constant_override("separation",8)
-	left.add_child(session_actions)
-	var logout_button = _button("登出帳號",_logout,session_actions,48)
-	logout_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	var exit_button = _button("離開遊戲",_exit_game,session_actions,48)
-	exit_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	status_label = _label(str(profile.get("save_error",_connection_text())),14,CYAN)
-	status_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	left.add_child(status_label)
-	var right = _box(screen,Vector2(616,112),584)
-	right.size.x = 584
-	right.add_child(_label("宇宙帝國入侵 / 第一章",24,CYAN))
-	var description = _label(REGIONS[selected][1],26)
+		_show_story(),actions,46)
+	var logout_button = _button("登出帳號",_logout,actions,46)
+	var exit_button = _button("離開遊戲",_exit_game,actions,46)
+	for b in [story_button,logout_button,exit_button]:
+		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		b.add_theme_font_size_override("font_size",16)
+	# Right: mission briefing card.
+	var brief = _panel(screen,region_color,Color(0.035,0.07,0.115,0.88))
+	brief.anchor_left = 1.0
+	brief.anchor_right = 1.0
+	brief.anchor_top = 1.0
+	brief.anchor_bottom = 1.0
+	brief.offset_left = -560
+	brief.offset_right = -48
+	brief.offset_top = -420
+	brief.offset_bottom = -40
+	var bv = VBoxContainer.new()
+	bv.add_theme_constant_override("separation",10)
+	brief.add_child(bv)
+	bv.add_child(_label("任務簡報  ·  宇宙帝國入侵 第一章",14,MUTED))
+	bv.add_child(_label("%02d  %s" % [selected+1,REGIONS[selected][0]],30,region_color))
+	var description = _label(REGIONS[selected][1],19)
 	description.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	description.custom_minimum_size = Vector2(584,176)
-	right.add_child(description)
-	var controls = _label("WASD 移動 / 左鍵射擊 / R 換彈\nShift 衝刺 / Space 跳躍 / V 切換視角 / Esc 選單",20)
-	controls.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	right.add_child(controls)
-	var briefing = _label("擊敗敵人獲得經驗值，升級時三選一 Buff。\n等級越高，敵人越強。彈匣打空會自動換彈。",18,CYAN)
-	briefing.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	right.add_child(briefing)
+	bv.add_child(description)
+	var line = ColorRect.new()
+	line.color = Color(1,1,1,0.08)
+	line.custom_minimum_size.y = 1
+	bv.add_child(line)
+	var grid = GridContainer.new()
+	grid.columns = 2
+	grid.add_theme_constant_override("h_separation",24)
+	grid.add_theme_constant_override("v_separation",6)
+	bv.add_child(grid)
+	for pair in [["WASD","移動"],["左鍵","射擊（爆頭 ×2）"],["R","換彈"],["Shift","衝刺"],["Space","跳躍"],["V","切換視角"]]:
+		var row = HBoxContainer.new()
+		row.add_theme_constant_override("separation",8)
+		var key = _label(pair[0],14,CYAN)
+		key.custom_minimum_size.x = 52
+		row.add_child(key)
+		row.add_child(_label(pair[1],15))
+		grid.add_child(row)
+	var tip = _label("擊敗敵人獲得經驗值，升級可三選一 Buff；等級越高敵人越強。
+敵人會發射能量彈，善用走位與衝刺閃避。",15,GOLD)
+	tip.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	bv.add_child(tip)
 	_select(clampi(selected,0,int(profile.get("unlocked",0))))
 
 func _logout():
@@ -487,13 +545,16 @@ func _xp_sync(current: int, need: int, lv: int):
 
 func _broadcast_state():
 	super._broadcast_state()
-	if not test_mode: _xp_sync.rpc(xp,xp_need,level)
+	if not test_mode:
+		_xp_sync.rpc(xp,xp_need,level)
+		_bullets_sync.rpc(_bullet_data())
 
 func _start_mission(index: int):
 	xp = 0
 	level = 1
 	xp_need = xp_for_level(1)
 	pending_levels = 0
+	bullets.clear()
 	buff_pending = false
 	buff_wave = -1
 	buff_choices.clear()
@@ -510,6 +571,8 @@ func _deploy(index: int):
 	if is_instance_valid(buff_overlay): buff_overlay.queue_free()
 	buff_overlay = null
 	buffs_picked = 0
+	left_mission = false
+	bullets.clear()
 	super._deploy(index)
 	_apply_region(index)
 	if not test_mode and is_instance_valid(heading_label):
@@ -517,6 +580,32 @@ func _deploy(index: int):
 	if not dedicated and is_instance_valid(hud):
 		_build_xp_hud()
 		_build_boss_hud()
+
+func _leave_mission():
+	if test_mode or network != "client":
+		super._leave_mission()
+		return
+	# Stay connected to the base: the server drops us from this mission, we go to the home page.
+	_request_leave.rpc_id(1)
+	left_mission = true
+	bullets.clear()
+	_clean_models()
+	_home()
+
+@rpc("any_peer", "call_remote", "reliable")
+func _request_leave():
+	if not multiplayer.is_server() or mode != "playing": return
+	var id = multiplayer.get_remote_sender_id()
+	var others = 0
+	for pid in actors:
+		if pid != id and actors[pid].hp > 0: others += 1
+	if others == 0:
+		_return_home()
+		return
+	if actors.has(id): actors[id].hp = 0
+	if buff_choices.has(id):
+		buff_choices.erase(id)
+		if buff_pending and buff_choices.is_empty(): _resolve_buffs()
 
 func _build_xp_hud():
 	var panel = _panel(hud,GOLD)
@@ -626,6 +715,99 @@ func _simulate(dt: float):
 		_begin_buffs()
 		return
 	super._simulate(dt)
+	if mode == "playing": _simulate_bullets(dt)
+
+func _simulate_bullets(dt: float):
+	var alive = []
+	for id in actors:
+		if actors[id].hp > 0: alive.append(id)
+	# Enemies fire slow energy bolts that players can sidestep or dash through.
+	for e in enemies.values():
+		if alive.is_empty() or bullets.size() >= MAX_BULLETS: break
+		e["shot_cd"] = float(e.get("shot_cd",randf_range(1.5,3.5)))-dt
+		if e.shot_cd > 0: continue
+		var target = -1
+		var best = BULLET_RANGE
+		for pid in alive:
+			var d = e.p.distance_to(actors[pid].p)
+			if d < best:
+				best = d
+				target = pid
+		if target == -1:
+			e.shot_cd = 0.5
+			continue
+		var origin: Vector3 = e.p+Vector3(0,1.2*(1.5 if e.boss else 1.0),0)
+		var aim: Vector3 = (actors[target].p+Vector3(0,1.0,0)-origin).normalized()
+		var damage = float(e.get("damage",10))*0.6
+		if e.boss:
+			for spread in [-0.36,-0.18,0.0,0.18,0.36]:
+				_spawn_bullet(origin,aim.rotated(Vector3.UP,spread)*BOSS_BULLET_SPEED,damage*0.8)
+			e.shot_cd = randf_range(1.8,2.6)
+		else:
+			_spawn_bullet(origin,aim*BULLET_SPEED,damage)
+			e.shot_cd = randf_range(2.4,4.2)
+	for bid in bullets.keys():
+		var b = bullets[bid]
+		b.p += b.v*dt
+		b.life -= dt
+		var hit = false
+		for pid in alive:
+			var a = actors[pid]
+			var body: Vector3 = a.p+Vector3(0,0.9,0)
+			if absf(b.p.y-body.y) < 1.0 and Vector2(b.p.x-body.x,b.p.z-body.z).length() < BULLET_HIT_RADIUS:
+				a.hp = maxf(0,a.hp-b.dmg)
+				hit = true
+				if pid == local_id: shake = 0.06
+				break
+		if hit or b.life <= 0 or absf(b.p.x) > 23 or absf(b.p.z) > 23 or b.p.y < 0:
+			bullets.erase(bid)
+
+func _spawn_bullet(origin: Vector3, velocity: Vector3, damage: float):
+	bullets[next_bullet] = {"p":origin,"v":velocity,"dmg":damage,"life":BULLET_LIFE}
+	next_bullet += 1
+
+func _bullet_data() -> PackedFloat32Array:
+	var data = PackedFloat32Array()
+	for bid in bullets:
+		var b = bullets[bid]
+		data.append_array(PackedFloat32Array([bid,b.p.x,b.p.y,b.p.z,b.v.x,b.v.y,b.v.z]))
+	return data
+
+@rpc("authority", "call_remote", "unreliable_ordered")
+func _bullets_sync(data: PackedFloat32Array):
+	if data.size()%7 != 0: return
+	var seen = {}
+	for j in range(0,data.size(),7):
+		var bid = int(data[j])
+		seen[bid] = true
+		var p = Vector3(data[j+1],data[j+2],data[j+3])
+		if bullets.has(bid): bullets[bid].p = bullets[bid].p.lerp(p,0.5)
+		else: bullets[bid] = {"p":p,"v":Vector3(data[j+4],data[j+5],data[j+6]),"dmg":0.0,"life":BULLET_LIFE}
+	for bid in bullets.keys():
+		if not seen.has(bid): bullets.erase(bid)
+
+func _render_models(dt: float):
+	super._render_models(dt)
+	if dedicated: return
+	if network == "client":
+		for b in bullets.values(): b.p += b.v*dt
+	for bid in bullets:
+		if not bullet_visuals.has(bid):
+			var ball = SphereMesh.new()
+			ball.radius = 0.16
+			ball.height = 0.32
+			bullet_visuals[bid] = _mesh(self,ball,bullets[bid].p,_mat(Color("ff5a3c"),4))
+			bullet_visuals[bid].cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		bullet_visuals[bid].position = bullets[bid].p
+	for bid in bullet_visuals.keys():
+		if not bullets.has(bid):
+			bullet_visuals[bid].queue_free()
+			bullet_visuals.erase(bid)
+
+func _clean_models():
+	super._clean_models()
+	for v in bullet_visuals.values(): v.queue_free()
+	bullet_visuals.clear()
 
 func _spawn_wave():
 	super._spawn_wave()
@@ -648,6 +830,7 @@ func _spawn_wave():
 			e.damage = (10.0+2.0*region)*(1.0+0.04*elapsed_waves)*lv_dmg
 			e.speed = (2.1+0.3*region)*(1.0+minf(0.25,0.015*elapsed_waves))
 		e.max_hp = e.hp
+		e.shot_cd = randf_range(1.5,3.5)
 	for id in actors:
 		var a = actors[id]
 		if a.hp>0: a.hp = minf(a.get("max_hp",100),a.hp+a.get("regen",0))
@@ -829,6 +1012,9 @@ func _finish(success: bool):
 
 @rpc("authority", "call_remote", "reliable")
 func _finish_remote(success: bool, duration: float, defeated: int, index: int):
+	if left_mission and not dedicated:
+		left_mission = false
+		return
 	if is_instance_valid(buff_overlay): buff_overlay.queue_free()
 	buff_overlay = null
 	modal_open = false
