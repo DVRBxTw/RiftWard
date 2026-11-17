@@ -3,7 +3,7 @@ from pathlib import Path
 import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
-FILES = ["RiftWard.exe", "RiftWard_console.exe", "RiftWard.pck", "game/RiftWardGame.pck",
+FILES = ["RiftWard.exe", "RiftWard_console.exe", "RiftWard.pck", "game/RiftWardGame.pck", "game/manifest.json",
          "StartServer.cmd", "server.cfg", "README.md", "server/service.py", "server/run_server.py", "server/schema.sql",
          "FONT-LICENSE.txt", "GODOT-LICENSE.txt", "GODOT-COPYRIGHT.txt"]
 

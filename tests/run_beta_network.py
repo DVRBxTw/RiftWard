@@ -19,6 +19,7 @@ def main():
     with tempfile.TemporaryDirectory() as temp:
         store = service.Store(Path(temp))
         api = service.BetaServer((service.HOST,service.PORT),store,ROOT / "build/releases")
+        api.game_online = lambda: True
         thread = threading.Thread(target=api.serve_forever,daemon=True)
         thread.start()
         environment = os.environ.copy()

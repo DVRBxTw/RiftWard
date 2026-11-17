@@ -97,6 +97,16 @@ class ServiceTests(unittest.TestCase):
         for username, password in [("a", "12345678"),("user';--","12345678"),("okay_user","short"),(123,"12345678")]:
             self.assertEqual(self.call("/api/register",{"username":username,"password":password})[0],400)
 
+    def test_session_resume_availability_and_expiry(self):
+        account = self.register()
+        headers = {"Authorization": "Bearer " + account["token"]}
+        self.assertFalse(self.call("/api/me", {}, headers)[1]["game_online"])
+        self.server.game_online = lambda: True
+        self.assertTrue(self.call("/api/me", {}, headers)[1]["game_online"])
+        with self.store.connect() as db:
+            db.execute("UPDATE sessions SET expires=0")
+        self.assertEqual(self.call("/api/me", {}, headers)[0], 401)
+
 
 if __name__ == "__main__":
     unittest.main()

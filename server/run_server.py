@@ -44,10 +44,17 @@ def main():
     thread.start()
     print(f"Account/update service: http://{HOST}:{PORT}", flush=True)
     environment = dict(os.environ, RIFTWARD_API_HOST=HOST)
+    log_path = base / "server-data" / "game-server.log"
+    log_path.write_text("", encoding="utf-8")
     process = subprocess.Popen([str(engine), "--headless", "--main-pack", str(pack),
-                                "--log-file", str(base / "server-data" / "game-server.log"), "--", "--server"], env=environment)
+                                "--log-file", str(log_path), "--", "--server"], env=environment)
+    ready = False
+    api.game_online = lambda: ready and process.poll() is None
     try:
         while process.poll() is None:
+            if not ready:
+                with log_path.open(encoding="utf-8", errors="replace") as log:
+                    ready = "SERVER_READY address=" in log.read(4096)
             time.sleep(0.5)
     except KeyboardInterrupt:
         process.terminate()

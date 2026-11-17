@@ -16,13 +16,14 @@ var progress: ProgressBar
 var retry: Button
 var busy = false
 var downloading = false
+var install_dir = OS.get_executable_path().get_base_dir()
 
 func _ready() -> void:
 	TranslationServer.set_locale("zh_TW")
 	_build_ui()
 	_load_address()
 	request = HTTPRequest.new()
-	request.timeout = 45.0
+	request.timeout = 8.0
 	request.max_redirects = 0
 	request.accept_gzip = false
 	add_child(request)
@@ -117,10 +118,27 @@ func _check() -> void:
 	detail.text = "連線至更新伺服器；驗證完成後自動啟動。"
 	progress.value = 0
 	request.download_file = ""
+	request.timeout = 8.0
 	request.body_size_limit = 65536
 	var error = request.request(origin + "/api/version")
 	if error != OK:
+		if _launch_login_offline(): return
 		_fail("無法送出版本請求（%s）。" % error_string(error))
+
+func _launch_login_offline() -> bool:
+	var metadata_path = install_dir.path_join("game/manifest.json")
+	if not FileAccess.file_exists(metadata_path): return false
+	var metadata = JSON.parse_string(FileAccess.get_file_as_string(metadata_path))
+	if not metadata is Dictionary: return false
+	metadata["ok"] = true
+	metadata["protocol"] = 1
+	metadata["download"] = "/updates/" + str(metadata.get("sha256","")) + ".pck"
+	if not validate_manifest(metadata).is_empty(): return false
+	var pack = install_dir.path_join("game/RiftWardGame.pck")
+	if not verify_pack(pack,int(metadata.size),metadata.sha256).is_empty(): return false
+	manifest = metadata
+	_launch(pack)
+	return true
 
 func validate_manifest(value: Variant) -> String:
 	if not value is Dictionary:
@@ -163,6 +181,7 @@ func verify_pack(path: String, expected_size: int, expected_hash: String) -> Str
 
 func _completed(result: int, code: int, _headers: PackedStringArray, body: PackedByteArray) -> void:
 	if result != HTTPRequest.RESULT_SUCCESS or code != 200:
+		if not downloading and code == 0 and _launch_login_offline(): return
 		_fail("更新連線失敗（HTTP %d / %d）。請確認網路及伺服器。" % [code, result])
 		return
 	if downloading:
@@ -203,6 +222,7 @@ func _completed(result: int, code: int, _headers: PackedStringArray, body: Packe
 			_fail("無法移除損壞的快取（%s）。" % error_string(error))
 			return
 	request.download_file = PART_PATH
+	request.timeout = 45.0
 	request.body_size_limit = int(manifest.size)
 	downloading = true
 	status.text = "正在下載 %s" % manifest.version

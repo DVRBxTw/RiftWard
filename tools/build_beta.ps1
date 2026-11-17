@@ -1,4 +1,4 @@
-param([string]$Version = '0.3.0-beta.1')
+param([string]$Version = '0.3.0-beta.2')
 $ErrorActionPreference = 'Stop'
 $project = Split-Path $PSScriptRoot -Parent
 $engine = Join-Path $PSScriptRoot 'Godot_v4.5.1-stable_win64_console.exe'
@@ -44,4 +44,5 @@ Copy-Item -LiteralPath $pack -Destination (Join-Path $releases ($digest + '.pck'
 $manifest = @{version=$Version;sha256=$digest;size=(Get-Item -LiteralPath $pack).Length}
 $json = $manifest | ConvertTo-Json -Compress
 [System.IO.File]::WriteAllText((Join-Path $releases 'manifest.json'),$json,(New-Object System.Text.UTF8Encoding($false)))
+[System.IO.File]::WriteAllText((Join-Path $gameDir 'manifest.json'),$json,(New-Object System.Text.UTF8Encoding($false)))
 Write-Output ('BUILD_READY ' + $Version + ' ' + $digest)

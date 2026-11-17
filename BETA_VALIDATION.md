@@ -16,3 +16,14 @@
 
 仍未驗證外網路由、4 人長時間壓力、公開網路安全、所有螢幕比例與完整遊戲平衡。更新只包含遊戲 PCK；啟動器／引擎本身需要重新發包。
 測試資料庫皆使用臨時目錄；正式玩家資料不會打包或推送 GitHub。
+# Beta 0.3.0-beta.2: remembered sessions and exit
+
+- Home has one exit button beside logout using the same native Button, theme and height.
+- `tests/login_session.gd`: PASS encrypted token storage, replacement and restore, offline API gate, offline game service gate, expired credentials and explicit logout. No passwords saved. Existing sessions expire after 24 hours.
+- Service unittest suite: 5 PASS, including game availability and expired session rejection.
+- `launcher/tests/offline_login.gd`: PASS verified bundled pack permits opening the login UI without a server; missing metadata or corrupted pack prevents fallback. This does not authorize offline gameplay.
+- Launcher manifest/hash validation and real HTTP download/cache integration: PASS. Integration probe still reports its pre-existing ObjectDB timer cleanup warning.
+- Two-client HTTP/SQLite/ENet integration and gameplay regression: PASS after excluding an old dedicated server occupying UDP 24770. Disconnect teardown still logs pre-existing ENet channel warnings; no gameplay assertions failed.
+- Exported game pack opened headlessly without parse errors. Native home capture regenerated at 1280x800.
+- Separate UI reviewer checked the home against the previous published version and the capture: equal logout/exit widths and heights, no extra vertical space or clipping. Keyboard activation, hover interaction, other resolutions and connected/locked variants were not exercised interactively.
+- Calibration: temporary detached worktree `riftward-session-calibration-253c985e5b2f4fb788c4f2f5f687eccf` under the session temporary directory; exit button minimum height was deliberately changed from 48 to 96. A separate calibration agent reported the difference against the checklist. The copy was removed after review. This proves source review of that height difference, not all runtime layout or session behavior.

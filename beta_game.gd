@@ -1,6 +1,7 @@
 extends "res://main.gd"
 
-const VERSION = "0.3.0-beta.1"
+const VERSION = "0.3.0-beta.2"
+const SESSION_PATH = "user://login-session.cfg"
 const BUFFS = [
 	["超載彈芯", "本次任務的傷害增加 20%", "damage"],
 	["急速扳機", "射擊間隔縮短 15%", "fire_interval"],
@@ -33,6 +34,10 @@ var buff_overlay: Control
 var buffs_picked = 0
 var region_props: Node3D
 var session_notice = ""
+var session_generation = 0
+var session_polling = false
+var logging_out = false
+var session_path = SESSION_PATH
 
 func _ready():
 	var args = OS.get_cmdline_user_args()
@@ -65,6 +70,12 @@ func _ready():
 	else:
 		DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_FULLSCREEN)
 		_show_account()
+		_restore_session.call_deferred()
+		var session_timer = Timer.new()
+		session_timer.wait_time = 5.0
+		session_timer.timeout.connect(_check_session_connection)
+		add_child(session_timer)
+		session_timer.start()
 
 func api_base() -> String:
 	if dedicated:
@@ -91,7 +102,50 @@ func _api(path: String, data: Dictionary, server_only: bool = false) -> Dictiona
 		return {"ok":false,"error":"帳號服務無回應，請確認伺服器已啟動"}
 	var parsed = JSON.parse_string(response[3].get_string_from_utf8())
 	if not parsed is Dictionary: return {"ok":false,"error":"伺服器回覆格式錯誤"}
+	parsed["http_status"] = response[1]
 	return parsed
+
+func _session_key() -> String:
+	return (OS.get_unique_id() + "RiftWard/session/v1").sha256_text()
+
+func _save_session():
+	if auth_token.is_empty() or logging_out: return
+	var config = ConfigFile.new()
+	config.set_value("session","token",auth_token)
+	config.set_value("session","server",server_address)
+	var temporary = session_path + ".tmp"
+	if config.save_encrypted_pass(temporary,_session_key()) == OK:
+		DirAccess.rename_absolute(ProjectSettings.globalize_path(temporary),ProjectSettings.globalize_path(session_path))
+
+func _forget_session():
+	if FileAccess.file_exists(session_path):
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(session_path))
+
+func _restore_session():
+	var config = ConfigFile.new()
+	if config.load_encrypted_pass(session_path,_session_key()) != OK: return
+	if str(config.get_value("session","server","")) != server_address: return
+	var token = str(config.get_value("session","token",""))
+	if token.length() < 20 or token.length() > 128: return
+	account_page._switch_mode()
+	account_page._set_busy(true)
+	account_page._status.text = "正在恢復登入，請稍候…"
+	await _authenticated(token,{})
+
+func _check_session_connection():
+	if dedicated or test_mode or logging_out or session_polling or auth_token.is_empty() or mode == "account" or mode == "connecting": return
+	session_polling = true
+	var generation = session_generation
+	var result = await _api("/api/me",{})
+	session_polling = false
+	if generation != session_generation: return
+	if not result.get("ok",false) or not result.get("game_online",false):
+		if result.get("http_status",0) == 401: _forget_session()
+		_disconnect("伺服器未連線，請稍後重新登入。")
+
+func _exit_game():
+	_save_session()
+	get_tree().quit()
 
 func _show_account(message: String = ""):
 	mode = "account"
@@ -102,13 +156,26 @@ func _show_account(message: String = ""):
 	account_page.authenticated.connect(_authenticated)
 	account_page.setup(self,api_base())
 	if not message.is_empty():
+		account_page._switch_mode()
 		var notice = _label(message,16,ORANGE)
 		notice.position = Vector2(32,744)
 		screen.add_child(notice)
 
 func _authenticated(token: String, user: Dictionary):
+	logging_out = false
+	session_generation += 1
+	var generation = session_generation
 	auth_token = token
-	profile = user
+	_save_session()
+	var result = await _api("/api/me",{})
+	if generation != session_generation: return
+	if not result.get("ok",false) or not result.get("game_online",false):
+		if result.get("http_status",0) == 401: _forget_session()
+		auth_token = ""
+		profile.clear()
+		_show_account(str(result.get("error","伺服器未連線，請稍後重新登入。")))
+		return
+	profile = result.get("profile",user)
 	unlocked = int(profile.get("unlocked",0))
 	if not profile.get("tutorial_complete",false):
 		story_index = 0
@@ -182,10 +249,14 @@ func _connect_base():
 	enemies.clear()
 	inputs.clear()
 	_clean_models()
-	_home()
+	_show_account("正在驗證帳號並連接基地…")
+	account_page._set_busy(true)
 	mode = "connecting"
-	status_label.text = "正在驗證帳號並連接基地…"
 	_join(server_address)
+	var generation = session_generation
+	get_tree().create_timer(12).timeout.connect(func():
+		if generation == session_generation and mode == "connecting":
+			_disconnect("無法連接遊戲伺服器，請稍後重新登入。"))
 
 func _connected():
 	if test_mode:
@@ -306,7 +377,13 @@ func _home():
 			network = "offline"
 		story_index = 0
 		_show_story(),left,48)
-	_button("登出帳號",_logout,left,48)
+	var session_actions = HBoxContainer.new()
+	session_actions.add_theme_constant_override("separation",8)
+	left.add_child(session_actions)
+	var logout_button = _button("登出帳號",_logout,session_actions,48)
+	logout_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var exit_button = _button("離開遊戲",_exit_game,session_actions,48)
+	exit_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	status_label = _label(str(profile.get("save_error",_connection_text())),14,CYAN)
 	status_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	left.add_child(status_label)
@@ -326,6 +403,10 @@ func _home():
 	_select(clampi(selected,0,int(profile.get("unlocked",0))))
 
 func _logout():
+	if logging_out: return
+	logging_out = true
+	session_generation += 1
+	_forget_session()
 	var previous_token = auth_token
 	await _api("/api/logout",{})
 	if auth_token != previous_token: return
@@ -345,12 +426,16 @@ func _disconnect(message: String):
 	multiplayer.multiplayer_peer = OfflineMultiplayerPeer.new()
 	network = "offline"
 	local_id = 1
+	session_generation += 1
+	tutorial_running = false
+	modal_open = false
 	actors.clear()
 	enemies.clear()
 	inputs.clear()
 	_clean_models()
-	_home()
-	if is_instance_valid(status_label): status_label.text = message
+	profile.clear()
+	auth_token = ""
+	_show_account(message)
 
 func _reset_actors():
 	super._reset_actors()

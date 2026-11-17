@@ -20,7 +20,7 @@ HOST = "192.168.213.100"
 PORT = 24771
 ITERATIONS = 310_000
 USERNAME = re.compile(r"[A-Za-z0-9_]{3,24}\Z")
-VERSION = "0.3.0-beta.1"
+VERSION = "0.3.0-beta.2"
 
 
 class Store:
@@ -142,6 +142,7 @@ class BetaServer(ThreadingHTTPServer):
     daemon_threads = True
 
     def __init__(self, address, store: Store, releases: Path):
+        self.game_online = lambda: False
         self.store = store
         self.releases = releases.resolve()
         self.limits = defaultdict(deque)
@@ -279,7 +280,7 @@ class Handler(BaseHTTPRequestHandler):
             self._json(401, {"ok": False, "error": "登入已失效，請重新登入"})
             return
         if self.path == "/api/me":
-            self._json(200, {"ok": True, "profile": profile})
+            self._json(200, {"ok": True, "profile": profile, "game_online": bool(self.server.game_online())})
         elif self.path == "/api/tutorial":
             self._json(200, {"ok": True, "profile": store.tutorial(profile["id"])})
         elif self.path == "/api/logout":
