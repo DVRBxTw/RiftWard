@@ -5,7 +5,7 @@ const ORANGE = Color("ff8855")
 const INK = Color("101c2b")
 const WHITE = Color("e8f3ff")
 const PORT = 24770
-const DEFAULT_SERVER_IP = "192.168.213.100"
+const DEFAULT_SERVER_IP = "123.241.56.94"
 const EYE_HEIGHT = 1.65
 const LOOK_SENSITIVITY = 0.0025
 const LOOK_LIMIT = PI * 85.0 / 180.0
@@ -218,12 +218,13 @@ func _select(i: int):
 
 func _connection_text() -> String:
 	if network == "host":
-		return "● %s:%d · %d / 4 位玩家" % [server_address, PORT, actors.size()]
+		return "基地已啟動 | %d / 4" % actors.size()
 	if network == "client":
 		return "● 已連線 · 你是隊長" if local_id == leader_id else "● 已連線 · 等待隊長選關與開始"
 	if network == "connecting":
 		return "◌ 正在連線…"
-	return "● 離線單人 · 預設伺服器 %s" % server_address
+	return "尚未連線至基地"
+
 
 func _load_server_address():
 	var cfg = ConfigFile.new()
@@ -374,7 +375,7 @@ func _reset_actors():
 func _host(headless: bool):
 	if network != "offline": return
 	var peer = ENetMultiplayerPeer.new()
-	peer.set_bind_ip("127.0.0.1" if "--network-test" in OS.get_cmdline_user_args() else server_address)
+	peer.set_bind_ip("127.0.0.1" if "--network-test" in OS.get_cmdline_user_args() else "*")
 	var err = peer.create_server(PORT, 4 if headless else 3)
 	if err != OK:
 		var message = "無法綁定 %s:%d；請確認本機 IP 與連接埠" % [server_address,PORT]
@@ -389,7 +390,7 @@ func _host(headless: bool):
 
 func _join(ip: String):
 	if network != "offline":
-		if is_instance_valid(status_label): status_label.text = "請先選擇離線單人，再切換連線"
+	if is_instance_valid(status_label): status_label.text = "正在連線至基地..."
 		return
 	if ip.is_empty():
 		status_label.text = "請輸入伺服器 IP 位址"
@@ -400,7 +401,8 @@ func _join(ip: String):
 		return
 	multiplayer.multiplayer_peer = peer
 	network = "connecting"
-	if is_instance_valid(status_label): status_label.text = "正在連線至 " + ip + "…"
+	if is_instance_valid(status_label): status_label.text = "正在連線至基地..."
+
 
 func _connected():
 	network = "client"

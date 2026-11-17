@@ -7,7 +7,7 @@ const WHITE = Color("e8f3ff")
 const MAX_PACK_SIZE = 512 * 1024 * 1024
 const UPDATE_DIR = "user://updates"
 const PART_PATH = UPDATE_DIR + "/download.part"
-var origin = "http://192.168.213.100:24771"
+var origin = "http://123.241.56.94:24771"
 var manifest: Dictionary = {}
 var request: HTTPRequest
 var status: Label
@@ -95,7 +95,7 @@ func _load_address() -> void:
 	if error != OK:
 		origin = ""
 		return
-	var address = str(config.get_value("server", "address", "192.168.213.100")).strip_edges()
+	var address = str(config.get_value("server", "address", "123.241.56.94")).strip_edges()
 	var regex = RegEx.new()
 	regex.compile("^[A-Za-z0-9][A-Za-z0-9.-]{0,252}$")
 	if regex.search(address) == null:

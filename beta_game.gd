@@ -316,7 +316,7 @@ func _home():
 	var controls = _label("自由 360° 轉身 · 第一人稱射擊\nWASD 移動 / 左鍵射擊 / Shift 衝刺\nSpace 跳躍 / Esc 選單",20)
 	controls.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	right.add_child(controls)
-	var briefing = _label("基地 192.168.213.100\n每波結束三選一 Buff，任務內可疊加。\n清除區域後回基地，裝備加成會重置。",18,CYAN)
+	var briefing = _label("基地 \n每波結束三選一 Buff，任務內可疊加。\n清除區域後回基地，裝備加成會重置。",18,CYAN)
 	briefing.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	right.add_child(briefing)
 	_select(clampi(selected,0,int(profile.get("unlocked",0))))
