@@ -400,7 +400,10 @@ namespace RiftWard.Client
         {
             var lo = new Loadout { Owned = new List<string>(p.Profile.Loadout.Owned), Equipped = new List<string>(p.Profile.Loadout.Equipped) };
             foreach (var kv in p.Profile.Loadout.Levels) lo.Levels[kv.Key] = new Dictionary<string, int>(kv.Value);
+            lo.Rarity = new Dictionary<string, int>(p.Profile.Loadout.Rarity);
             sim.AddActor(id, lo, p.Profile.Admin).Name = p.Profile.Username;
+            var b = p.Profile;
+            sim.ApplyProfileBonus(id, b.BonusOf("hp"), b.BonusOf("damage"), b.BonusOf("speed"), b.BonusOf("reload"), b.BonusOf("crit"));
             p.OfferSent = null;
             p.LastInput = clock;
         }

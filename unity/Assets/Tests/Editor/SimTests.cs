@@ -105,6 +105,23 @@ namespace RiftWard.Tests
         }
 
         [Test]
+        public void ArmorBuffReducesIncomingDamage()
+        {
+            var sim = NewMission();
+            var a = sim.Actors[1];
+            sim.Enemies.Clear();
+            sim.ApplyBuff(1, Defs.BuffArmor + 200);
+            Assert.AreEqual(0.2f, a.Armor, 0.001f);
+            float hp = a.Hp;
+            sim.Bullets[1] = new Bullet { Id = 1, Position = a.Position + Vector3.up * 0.9f, Velocity = Vector3.zero, Damage = 50f, Kind = BulletKind.Enemy };
+            sim.Enemies[999] = new Enemy { Id = 999, Position = a.Position + new Vector3(15, 0, 15), Hp = 9999, MaxHp = 9999, Shoots = false, MeleeCooldown = 99f };
+            sim.Tick(0.01f);
+            Assert.AreEqual(hp - 40f, a.Hp, 0.01f);
+            for (int i = 0; i < 10; i++) sim.ApplyBuff(1, Defs.BuffArmor + 200);
+            Assert.AreEqual(Defs.MaxArmor, a.Armor, 0.001f);
+        }
+
+        [Test]
         public void EmptyMagazineAutoReloads()
         {
             var sim = NewMission();

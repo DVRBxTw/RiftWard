@@ -20,15 +20,20 @@ namespace RiftWard.Sim
         public List<string> Owned = new List<string> { "pistol" };
         public List<string> Equipped = new List<string> { "pistol" };
         public Dictionary<string, Dictionary<string, int>> Levels = new Dictionary<string, Dictionary<string, int>>();
+        /// Rarity per owned weapon; missing entries count as 普通 (1).
+        public Dictionary<string, int> Rarity = new Dictionary<string, int>();
+
+        public int RarityOf(string weapon) => Rarity.TryGetValue(weapon, out var r) ? Mathf.Clamp(r, 0, Defs.WeaponRarityMult.Length - 1) : 1;
 
         public int Level(string weapon, string stat) =>
             Levels.TryGetValue(weapon, out var stats) && stats.TryGetValue(stat, out var v) ? Mathf.Clamp(v, 0, Defs.MaxUpgradeLevel) : 0;
 
-        /// Keeps only owned, unique weapons; at most two equipped; pistol always owned.
+        /// Keeps only owned, unique weapons; at most two equipped; never leaves the player unarmed.
         public void Normalize()
         {
-            var owned = new List<string> { "pistol" };
+            var owned = new List<string>();
             foreach (var w in Owned) if (Defs.Weapons.ContainsKey(w) && !owned.Contains(w)) owned.Add(w);
+            if (owned.Count == 0) owned.Add("rifle");
             Owned = owned;
             var kit = new List<string>();
             foreach (var w in Equipped) if (owned.Contains(w) && !kit.Contains(w) && kit.Count < 2) kit.Add(w);
@@ -84,6 +89,8 @@ namespace RiftWard.Sim
         public int OrbitLevel, MineLevel, MissileLevel, LightningLevel;
         public float OrbitTimer, MineTimer, MissileTimer, LightningTimer;
         public float Magnet = Defs.BaseMagnet;
+        /// Fraction of incoming damage ignored (mission buff, capped at Defs.MaxArmor).
+        public float Armor;
 
         // Admin
         public AdminSettings Admin = new AdminSettings();

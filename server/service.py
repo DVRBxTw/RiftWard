@@ -8,6 +8,7 @@ import hmac
 import json
 import os
 from pathlib import Path
+import random
 import re
 import secrets
 import sqlite3
@@ -35,8 +36,46 @@ def upgrade_cost(weapon: str, level: int) -> int:
     return int(round(120 * (level + 1) * factor))
 
 
+# ---- account level, talents, gear and supply draws
+TALENTS = {"hp": 5, "damage": 2, "speed": 1.5, "reload": 3, "crit": 1}   # bonus per point
+TALENT_MAX = 10
+GEAR_SLOTS = {"armor": "hp", "module": "damage", "boots": "speed", "chip": "crit"}
+RARITIES = ["劣質", "普通", "稀世", "傳奇", "神話"]
+RARITY_WEIGHTS = [50, 30, 14, 5, 1]
+# Primary stat value per rarity for each stat (hp is flat, the rest are percentages).
+GEAR_VALUES = {"hp": [6, 12, 20, 32, 50], "damage": [2, 4, 7, 11, 16], "speed": [2, 3, 5, 8, 12],
+               "crit": [2, 3, 5, 8, 12], "reload": [3, 5, 8, 12, 18]}
+GEAR_NAMES = {"armor": "護甲", "module": "槍械模組", "boots": "戰術靴", "chip": "戰術晶片"}
+INVENTORY_LIMIT = 200
+
+
+def level_for(xp: int):
+    """Returns (level, xp into level, xp needed for next level). Each level needs 100 + 50 * level."""
+    level = 1
+    while xp >= 100 + 50 * level and level < 99:
+        xp -= 100 + 50 * level
+        level += 1
+    return level, xp, 100 + 50 * level
+
+
+def roll_item(rng):
+    slot = rng.choice(list(GEAR_SLOTS))
+    rarity = rng.choices(range(len(RARITIES)), weights=RARITY_WEIGHTS)[0]
+    primary = GEAR_SLOTS[slot]
+    stats = {primary: GEAR_VALUES[primary][rarity]}
+    if rarity >= 2:  # rare and better carry a random secondary stat at half strength
+        secondary = rng.choice([k for k in GEAR_VALUES if k != primary])
+        stats[secondary] = max(1, GEAR_VALUES[secondary][rarity] // 2)
+    return {"id": secrets.token_hex(6), "slot": slot, "rarity": rarity, "stats": stats}
+
+
+WEAPON_WEIGHTS = {"pistol": 30, "rifle": 30, "shotgun": 20, "sniper": 20}
+DUPLICATE_GOLD = [20, 50, 120, 300, 800]
+
+
 def default_loadout():
-    return {"owned": ["pistol"], "levels": {}, "equipped": ["pistol"]}
+    # New recruits start with a worn (劣質) AR-27; better guns come from weapon supply draws.
+    return {"owned": ["rifle"], "levels": {}, "equipped": ["rifle"], "rarity": {"rifle": 0}}
 
 
 class Store:
@@ -77,6 +116,10 @@ class Store:
                 db.execute("ALTER TABLE progress ADD COLUMN loadout TEXT NOT NULL DEFAULT '{}'")
             if "stats" not in columns:
                 db.execute("ALTER TABLE progress ADD COLUMN stats TEXT NOT NULL DEFAULT '{}'")
+            for column, ddl in (("xp", "INTEGER NOT NULL DEFAULT 0"), ("keys", "INTEGER NOT NULL DEFAULT 0"), ("weapon_keys", "INTEGER NOT NULL DEFAULT 0"),
+                                ("talents", "TEXT NOT NULL DEFAULT '{}'"), ("gear", "TEXT NOT NULL DEFAULT '{}'")):
+                if column not in columns:
+                    db.execute(f"ALTER TABLE progress ADD COLUMN {column} {ddl}")
 
     @contextmanager
     def connect(self):
@@ -96,7 +139,7 @@ class Store:
     def profile(self, account_id: int):
         with self.connect() as db:
             row = db.execute(
-                "SELECT a.id,a.username,p.unlocked,p.tutorial_complete,p.gold,p.loadout,p.stats FROM accounts a "
+                "SELECT a.id,a.username,p.unlocked,p.tutorial_complete,p.gold,p.loadout,p.stats,p.xp,p.keys,p.weapon_keys,p.talents,p.gear FROM accounts a "
                 "JOIN progress p ON p.account_id=a.id WHERE a.id=?", (account_id,)
             ).fetchone()
         if row is None:
@@ -106,7 +149,150 @@ class Store:
         result["loadout"] = self._parse_loadout(result.get("loadout"))
         result["admin"] = self.is_admin(result["username"])
         result["stats"] = self._parse_stats(result.get("stats"))
+        level, into, need = level_for(result["xp"])
+        result.update(level=level, level_xp=into, level_need=need)
+        talents = self._parse_talents(result.pop("talents"))
+        gear = self._parse_gear(result.pop("gear"))
+        result["talents"] = talents
+        result["talent_points"] = max(0, level - 1 - sum(talents.values()))
+        result["inventory"] = gear["inventory"]
+        result["equipment"] = gear["equipped"]
+        bonus = {k: talents[k] * per for k, per in TALENTS.items()}
+        for item in gear["inventory"]:
+            if gear["equipped"].get(item["slot"]) == item["id"]:
+                for k, v in item["stats"].items():
+                    bonus[k] = bonus.get(k, 0) + v
+        result["bonus"] = {k: round(v, 2) for k, v in bonus.items()}
         return result
+
+    @staticmethod
+    def _parse_talents(raw):
+        try:
+            data = json.loads(raw or "{}")
+        except ValueError:
+            data = {}
+        data = data if isinstance(data, dict) else {}
+        return {k: min(TALENT_MAX, max(0, int(data.get(k, 0)))) if isinstance(data.get(k, 0), int) else 0 for k in TALENTS}
+
+    @staticmethod
+    def _parse_gear(raw):
+        try:
+            data = json.loads(raw or "{}")
+        except ValueError:
+            data = {}
+        data = data if isinstance(data, dict) else {}
+        inventory = [i for i in data.get("inventory", []) if isinstance(i, dict) and i.get("slot") in GEAR_SLOTS
+                     and isinstance(i.get("rarity"), int) and 0 <= i["rarity"] < len(RARITIES) and isinstance(i.get("stats"), dict)]
+        ids = {i["id"] for i in inventory}
+        equipped = {k: v for k, v in (data.get("equipped") or {}).items() if k in GEAR_SLOTS and v in ids}
+        return {"inventory": inventory[:INVENTORY_LIMIT], "equipped": equipped}
+
+    def _save_gear(self, account_id, gear):
+        with self.connect() as db:
+            db.execute("UPDATE progress SET gear=? WHERE account_id=?", (json.dumps(gear, ensure_ascii=False), account_id))
+
+    def _raw_gear(self, account_id):
+        with self.connect() as db:
+            row = db.execute("SELECT gear FROM progress WHERE account_id=?", (account_id,)).fetchone()
+        return self._parse_gear(row[0] if row else "{}")
+
+    def assign_talent(self, account_id: int, talent, points):
+        if talent not in TALENTS:
+            raise ValueError("找不到此天賦")
+        if not isinstance(points, int) or not 1 <= points <= TALENT_MAX:
+            raise ValueError("點數不正確")
+        profile = self.profile(account_id)
+        if profile["talent_points"] < points:
+            raise ValueError("天賦點數不足")
+        talents = profile["talents"]
+        if talents[talent] + points > TALENT_MAX:
+            raise ValueError("此天賦已達上限")
+        talents[talent] += points
+        with self.connect() as db:
+            db.execute("UPDATE progress SET talents=? WHERE account_id=?", (json.dumps(talents), account_id))
+        return self.profile(account_id)
+
+    def reset_talents(self, account_id: int):
+        with self.connect() as db:
+            db.execute("UPDATE progress SET talents='{}' WHERE account_id=?", (account_id,))
+        return self.profile(account_id)
+
+    def draw(self, account_id: int, count):
+        if count not in (1, 10):
+            raise ValueError("一次只能抽 1 或 10 次")
+        gear = self._raw_gear(account_id)
+        if len(gear["inventory"]) + count > INVENTORY_LIMIT:
+            raise ValueError(f"背包已滿（上限 {INVENTORY_LIMIT} 件），請先分解裝備")
+        with self.connect() as db:
+            changed = db.execute("UPDATE progress SET keys=keys-? WHERE account_id=? AND keys>=?", (count, account_id, count)).rowcount
+        if not changed:
+            raise ValueError("鑰匙不足")
+        rng = random.SystemRandom()
+        items = [roll_item(rng) for _ in range(count)]
+        gear["inventory"].extend(items)
+        self._save_gear(account_id, gear)
+        return items, self.profile(account_id)
+
+    def draw_weapons(self, account_id: int, count):
+        if count not in (1, 10):
+            raise ValueError("一次只能抽 1 或 10 次")
+        with self.connect() as db:
+            changed = db.execute("UPDATE progress SET weapon_keys=weapon_keys-? WHERE account_id=? AND weapon_keys>=?",
+                                 (count, account_id, count)).rowcount
+        if not changed:
+            raise ValueError("武器鑰匙不足")
+        rng = random.SystemRandom()
+        loadout = self.profile(account_id)["loadout"]
+        results, gold = [], 0
+        for _ in range(count):
+            weapon = rng.choices(list(WEAPON_WEIGHTS), weights=list(WEAPON_WEIGHTS.values()))[0]
+            rarity = rng.choices(range(len(RARITIES)), weights=RARITY_WEIGHTS)[0]
+            if weapon not in loadout["owned"]:
+                loadout["owned"].append(weapon)
+                loadout["rarity"][weapon] = rarity
+                if len(loadout["equipped"]) < 2:
+                    loadout["equipped"].append(weapon)
+                outcome, refund = "new", 0
+            elif rarity > loadout["rarity"].get(weapon, 1):
+                loadout["rarity"][weapon] = rarity
+                outcome, refund = "upgrade", 0
+            else:
+                outcome, refund = "duplicate", DUPLICATE_GOLD[rarity]
+                gold += refund
+            results.append({"weapon": weapon, "rarity": rarity, "outcome": outcome, "gold": refund})
+        with self.connect() as db:
+            db.execute("UPDATE progress SET loadout=?, gold=gold+? WHERE account_id=?", (json.dumps(loadout), gold, account_id))
+        return results, self.profile(account_id)
+
+    def equip_gear(self, account_id: int, item_id):
+        gear = self._raw_gear(account_id)
+        item = next((i for i in gear["inventory"] if i["id"] == item_id), None)
+        if item is None:
+            raise ValueError("找不到此裝備")
+        if gear["equipped"].get(item["slot"]) == item_id:
+            del gear["equipped"][item["slot"]]
+        else:
+            gear["equipped"][item["slot"]] = item_id
+        self._save_gear(account_id, gear)
+        return self.profile(account_id)
+
+    def salvage(self, account_id: int, item_id):
+        """Breaks an unequipped item down for gold."""
+        gear = self._raw_gear(account_id)
+        item = next((i for i in gear["inventory"] if i["id"] == item_id), None)
+        if item is None:
+            raise ValueError("找不到此裝備")
+        if item_id in gear["equipped"].values():
+            raise ValueError("請先卸下此裝備")
+        gear["inventory"].remove(item)
+        self._save_gear(account_id, gear)
+        with self.connect() as db:
+            db.execute("UPDATE progress SET gold=gold+? WHERE account_id=?", ([10, 25, 60, 150, 400][item["rarity"]], account_id))
+        return self.profile(account_id)
+
+    def add_xp(self, account_id: int, xp: int):
+        with self.connect() as db:
+            db.execute("UPDATE progress SET xp=xp+? WHERE account_id=?", (max(0, min(5000, xp)), account_id))
 
     STAT_KEYS = ("kills", "headshots", "shots", "hits", "missions", "victories", "best_wave")
 
@@ -159,13 +345,15 @@ class Store:
                               "ORDER BY a.username COLLATE NOCASE LIMIT 500").fetchall()
         return [dict(row) for row in rows]
 
-    def admin_grant(self, username, gold, weapon):
+    def admin_grant(self, username, gold, weapon, keys=0, weapon_keys=0):
         if not isinstance(gold, int) or not 0 <= gold <= 100000:
             raise ValueError("金幣數量需為 0–100000")
+        if not isinstance(keys, int) or not 0 <= keys <= 1000 or not isinstance(weapon_keys, int) or not 0 <= weapon_keys <= 1000:
+            raise ValueError("鑰匙數量需為 0–1000")
         if weapon not in (None, "") and weapon not in WEAPON_PRICES:
             raise ValueError("找不到此武器")
-        if gold == 0 and not weapon:
-            raise ValueError("請選擇要發放的金幣或武器")
+        if gold == 0 and not weapon and keys == 0 and weapon_keys == 0:
+            raise ValueError("請選擇要發放的金幣、鑰匙或武器")
         if not isinstance(username, str) or not (username == "*" or USERNAME.fullmatch(username)):
             raise ValueError("請輸入正確的玩家帳號")
         with self.connect() as db:
@@ -176,14 +364,15 @@ class Store:
                 if row is None:
                     raise ValueError("找不到此玩家")
                 ids = [row[0]]
-            db.execute("UPDATE progress SET gold=gold+? WHERE account_id IN (%s)" % ",".join("?" * len(ids)),
-                       (gold, *ids)) if ids else None
+            db.execute("UPDATE progress SET gold=gold+?, keys=keys+?, weapon_keys=weapon_keys+? WHERE account_id IN (%s)" % ",".join("?" * len(ids)),
+                       (gold, keys, weapon_keys, *ids)) if ids else None
         if weapon:
             for account_id in ids:
                 profile = self.profile(account_id)
                 loadout = profile["loadout"]
                 if weapon not in loadout["owned"]:
                     loadout["owned"].append(weapon)
+                    loadout["rarity"][weapon] = 1
                     if len(loadout["equipped"]) < 2:
                         loadout["equipped"].append(weapon)
                     with self.connect() as db:
@@ -197,9 +386,13 @@ class Store:
             data = json.loads(raw or "{}")
         except ValueError:
             data = {}
-        if isinstance(data, dict):
-            owned = [w for w in data.get("owned", []) if w in WEAPON_PRICES]
-            loadout["owned"] = ["pistol"] + [w for w in dict.fromkeys(owned) if w != "pistol"]
+        if isinstance(data, dict) and data.get("owned"):
+            owned = [w for w in dict.fromkeys(data.get("owned", [])) if w in WEAPON_PRICES]
+            loadout["owned"] = owned or ["rifle"]
+            rarity = data.get("rarity") if isinstance(data.get("rarity"), dict) else {}
+            # Weapons owned before rarities existed count as 普通 (1).
+            loadout["rarity"] = {w: max(0, min(len(RARITIES) - 1, rarity[w])) if isinstance(rarity.get(w), int) else 1 for w in loadout["owned"]}
+            loadout["equipped"] = []
             levels = data.get("levels", {})
             if isinstance(levels, dict):
                 for weapon, stats in levels.items():
@@ -238,6 +431,7 @@ class Store:
         profile = self.profile(account_id)
         if profile is None or weapon not in WEAPON_PRICES:
             raise ValueError("找不到此武器")
+        raise ValueError("武器改由武器補給取得")
         loadout = profile["loadout"]
         if weapon in loadout["owned"]:
             raise ValueError("已擁有此武器")
@@ -470,6 +664,8 @@ class Handler(BaseHTTPRequestHandler):
                     if self.path.endswith("reward"):
                         if "stats" in data:
                             store.record_stats(data.get("account_id"), data.get("stats"))
+                            st = data["stats"]
+                            store.add_xp(data.get("account_id"), st.get("kills", 0) * 3 + st.get("wave", 0) * 15 + (200 if st.get("victory") is True else 0))
                         profile = store.reward(data.get("account_id"), data.get("gold"))
                     else:
                         account_id = data.get("account_id")
@@ -500,13 +696,34 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(200, {"ok": True, "players": store.list_players()})
             elif self.path == "/api/admin/grant":
                 try:
-                    count = store.admin_grant(data.get("username"), data.get("gold", 0), data.get("weapon"))
+                    count = store.admin_grant(data.get("username"), data.get("gold", 0), data.get("weapon"), data.get("keys", 0), data.get("weapon_keys", 0))
                 except ValueError as exc:
                     self._json(400, {"ok": False, "error": str(exc)})
                     return
                 self._json(200, {"ok": True, "count": count, "profile": store.profile(profile["id"])})
             else:
                 self._json(404, {"ok": False, "error": "找不到此服務"})
+        elif self.path in ("/api/talent/assign", "/api/talent/reset", "/api/gacha/draw", "/api/gacha/weapon", "/api/gear/equip", "/api/gear/salvage"):
+            try:
+                extra = {}
+                if self.path == "/api/talent/assign":
+                    result = store.assign_talent(profile["id"], data.get("talent"), data.get("points", 1))
+                elif self.path == "/api/talent/reset":
+                    result = store.reset_talents(profile["id"])
+                elif self.path == "/api/gacha/draw":
+                    items, result = store.draw(profile["id"], data.get("count", 1))
+                    extra["items"] = items
+                elif self.path == "/api/gacha/weapon":
+                    weapons, result = store.draw_weapons(profile["id"], data.get("count", 1))
+                    extra["weapons"] = weapons
+                elif self.path == "/api/gear/equip":
+                    result = store.equip_gear(profile["id"], data.get("item"))
+                else:
+                    result = store.salvage(profile["id"], data.get("item"))
+            except ValueError as exc:
+                self._json(400, {"ok": False, "error": str(exc)})
+                return
+            self._json(200, {"ok": True, "profile": result, **extra})
         elif self.path == "/api/shop/equip":
             try:
                 result = store.equip(profile["id"], data.get("weapons"))

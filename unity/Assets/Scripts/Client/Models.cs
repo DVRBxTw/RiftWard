@@ -121,42 +121,17 @@ namespace RiftWard.Client
         }
 
         /// First-person weapon models, parented to the camera. Returns the muzzle transform.
+        /// Each model names its magazine "Mag" so the reload animation can pull it out.
         public static Transform Viewmodel(string weapon, Transform holder)
         {
             for (int i = holder.childCount - 1; i >= 0; i--) Object.Destroy(holder.GetChild(i).gameObject);
-            Color ink = Palette.Hex("1b1d21"), steel = Palette.Hex("2f343b"), grip = Palette.Hex("3a3f46"), accent = Palette.Amber;
             float muzzleZ;
             switch (weapon)
             {
-                case "rifle":
-                    Build.Cube(holder, Vector3.zero, new Vector3(0.1f, 0.12f, 0.5f), ink, 0, false);
-                    Build.Cube(holder, new Vector3(0, 0, 0.36f), new Vector3(0.05f, 0.05f, 0.3f), steel, 0, false);
-                    Build.Cube(holder, new Vector3(0, -0.14f, 0.06f), new Vector3(0.07f, 0.18f, 0.1f), steel, 0, false);
-                    Build.Cube(holder, new Vector3(0, -0.1f, -0.16f), new Vector3(0.07f, 0.14f, 0.08f), grip, 0, false);
-                    Build.Cube(holder, new Vector3(0, 0.07f, 0.1f), new Vector3(0.04f, 0.018f, 0.26f), accent, 0.6f, false);
-                    muzzleZ = 0.52f;
-                    break;
-                case "shotgun":
-                    Build.Cube(holder, Vector3.zero, new Vector3(0.13f, 0.13f, 0.46f), Palette.Hex("3b2a22"), 0, false);
-                    foreach (float x in new[] { -0.03f, 0.03f }) Build.Cube(holder, new Vector3(x, 0.02f, 0.34f), new Vector3(0.05f, 0.05f, 0.28f), ink, 0, false);
-                    Build.Cube(holder, new Vector3(0, -0.07f, 0.2f), new Vector3(0.1f, 0.06f, 0.16f), Palette.Hex("5a4030"), 0, false);
-                    Build.Cube(holder, new Vector3(0, -0.1f, -0.15f), new Vector3(0.08f, 0.15f, 0.09f), grip, 0, false);
-                    muzzleZ = 0.5f;
-                    break;
-                case "sniper":
-                    Build.Cube(holder, new Vector3(0, 0, -0.02f), new Vector3(0.08f, 0.1f, 0.6f), ink, 0, false);
-                    Build.Cube(holder, new Vector3(0, 0.01f, 0.48f), new Vector3(0.035f, 0.035f, 0.4f), steel, 0, false);
-                    Build.Cylinder(holder, new Vector3(0, 0.1f, 0.04f), 0.07f, 0.22f, Palette.Hex("1a2430")).transform.localRotation = Quaternion.Euler(90, 0, 0);
-                    Build.Cube(holder, new Vector3(0, 0.1f, 0.155f), new Vector3(0.05f, 0.05f, 0.01f), Palette.Hex("b47cff"), 2f, false);
-                    Build.Cube(holder, new Vector3(0, -0.1f, -0.18f), new Vector3(0.07f, 0.15f, 0.08f), grip, 0, false);
-                    muzzleZ = 0.7f;
-                    break;
-                default:
-                    Build.Cube(holder, new Vector3(0, 0.01f, 0.02f), new Vector3(0.07f, 0.09f, 0.26f), ink, 0, false);
-                    Build.Cube(holder, new Vector3(0, -0.1f, -0.06f), new Vector3(0.06f, 0.16f, 0.08f), grip, 0, false);
-                    Build.Cube(holder, new Vector3(0, 0.06f, 0.04f), new Vector3(0.035f, 0.012f, 0.18f), accent, 0.8f, false);
-                    muzzleZ = 0.16f;
-                    break;
+                case "rifle": muzzleZ = Rifle(holder); break;
+                case "shotgun": muzzleZ = Shotgun(holder); break;
+                case "sniper": muzzleZ = Sniper(holder); break;
+                default: muzzleZ = Pistol(holder); break;
             }
             foreach (var c in holder.GetComponentsInChildren<Collider>()) Object.Destroy(c);
             Build.NoShadows(holder.gameObject);
@@ -164,6 +139,155 @@ namespace RiftWard.Client
             muzzle.SetParent(holder, false);
             muzzle.localPosition = new Vector3(0, 0.01f, muzzleZ);
             return muzzle;
+        }
+
+        static readonly Color GunInk = Palette.Hex("17191c"), GunSteel = Palette.Hex("2c3036"), GunPolymer = Palette.Hex("262a2f"),
+            GunTan = Palette.Hex("8a7a5c"), GunEdge = Palette.Hex("4a5058");
+
+        static GameObject P(Transform t, Vector3 at, Vector3 size, Color c, float glow = 0f) => Build.Cube(t, at, size, c, glow, false);
+
+        static Transform Part(Transform holder, string name, Vector3 at)
+        {
+            var t = new GameObject(name).transform;
+            t.SetParent(holder, false);
+            t.localPosition = at;
+            return t;
+        }
+
+        static void Rail(Transform t, float y, float z0, float z1, float x = 0f)
+        {
+            P(t, new Vector3(x, y, (z0 + z1) / 2f), new Vector3(0.034f, 0.008f, z1 - z0), GunInk);
+            for (float z = z0 + 0.012f; z < z1; z += 0.024f) P(t, new Vector3(x, y + 0.008f, z), new Vector3(0.038f, 0.008f, 0.01f), GunSteel);
+        }
+
+        static void Barrel(Transform t, Vector3 at, float diameter, float length, Color c)
+        {
+            Build.Cylinder(t, at, diameter, length, c).transform.localRotation = Quaternion.Euler(90, 0, 0);
+        }
+
+        /// AR-27: two-tone receiver, ventilated handguard, holo sight, curved magazine, flash hider and adjustable stock.
+        static float Rifle(Transform h)
+        {
+            P(h, new Vector3(0, 0, -0.02f), new Vector3(0.085f, 0.075f, 0.3f), GunSteel);                 // upper receiver
+            P(h, new Vector3(0, -0.055f, -0.03f), new Vector3(0.08f, 0.045f, 0.22f), GunTan);             // lower receiver
+            P(h, new Vector3(0.044f, 0.005f, -0.03f), new Vector3(0.004f, 0.03f, 0.06f), GunInk);          // ejection port
+            P(h, new Vector3(0.044f, -0.05f, 0.0f), new Vector3(0.006f, 0.012f, 0.02f), Palette.Amber, 0.8f); // selector
+            P(h, new Vector3(0, 0.005f, 0.22f), new Vector3(0.078f, 0.07f, 0.2f), GunPolymer);            // handguard
+            for (int i = 0; i < 5; i++)
+                foreach (float x in new[] { -0.04f, 0.04f })
+                    P(h, new Vector3(x, 0.005f, 0.15f + i * 0.035f), new Vector3(0.004f, 0.022f, 0.016f), GunInk);  // vent slots
+            Rail(h, 0.042f, -0.14f, 0.3f);
+            Barrel(h, new Vector3(0, 0.005f, 0.4f), 0.026f, 0.18f, GunSteel);
+            Barrel(h, new Vector3(0, 0.005f, 0.5f), 0.036f, 0.06f, GunInk);                                // flash hider
+            P(h, new Vector3(0, 0.03f, 0.29f), new Vector3(0.012f, 0.03f, 0.012f), GunInk);                 // front post
+            // Holo sight
+            P(h, new Vector3(0, 0.062f, -0.02f), new Vector3(0.05f, 0.022f, 0.08f), GunInk);
+            P(h, new Vector3(0, 0.095f, 0.0f), new Vector3(0.054f, 0.05f, 0.008f), GunInk);
+            P(h, new Vector3(0, 0.095f, 0.002f), new Vector3(0.036f, 0.032f, 0.004f), Palette.Hex("6fd3ff"), 0.4f);
+            P(h, new Vector3(0, 0.095f, 0.004f), new Vector3(0.004f, 0.004f, 0.002f), Palette.Hex("ff3b3b"), 4f);
+            // Grip, trigger guard and stock
+            var grip = P(h, new Vector3(0, -0.11f, -0.1f), new Vector3(0.05f, 0.11f, 0.055f), GunPolymer);
+            grip.transform.localRotation = Quaternion.Euler(-16, 0, 0);
+            P(h, new Vector3(0, -0.09f, -0.04f), new Vector3(0.012f, 0.008f, 0.06f), GunInk);
+            P(h, new Vector3(0, -0.065f, -0.4f + 0.18f), new Vector3(0.03f, 0.03f, 0.18f), GunInk);       // buffer tube
+            P(h, new Vector3(0, -0.06f, -0.34f), new Vector3(0.06f, 0.1f, 0.08f), GunPolymer);              // stock
+            P(h, new Vector3(0, -0.06f, -0.385f), new Vector3(0.064f, 0.108f, 0.012f), GunInk);             // butt pad
+            P(h, new Vector3(0.045f, 0.01f, 0.1f), new Vector3(0.004f, 0.006f, 0.12f), Palette.Amber, 0.6f); // accent line
+            var mag = Part(h, "Mag", new Vector3(0, -0.12f, 0.04f));
+            P(mag, Vector3.zero, new Vector3(0.05f, 0.13f, 0.07f), GunInk).transform.localRotation = Quaternion.Euler(14, 0, 0);
+            P(mag, new Vector3(0, -0.07f, 0.02f), new Vector3(0.056f, 0.02f, 0.078f), GunSteel).transform.localRotation = Quaternion.Euler(14, 0, 0);
+            return 0.54f;
+        }
+
+        /// Breacher shotgun: wood furniture, tube magazine under the barrel, pump with grip ridges and shell carrier.
+        static float Shotgun(Transform h)
+        {
+            Color wood = Palette.Hex("5a3a24"), woodDark = Palette.Hex("3b2617");
+            P(h, new Vector3(0, 0, -0.02f), new Vector3(0.09f, 0.09f, 0.26f), GunSteel);                  // receiver
+            P(h, new Vector3(0.046f, 0.01f, 0.0f), new Vector3(0.004f, 0.04f, 0.09f), GunInk);              // loading port
+            Barrel(h, new Vector3(0, 0.025f, 0.28f), 0.04f, 0.36f, GunInk);                                 // barrel
+            Barrel(h, new Vector3(0, -0.022f, 0.24f), 0.036f, 0.3f, GunSteel);                              // tube magazine
+            P(h, new Vector3(0, 0.05f, 0.45f), new Vector3(0.016f, 0.012f, 0.012f), Palette.Amber, 2f);     // bead sight
+            P(h, new Vector3(0, 0.05f, 0.18f), new Vector3(0.012f, 0.006f, 0.48f), GunSteel);               // vent rib
+            var pump = Part(h, "Pump", new Vector3(0, -0.02f, 0.22f));
+            P(pump, Vector3.zero, new Vector3(0.07f, 0.06f, 0.14f), wood);
+            for (int i = 0; i < 6; i++) P(pump, new Vector3(0, -0.031f, -0.055f + i * 0.022f), new Vector3(0.072f, 0.006f, 0.008f), woodDark);
+            // Shell carrier with three shells
+            P(h, new Vector3(-0.05f, 0.0f, -0.02f), new Vector3(0.012f, 0.05f, 0.1f), GunInk);
+            for (int i = 0; i < 3; i++) Barrel(h, new Vector3(-0.058f, 0.0f, -0.05f + i * 0.03f), 0.022f, 0.05f, Palette.Hex("b8342a"));
+            var grip = P(h, new Vector3(0, -0.085f, -0.12f), new Vector3(0.055f, 0.1f, 0.06f), wood);
+            grip.transform.localRotation = Quaternion.Euler(-22, 0, 0);
+            P(h, new Vector3(0, -0.065f, -0.05f), new Vector3(0.012f, 0.008f, 0.07f), GunInk);
+            P(h, new Vector3(0, -0.04f, -0.28f), new Vector3(0.065f, 0.09f, 0.22f), wood);                 // stock
+            P(h, new Vector3(0, -0.045f, -0.395f), new Vector3(0.068f, 0.1f, 0.014f), GunInk);
+            var mag = Part(h, "Mag", new Vector3(-0.058f, 0.0f, 0.03f));                                     // a shell, fed by hand
+            Barrel(mag, Vector3.zero, 0.024f, 0.06f, Palette.Hex("b8342a"));
+            Barrel(mag, new Vector3(0, 0, -0.03f), 0.026f, 0.012f, Palette.Hex("c9a24a"));
+            return 0.47f;
+        }
+
+        /// LR-50: long fluted barrel with muzzle brake, scope with glowing lens, bolt handle, bipod and cheek rest.
+        static float Sniper(Transform h)
+        {
+            Color olive = Palette.Hex("3d4433");
+            P(h, new Vector3(0, 0, -0.04f), new Vector3(0.08f, 0.08f, 0.34f), olive);                     // chassis
+            P(h, new Vector3(0, 0.03f, 0.0f), new Vector3(0.06f, 0.03f, 0.24f), GunSteel);                  // action
+            Barrel(h, new Vector3(0, 0.02f, 0.38f), 0.03f, 0.5f, GunInk);
+            for (int i = 0; i < 4; i++) P(h, new Vector3(0, 0.036f, 0.2f + i * 0.08f), new Vector3(0.006f, 0.004f, 0.05f), GunSteel); // fluting
+            P(h, new Vector3(0, 0.02f, 0.65f), new Vector3(0.05f, 0.036f, 0.07f), GunSteel);                // muzzle brake
+            foreach (float x in new[] { -0.026f, 0.026f }) P(h, new Vector3(x, 0.02f, 0.65f), new Vector3(0.004f, 0.02f, 0.05f), GunInk);
+            P(h, new Vector3(0, 0, 0.2f), new Vector3(0.07f, 0.06f, 0.16f), olive);                         // forend
+            // Scope
+            Barrel(h, new Vector3(0, 0.1f, 0.03f), 0.05f, 0.26f, GunInk);
+            Barrel(h, new Vector3(0, 0.1f, 0.175f), 0.07f, 0.06f, GunInk);
+            Barrel(h, new Vector3(0, 0.1f, -0.11f), 0.062f, 0.05f, GunInk);
+            P(h, new Vector3(0, 0.1f, 0.207f), new Vector3(0.05f, 0.05f, 0.004f), Palette.Hex("b47cff"), 2f);
+            Barrel(h, new Vector3(0.04f, 0.1f, 0.03f), 0.022f, 0.02f, GunSteel);                            // turret
+            P(h, new Vector3(0, 0.124f, 0.03f), new Vector3(0.022f, 0.02f, 0.022f), GunSteel);
+            foreach (float z in new[] { -0.04f, 0.1f }) P(h, new Vector3(0, 0.065f, z), new Vector3(0.03f, 0.03f, 0.02f), GunInk); // rings
+            // Bolt handle
+            P(h, new Vector3(0.05f, 0.03f, -0.08f), new Vector3(0.05f, 0.01f, 0.01f), GunSteel);
+            Build.Sphere(h, new Vector3(0.078f, 0.03f, -0.08f), 0.024f, GunInk, 0, false);
+            // Bipod folded under the forend
+            foreach (float x in new[] { -0.02f, 0.02f }) P(h, new Vector3(x, -0.04f, 0.24f), new Vector3(0.008f, 0.008f, 0.14f), GunInk);
+            var grip = P(h, new Vector3(0, -0.1f, -0.15f), new Vector3(0.05f, 0.11f, 0.06f), GunPolymer);
+            grip.transform.localRotation = Quaternion.Euler(-12, 0, 0);
+            P(h, new Vector3(0, -0.07f, -0.08f), new Vector3(0.012f, 0.008f, 0.06f), GunInk);
+            P(h, new Vector3(0, -0.02f, -0.34f), new Vector3(0.066f, 0.1f, 0.2f), olive);                  // stock
+            P(h, new Vector3(0, 0.04f, -0.32f), new Vector3(0.05f, 0.025f, 0.12f), GunPolymer);            // cheek rest
+            P(h, new Vector3(0, -0.02f, -0.445f), new Vector3(0.07f, 0.11f, 0.014f), GunInk);
+            var mag = Part(h, "Mag", new Vector3(0, -0.07f, 0.04f));
+            P(mag, Vector3.zero, new Vector3(0.048f, 0.07f, 0.09f), GunInk);
+            P(mag, new Vector3(0, -0.038f, 0), new Vector3(0.052f, 0.012f, 0.094f), GunSteel);
+            return 0.7f;
+        }
+
+        /// P-9 sidearm: slide with serrations and amber sights, frame with rail, textured grip and extended magazine.
+        static float Pistol(Transform h)
+        {
+            P(h, new Vector3(0, 0.022f, 0.02f), new Vector3(0.062f, 0.05f, 0.25f), GunSteel);              // slide
+            for (int i = 0; i < 6; i++) foreach (float x in new[] { -0.032f, 0.032f })
+                P(h, new Vector3(x, 0.026f, -0.08f + i * 0.012f), new Vector3(0.004f, 0.034f, 0.005f), GunInk); // serrations
+            P(h, new Vector3(0.032f, 0.026f, 0.05f), new Vector3(0.004f, 0.016f, 0.05f), GunInk);           // ejection port
+            P(h, new Vector3(0, -0.012f, 0.03f), new Vector3(0.058f, 0.03f, 0.22f), GunPolymer);           // frame
+            Rail(h, -0.03f, 0.06f, 0.13f);
+            Barrel(h, new Vector3(0, 0.022f, 0.15f), 0.022f, 0.02f, GunInk);
+            P(h, new Vector3(0, 0.054f, 0.13f), new Vector3(0.008f, 0.012f, 0.01f), Palette.Amber, 2f);     // front sight
+            foreach (float x in new[] { -0.014f, 0.014f }) P(h, new Vector3(x, 0.054f, -0.09f), new Vector3(0.008f, 0.012f, 0.01f), Palette.Amber, 2f);
+            var grip = P(h, new Vector3(0, -0.085f, -0.06f), new Vector3(0.054f, 0.13f, 0.07f), GunPolymer);
+            grip.transform.localRotation = Quaternion.Euler(-14, 0, 0);
+            for (int i = 0; i < 5; i++)
+            {
+                var ridge = P(h, new Vector3(0, -0.05f - i * 0.022f, -0.055f - i * 0.005f), new Vector3(0.058f, 0.006f, 0.06f), GunInk);
+                ridge.transform.localRotation = Quaternion.Euler(-14, 0, 0);
+            }
+            P(h, new Vector3(0, -0.04f, 0.02f), new Vector3(0.01f, 0.008f, 0.05f), GunInk);                 // trigger guard
+            P(h, new Vector3(0, -0.03f, 0.005f), new Vector3(0.006f, 0.022f, 0.006f), GunEdge);             // trigger
+            P(h, new Vector3(0.031f, 0.0f, -0.02f), new Vector3(0.004f, 0.01f, 0.03f), Palette.Amber, 0.6f);
+            var mag = Part(h, "Mag", new Vector3(0, -0.15f, -0.075f));
+            P(mag, Vector3.zero, new Vector3(0.046f, 0.06f, 0.056f), GunInk).transform.localRotation = Quaternion.Euler(-14, 0, 0);
+            P(mag, new Vector3(0, -0.032f, -0.008f), new Vector3(0.052f, 0.014f, 0.064f), GunSteel).transform.localRotation = Quaternion.Euler(-14, 0, 0);
+            return 0.17f;
         }
 
         /// Small hovering combat drone: hull, two rotor arms and a cyan sensor eye.

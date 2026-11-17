@@ -21,6 +21,13 @@ namespace RiftWard.Client
         public int Kills, Headshots, Shots, Hits, Missions, Victories, BestWave;
 
         public float Accuracy => Shots > 0 ? (float)Hits / Shots : 0f;
+        public int Level = 1, LevelXp, LevelNeed = 150, Keys, WeaponKeys, TalentPoints;
+        public Dictionary<string, int> Talents = new Dictionary<string, int>();
+        public List<GearItem> Inventory = new List<GearItem>();
+        public Dictionary<string, string> Equipment = new Dictionary<string, string>();
+        public Dictionary<string, float> Bonus = new Dictionary<string, float>();
+
+        public float BonusOf(string key) => Bonus.TryGetValue(key, out var v) ? v : 0f;
 
         public static Profile From(Dictionary<string, object> d)
         {
@@ -46,6 +53,8 @@ namespace RiftWard.Client
                         p.Loadout.Levels[kv.Key] = stats;
                     }
             }
+            var rarity = lo?.Obj("rarity");
+            if (rarity != null) foreach (var kv in rarity) p.Loadout.Rarity[kv.Key] = kv.Value is double rv ? (int)rv : 1;
             p.Loadout.Normalize();
             var record = d.Obj("stats");
             if (record != null)
@@ -53,6 +62,15 @@ namespace RiftWard.Client
                 p.Kills = record.Int("kills"); p.Headshots = record.Int("headshots"); p.Shots = record.Int("shots"); p.Hits = record.Int("hits");
                 p.Missions = record.Int("missions"); p.Victories = record.Int("victories"); p.BestWave = record.Int("best_wave");
             }
+            p.Level = Mathf.Max(1, d.Int("level", 1)); p.LevelXp = d.Int("level_xp"); p.LevelNeed = Mathf.Max(1, d.Int("level_need", 150));
+            p.Keys = d.Int("keys"); p.WeaponKeys = d.Int("weapon_keys"); p.TalentPoints = d.Int("talent_points");
+            var talents = d.Obj("talents");
+            if (talents != null) foreach (var kv in talents) p.Talents[kv.Key] = kv.Value is double n ? (int)n : 0;
+            foreach (var o in d.Arr("inventory") ?? new List<object>()) if (o is Dictionary<string, object> item) p.Inventory.Add(GearItem.From(item));
+            var equipment = d.Obj("equipment");
+            if (equipment != null) foreach (var kv in equipment) p.Equipment[kv.Key] = kv.Value?.ToString();
+            var bonus = d.Obj("bonus");
+            if (bonus != null) foreach (var kv in bonus) p.Bonus[kv.Key] = kv.Value is double n ? (float)n : 0f;
             return p;
         }
     }

@@ -31,7 +31,8 @@ namespace RiftWard.Client
         float heartbeat;
         bool releaseFireToResume;
         public bool Paused;
-        Transform weaponHolder, muzzle;
+        Transform weaponHolder, muzzle, magazine;
+        Vector3 magazineRest;
 
         readonly Dictionary<int, GameObject> actorViews = new Dictionary<int, GameObject>();
         readonly Dictionary<int, List<Transform>> droneViews = new Dictionary<int, List<Transform>>();
@@ -213,6 +214,7 @@ namespace RiftWard.Client
         }
 
         public void SetThirdPerson(bool on) => thirdPerson = on;
+        public void SelectSlot(int slot) => desiredSlot = slot;
         public void SetView(float newYaw, float newPitch) { yaw = newYaw; pitch = newPitch; }
 
         public static void LockCursor(bool locked)
@@ -578,6 +580,8 @@ namespace RiftWard.Client
                 shownSlot = me.Slot;
                 desiredSlot = me.Slot;
                 muzzle = Models.Viewmodel(me.WeaponId, weaponHolder);
+                magazine = weaponHolder.Find("Mag");
+                if (magazine != null) magazineRest = magazine.localPosition;
             }
             float dashT = me.DashCooldown > 0 ? Defs.DashCooldown - me.DashCooldown : 99f;
             float dash = me.Alive && dashT < 0.32f ? Mathf.Sin(Mathf.PI * dashT / 0.32f) : 0f;
@@ -585,8 +589,26 @@ namespace RiftWard.Client
             zoomFov = Mathf.Lerp(zoomFov, BaseFov * (zooming ? me.Zoom : 1f), 1f - Mathf.Exp(-14f * dt));
             Camera.fieldOfView = zoomFov + 7f * dash;
             shake = Mathf.Max(0, shake - dt);
-            weaponHolder.localPosition = WeaponRest + new Vector3(0.02f, -0.045f, -0.1f) * dash + new Vector3(0, 0, -shake);
-            weaponHolder.localRotation = Quaternion.Euler(new Vector3(6f, 2f, -6f) * dash);
+            // Reload: tilt the weapon, drop the magazine out of frame, seat a fresh one, then settle.
+            float reload = me.Reload > 0 && me.ReloadTime > 0 ? 1f - me.Reload / me.ReloadTime : 0f;
+            float tilt = reload > 0 ? Mathf.Sin(Mathf.PI * Mathf.Clamp01(reload)) : 0f;
+            float magDrop = 0f;
+            if (reload > 0)
+            {
+                if (reload < 0.15f) magDrop = 0f;
+                else if (reload < 0.4f) magDrop = Mathf.SmoothStep(0, 1, (reload - 0.15f) / 0.25f);
+                else if (reload < 0.6f) magDrop = 1f;
+                else if (reload < 0.82f) magDrop = 1f - Mathf.SmoothStep(0, 1, (reload - 0.6f) / 0.22f);
+            }
+            if (magazine != null)
+            {
+                magazine.localPosition = magazineRest + new Vector3(0, -0.32f, -0.04f) * magDrop;
+                magazine.gameObject.SetActive(magDrop < 0.98f);
+            }
+            float seat = reload > 0.8f && reload < 0.92f ? Mathf.Sin(Mathf.PI * (reload - 0.8f) / 0.12f) : 0f;
+            weaponHolder.localPosition = WeaponRest + new Vector3(0.02f, -0.045f, -0.1f) * dash + new Vector3(0, 0, -shake)
+                + new Vector3(-0.03f, -0.07f, -0.04f) * tilt + new Vector3(0, 0.012f, 0) * seat;
+            weaponHolder.localRotation = Quaternion.Euler(new Vector3(6f, 2f, -6f) * dash + new Vector3(-14f, 18f, 32f) * tilt + new Vector3(-4f, 0, 0) * seat);
         }
 
         void UpdateAudio(Actor me, float dt)

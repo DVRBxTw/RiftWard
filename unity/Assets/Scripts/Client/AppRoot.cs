@@ -267,6 +267,7 @@ namespace RiftWard.Client
             training = false;
             Client.Objective = "";
             Client.StartOffline(Mathf.Clamp(SelectedRegion, 0, Profile.Unlocked), Profile.Loadout, Profile.Admin, AdminSettings);
+            Client.Sim?.ApplyProfileBonus(Client.LocalId, Profile.BonusOf("hp"), Profile.BonusOf("damage"), Profile.BonusOf("speed"), Profile.BonusOf("reload"), Profile.BonusOf("crit"));
         }
 
         void ReturnHome()
@@ -382,6 +383,35 @@ namespace RiftWard.Client
             Screens.ShowAdmin();
             yield return Settle(0.4f);
             yield return Shot(folder, "unity-admin");
+            var demo = Profile.From(new Dictionary<string, object>
+            {
+                ["id"] = 1.0, ["username"] = "DVRBXTW", ["unlocked"] = 1.0, ["gold"] = 1240.0, ["tutorial_complete"] = true, ["admin"] = true,
+                ["level"] = 7.0, ["level_xp"] = 260.0, ["level_need"] = 450.0, ["keys"] = 12.0, ["talent_points"] = 2.0,
+                ["talents"] = new Dictionary<string, object> { ["hp"] = 2.0, ["damage"] = 3.0, ["crit"] = 1.0 },
+                ["inventory"] = new List<object>
+                {
+                    new Dictionary<string, object> { ["id"] = "a", ["slot"] = "armor", ["rarity"] = 3.0, ["stats"] = new Dictionary<string, object> { ["hp"] = 32.0, ["crit"] = 4.0 } },
+                    new Dictionary<string, object> { ["id"] = "b", ["slot"] = "module", ["rarity"] = 4.0, ["stats"] = new Dictionary<string, object> { ["damage"] = 16.0, ["speed"] = 6.0 } },
+                    new Dictionary<string, object> { ["id"] = "c", ["slot"] = "boots", ["rarity"] = 1.0, ["stats"] = new Dictionary<string, object> { ["speed"] = 3.0 } },
+                    new Dictionary<string, object> { ["id"] = "d", ["slot"] = "chip", ["rarity"] = 2.0, ["stats"] = new Dictionary<string, object> { ["crit"] = 5.0, ["hp"] = 10.0 } },
+                    new Dictionary<string, object> { ["id"] = "e", ["slot"] = "armor", ["rarity"] = 0.0, ["stats"] = new Dictionary<string, object> { ["hp"] = 6.0 } },
+                },
+                ["equipment"] = new Dictionary<string, object> { ["armor"] = "a", ["module"] = "b" },
+                ["bonus"] = new Dictionary<string, object> { ["hp"] = 42.0, ["damage"] = 22.0, ["speed"] = 6.0, ["crit"] = 5.0 },
+                ["loadout"] = new Dictionary<string, object> { ["owned"] = new List<object> { "pistol", "rifle", "sniper" }, ["equipped"] = new List<object> { "pistol", "sniper" } },
+            });
+            UpdateProfile(demo);
+            Screens.ShowCharacter();
+            yield return Settle(0.4f);
+            yield return Shot(folder, "unity-character");
+            Screens.ShowShop();
+            yield return Settle(0.4f);
+            yield return Shot(folder, "unity-shop");
+            Screens.PlayChestDemo(new List<GearItem>(demo.Inventory), 4);
+            yield return Settle(1.0f);
+            yield return Shot(folder, "unity-chest-charge");
+            yield return Settle(2.2f);
+            yield return Shot(folder, "unity-chest-open");
             Screens.ShowStory(0);
             yield return Settle(0.3f);
             yield return Shot(folder, "unity-story");
@@ -410,6 +440,16 @@ namespace RiftWard.Client
             sim.Fire(Client.LocalId, sim.Enemies.Values.First().Position + Vector3.up * Defs.HeadHeight);
             yield return Settle(0.05f);
             yield return Shot(folder, "unity-combat");
+            Client.Hud.ResetTransient();
+            yield return Settle(0.4f);
+            yield return Shot(folder, "unity-rifle");
+            me.Reload = me.ReloadTime * 0.55f;
+            yield return Settle(0.02f);
+            yield return Shot(folder, "unity-reload");
+            me.Reload = 0;
+            Client.SelectSlot(1);
+            yield return Settle(0.4f);
+            yield return Shot(folder, "unity-sniper");
             Client.Menus.OpenPause();
             yield return Settle(0.2f);
             yield return Shot(folder, "unity-pause");

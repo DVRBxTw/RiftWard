@@ -97,12 +97,27 @@ namespace RiftWard.Sim
 
         // ------------------------------------------------------------ weapons
 
+        /// Permanent account bonuses (talents + equipped gear) applied when a player joins a mission.
+        public void ApplyProfileBonus(int id, float hp, float damagePct, float speedPct, float reloadPct, float critPct)
+        {
+            if (!Actors.TryGetValue(id, out var a)) return;
+            hp = Mathf.Clamp(hp, 0, 400); damagePct = Mathf.Clamp(damagePct, 0, 200); speedPct = Mathf.Clamp(speedPct, 0, 60);
+            reloadPct = Mathf.Clamp(reloadPct, 0, 60); critPct = Mathf.Clamp(critPct, 0, 60);
+            a.MaxHp += hp;
+            a.Hp = a.MaxHp;
+            a.DamageMult *= 1f + damagePct / 100f;
+            a.Speed *= 1f + speedPct / 100f;
+            a.ReloadMult = Mathf.Max(0.4f, a.ReloadMult * (1f - reloadPct / 100f));
+            a.Critical = Mathf.Min(0.8f, a.Critical + critPct / 100f);
+            RefreshWeapon(a);
+        }
+
         public void RefreshWeapon(Actor a)
         {
             string id = a.WeaponId;
             var st = Defs.Weapons[id].StatsAt(a.Loadout.Level(id, "damage"), a.Loadout.Level(id, "mag"), a.Loadout.Level(id, "reload"));
             float adminDamage = a.IsAdmin ? a.Admin.Damage : 1f;
-            a.Damage = st.Damage * a.DamageMult * adminDamage;
+            a.Damage = st.Damage * a.DamageMult * adminDamage * Defs.WeaponRarityMult[a.Loadout.RarityOf(id)];
             a.FireInterval = Mathf.Max(0.045f, st.Interval * a.RateMult);
             a.Mag = st.Mag + a.MagBonus;
             a.ReloadTime = Mathf.Max(0.35f, st.Reload * a.ReloadMult);
@@ -244,6 +259,7 @@ namespace RiftWard.Sim
             Elapsed += dt;
             var hpBefore = new Dictionary<int, float>();
             foreach (var a in Actors.Values) hpBefore[a.Id] = a.Hp;
+            var armorBase = new Dictionary<int, float>(hpBefore);
             foreach (var a in Actors.Values)
             {
                 Inputs.TryGetValue(a.Id, out var input);
@@ -290,13 +306,26 @@ namespace RiftWard.Sim
             UpdateGadgets(dt);
             UpdateOrdnance(dt);
             UpdateBullets(dt);
+            ApplyArmor(armorBase);
             UpdatePlayers(dt);
             UpdateEnemyKinds(dt);
             UpdateGrenades(dt);
             UpdatePickups(dt);
+            ApplyArmor(armorBase);
             foreach (var a in Actors.Values)
                 if (hpBefore.TryGetValue(a.Id, out var before) && a.Hp < before && !(a.IsAdmin && a.Admin.God)) waveDamage += before - a.Hp;
             if (!waveGraded && Wave > 0 && Enemies.Count == 0) GradeWave();
+        }
+
+        /// Damage taken since the last check is reduced by each player's armour.
+        void ApplyArmor(Dictionary<int, float> baseline)
+        {
+            foreach (var a in Actors.Values)
+            {
+                if (baseline.TryGetValue(a.Id, out var before) && a.Armor > 0 && a.Hp < before && before > 0)
+                    a.Hp = before - (before - a.Hp) * (1f - a.Armor);
+                baseline[a.Id] = a.Hp;
+            }
         }
 
         /// Score a cleared wave: fast clears with little damage taken earn an S.
@@ -992,7 +1021,8 @@ namespace RiftWard.Sim
                 (i != Defs.BuffMine || a.MineLevel < Defs.MaxGadgetLevel) &&
                 (i != Defs.BuffMissile || a.MissileLevel < Defs.MaxGadgetLevel) &&
                 (i != Defs.BuffLightning || a.LightningLevel < Defs.MaxGadgetLevel) &&
-                (i != Defs.BuffMagnet || a.Magnet < 10f)).OrderBy(_ => rng.Next()).Take(3).ToArray();
+                (i != Defs.BuffMagnet || a.Magnet < 10f) &&
+                (i != Defs.BuffArmor || a.Armor < Defs.MaxArmor)).OrderBy(_ => rng.Next()).Take(3).ToArray();
             for (int i = 0; i < pool.Length; i++)
             {
                 float roll = Rand01();
@@ -1050,6 +1080,7 @@ namespace RiftWard.Sim
                 case Defs.BuffMissile: a.MissileLevel = Mathf.Min(Defs.MaxGadgetLevel, a.MissileLevel + steps); break;
                 case Defs.BuffLightning: a.LightningLevel = Mathf.Min(Defs.MaxGadgetLevel, a.LightningLevel + steps); break;
                 case Defs.BuffMagnet: a.Magnet = Mathf.Min(10f, a.Magnet * (1f + 0.4f * m)); break;
+                case Defs.BuffArmor: a.Armor = Mathf.Min(Defs.MaxArmor, a.Armor + 0.08f * m); break;
             }
             // Evolutions: a fully built gadget transforms into a stronger form.
             if (!a.DroneEvolved && a.Drones >= Defs.MaxDrones && a.DroneDamageMult >= 1.7f)

@@ -54,30 +54,39 @@ class ServiceTests(unittest.TestCase):
         account = self.register()
         auth = {"Authorization":"Bearer "+account["token"]}
         key = {"X-Server-Key":self.store.server_key}
+        aid = account["profile"]["id"]
         self.assertEqual(account["profile"]["gold"],0)
-        self.assertEqual(account["profile"]["loadout"]["owned"],["pistol"])
+        lo = account["profile"]["loadout"]
+        self.assertEqual((lo["owned"], lo["equipped"], lo["rarity"]), (["rifle"], ["rifle"], {"rifle": 0}))
         # Players cannot grant themselves gold; only the game server can.
-        self.assertEqual(self.call("/api/server/reward",{"account_id":account["profile"]["id"],"gold":500})[0],403)
-        self.assertEqual(self.call("/api/server/reward",{"account_id":account["profile"]["id"],"gold":99999},key)[0],400)
-        code, reward = self.call("/api/server/reward",{"account_id":account["profile"]["id"],"gold":1000},key)
+        self.assertEqual(self.call("/api/server/reward",{"account_id":aid,"gold":500})[0],403)
+        self.assertEqual(self.call("/api/server/reward",{"account_id":aid,"gold":99999},key)[0],400)
+        code, reward = self.call("/api/server/reward",{"account_id":aid,"gold":1000},key)
         self.assertEqual((code,reward["profile"]["gold"]),(200,1000))
-        self.assertEqual(self.call("/api/shop/buy",{"weapon":"sniper"},auth)[0],200)
-        code, broke = self.call("/api/shop/buy",{"weapon":"rifle"},auth)
-        self.assertEqual((code,broke["error"]),(400,"金幣不足"))
-        code, upgraded = self.call("/api/shop/upgrade",{"weapon":"pistol","stat":"damage"},auth)
+        # Weapons are no longer sold; gold still buys upgrades.
+        self.assertEqual(self.call("/api/shop/buy",{"weapon":"sniper"},auth)[0],400)
+        code, upgraded = self.call("/api/shop/upgrade",{"weapon":"rifle","stat":"damage"},auth)
         self.assertEqual(code,200)
-        self.assertEqual(upgraded["profile"]["gold"],1000-800-120)
-        profile = self.store.profile(account["profile"]["id"])
-        self.assertEqual(profile["loadout"]["owned"],["pistol","sniper"])
-        self.assertEqual(profile["loadout"]["levels"]["pistol"]["damage"],1)
-        self.assertEqual(self.call("/api/shop/upgrade",{"weapon":"rifle","stat":"damage"},auth)[0],400)
-        self.assertEqual(profile["loadout"]["equipped"],["pistol","sniper"])
-        code, equipped = self.call("/api/shop/equip",{"weapons":["sniper"]},auth)
-        self.assertEqual((code,equipped["profile"]["loadout"]["equipped"]),(200,["sniper"]))
-        self.assertEqual(self.call("/api/shop/equip",{"weapons":["sniper","rifle"]},auth)[0],400)
-        self.assertEqual(self.call("/api/shop/equip",{"weapons":["sniper","sniper"]},auth)[0],400)
-        self.assertEqual(self.call("/api/shop/equip",{"weapons":["pistol","sniper","pistol"]},auth)[0],400)
-        self.assertEqual(self.call("/api/shop/upgrade",{"weapon":"pistol","stat":"speed"},auth)[0],400)
+        self.assertEqual(upgraded["profile"]["loadout"]["levels"]["rifle"]["damage"],1)
+        self.assertEqual(self.call("/api/shop/upgrade",{"weapon":"sniper","stat":"damage"},auth)[0],400)
+        self.assertEqual(self.call("/api/shop/upgrade",{"weapon":"rifle","stat":"speed"},auth)[0],400)
+        # Weapon supply draws use their own keys.
+        self.assertEqual(self.call("/api/gacha/weapon",{"count":1},auth)[0],400)
+        with self.store.connect() as db:
+            db.execute("UPDATE progress SET weapon_keys=30 WHERE account_id=?", (aid,))
+        code, drawn = self.call("/api/gacha/weapon",{"count":10},auth)
+        self.assertEqual((code, len(drawn["weapons"]), drawn["profile"]["weapon_keys"], drawn["profile"]["keys"]), (200, 10, 20, 0))
+        lo = drawn["profile"]["loadout"]
+        for w in drawn["weapons"]:
+            self.assertIn(w["weapon"], lo["owned"])
+            self.assertGreaterEqual(lo["rarity"][w["weapon"]], w["rarity"] if w["outcome"] != "duplicate" else 0)
+        self.assertLessEqual(len(lo["equipped"]), 2)
+        code, equipped = self.call("/api/shop/equip",{"weapons":[lo["owned"][0]]},auth)
+        self.assertEqual((code,equipped["profile"]["loadout"]["equipped"]),(200,[lo["owned"][0]]))
+        # Legacy loadouts keep their guns, counted as 普通.
+        with self.store.connect() as db:
+            db.execute("UPDATE progress SET loadout=? WHERE account_id=?", ('{"owned":["pistol","sniper"],"equipped":["pistol"]}', aid))
+        self.assertEqual(self.store.profile(aid)["loadout"]["rarity"], {"pistol": 1, "sniper": 1})
 
     def test_admin_grant(self):
         account = self.register()
@@ -93,6 +102,40 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(self.call("/api/admin/grant",{"username":"*","gold":10},auth)[1]["profile"]["gold"],260)
         self.assertEqual(self.call("/api/admin/grant",{"username":"nobody_here","gold":10},auth)[0],400)
         self.assertEqual(self.call("/api/admin/grant",{"username":"Beta_Test","gold":-5},auth)[0],400)
+
+    def test_levels_talents_keys_and_gear(self):
+        account = self.register()
+        aid = account["profile"]["id"]
+        auth = {"Authorization": "Bearer " + account["token"]}
+        key = {"X-Server-Key": self.store.server_key}
+        p = account["profile"]
+        self.assertEqual((p["level"], p["talent_points"], p["keys"]), (1, 0, 0))
+        # Missions grant account XP: 40 kills * 3 + 20 waves * 15 + 200 victory = 620 -> level 4 (150 + 200 + 250 = 600).
+        record = {"kills": 40, "headshots": 12, "shots": 300, "hits": 180, "wave": 20, "victory": True}
+        self.call("/api/server/reward", {"account_id": aid, "gold": 0, "stats": record}, key)
+        p = self.store.profile(aid)
+        self.assertEqual((p["level"], p["talent_points"]), (4, 3))
+        code, r = self.call("/api/talent/assign", {"talent": "damage", "points": 2}, auth)
+        self.assertEqual((code, r["profile"]["talents"]["damage"], r["profile"]["talent_points"], r["profile"]["bonus"]["damage"]), (200, 2, 1, 4))
+        self.assertEqual(self.call("/api/talent/assign", {"talent": "damage", "points": 2}, auth)[0], 400)
+        # No keys -> no draws; an admin grants keys.
+        self.assertEqual(self.call("/api/gacha/draw", {"count": 1}, auth)[0], 400)
+        self.store.admin_file.write_text("beta_test\n", encoding="utf-8")
+        self.assertEqual(self.call("/api/admin/grant", {"username": "Beta_Test", "keys": 11}, auth)[1]["profile"]["keys"], 11)
+        code, r = self.call("/api/gacha/draw", {"count": 10}, auth)
+        self.assertEqual((code, len(r["items"]), r["profile"]["keys"], len(r["profile"]["inventory"])), (200, 10, 1, 10))
+        item = r["items"][0]
+        self.assertIn(item["rarity"], range(5))
+        code, r = self.call("/api/gear/equip", {"item": item["id"]}, auth)
+        self.assertEqual(r["profile"]["equipment"][item["slot"]], item["id"])
+        primary = service.GEAR_SLOTS[item["slot"]]
+        self.assertGreaterEqual(r["profile"]["bonus"][primary], item["stats"][primary])
+        self.assertEqual(self.call("/api/gear/salvage", {"item": item["id"]}, auth)[0], 400)
+        other = r["profile"]["inventory"][1]
+        gold = r["profile"]["gold"]
+        code, r = self.call("/api/gear/salvage", {"item": other["id"]}, auth)
+        self.assertEqual((code, len(r["profile"]["inventory"])), (200, 9))
+        self.assertGreater(r["profile"]["gold"], gold)
 
     def test_lifetime_stats(self):
         account = self.register()

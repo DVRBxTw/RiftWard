@@ -6,7 +6,7 @@ namespace RiftWard.Sim
     /// Static game data shared by server and client. Values mirror the Godot 0.4.2 build.
     public static class Defs
     {
-        public const string Version = "0.6.0-unity.1";
+        public const string Version = "0.7.0-unity.1";
 
         // Player movement
         public const float EyeHeight = 1.65f;
@@ -117,10 +117,15 @@ namespace RiftWard.Sim
             new BuffDef("追蹤飛彈", "定時發射追蹤飛彈 Lv +{0}", 1),
             new BuffDef("閃電鏈", "定時釋放連鎖閃電 Lv +{0}", 1),
             new BuffDef("磁力場", "經驗晶體吸收範圍 +{0}%", 40),
+            new BuffDef("複合裝甲", "受到的傷害 -{0}%", 8),
         };
 
         public const int BuffDrone = 10, BuffDroneDamage = 11, BuffDroneRate = 12, BuffPlasma = 13, BuffPlasmaRate = 14;
-        public const int BuffOrbit = 15, BuffMine = 16, BuffMissile = 17, BuffLightning = 18, BuffMagnet = 19;
+        /// Weapon rarity (劣質, 普通, 稀世, 傳奇, 神話) scales its damage.
+        public static readonly float[] WeaponRarityMult = { 0.9f, 1f, 1.15f, 1.35f, 1.6f };
+
+        public const int BuffOrbit = 15, BuffMine = 16, BuffMissile = 17, BuffLightning = 18, BuffMagnet = 19, BuffArmor = 20;
+        public const float MaxArmor = 0.6f;
         public const int MaxGadgetLevel = 5;
         public const float BaseMagnet = 2.5f, EliteEvery = 3;
 
