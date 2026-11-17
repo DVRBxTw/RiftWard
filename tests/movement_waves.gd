@@ -14,6 +14,7 @@ func _run():
 	game.set_process(false)
 	game.set_physics_process(false)
 	game.test_mode = false
+	game.enemy_variety = false
 	game._start_mission(0)
 	game.local_id = 1
 	var authoritative: Dictionary = game.actors[1].duplicate(true)

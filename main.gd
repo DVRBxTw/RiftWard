@@ -17,6 +17,8 @@ const DASH_VISUAL_DURATION = 0.32
 const BASE_FOV = 80.0
 const DASH_FOV_BOOST = 7.0
 const WEAPON_REST_POSITION = Vector3(0.27,-0.23,-0.48)
+# Cover walls: [center_x, center_z, half_x, half_z, height]. Block movement and enemy bullets.
+const COVERS = [[-6.0,-4.0,2.0,0.35,1.8],[6.0,-4.0,2.0,0.35,1.8],[-6.0,6.0,0.35,2.0,1.8],[6.0,6.0,0.35,2.0,1.8],[0.0,-10.0,2.5,0.35,1.8],[-13.0,1.0,0.35,2.5,1.8],[13.0,1.0,0.35,2.5,1.8]]
 const HEAD_HEIGHT = 1.65
 const HEAD_RADIUS = 0.3
 const HEADSHOT_MULTIPLIER = 2.0
@@ -58,6 +60,8 @@ var health_bar: ProgressBar
 var dash_bar: ProgressBar
 var view_label: Label
 var third_person = false
+var desired_slot = 0
+var zoom_fov = 0.0
 var hit_flash = 0.0
 var head_flash = 0.0
 var hit_marker: Label
@@ -124,7 +128,7 @@ func _ready():
 		_start_mission(0)
 
 func _setup_input():
-	for pair in [["forward", KEY_W], ["back", KEY_S], ["left", KEY_A], ["right", KEY_D], ["dash", KEY_SHIFT], ["jump", KEY_SPACE], ["reload", KEY_R], ["toggle_view", KEY_V]]:
+	for pair in [["forward", KEY_W], ["back", KEY_S], ["left", KEY_A], ["right", KEY_D], ["dash", KEY_SHIFT], ["jump", KEY_SPACE], ["reload", KEY_R], ["toggle_view", KEY_V], ["skill", KEY_Q], ["interact", KEY_E]]:
 		if InputMap.has_action(pair[0]): continue
 		InputMap.add_action(pair[0])
 		var ev = InputEventKey.new()
@@ -413,7 +417,10 @@ func _build_world():
 	for z in [-13,13]:
 		for x in [-8,8]:
 			_cube(arena,Vector3(x,0.5,z),Vector3(2,1,2),Color("3a4e5c"))
-	# Central floating reactor, decorative; combat plane remains unobstructed.
+	for c in COVERS:
+		_cube(arena,Vector3(c[0],c[4]/2.0,c[1]),Vector3(c[2]*2,c[4],c[3]*2),Color("3d5568"))
+		_cube(arena,Vector3(c[0],c[4]+0.03,c[1]),Vector3(c[2]*2+0.06,0.06,c[3]*2+0.06),CYAN,1.5)
+	# Central floating reactor, decorative.
 	var ring = TorusMesh.new()
 	ring.inner_radius = 2.6
 	ring.outer_radius = 2.8
@@ -726,6 +733,10 @@ func _input(event):
 		yaw = wrapf(yaw-event.screen_relative.x*LOOK_SENSITIVITY,-PI,PI)
 		pitch = clampf(pitch-event.screen_relative.y*LOOK_SENSITIVITY,-LOOK_LIMIT,LOOK_LIMIT)
 		get_viewport().set_input_as_handled()
+	if event is InputEventKey and event.pressed and not event.echo and mode == "playing" and not modal_open and event.physical_keycode >= KEY_1 and event.physical_keycode <= KEY_4:
+		desired_slot = event.physical_keycode-KEY_1
+	if event is InputEventMouseButton and event.pressed and mode == "playing" and not modal_open and event.button_index in [MOUSE_BUTTON_WHEEL_UP,MOUSE_BUTTON_WHEEL_DOWN]:
+		desired_slot = _cycle_slot(1 if event.button_index == MOUSE_BUTTON_WHEEL_DOWN else -1)
 	if event is InputEventKey and event.pressed and not event.echo and event.physical_keycode == KEY_V and mode == "playing" and not modal_open:
 		third_person = not third_person
 		get_viewport().set_input_as_handled()
@@ -738,6 +749,9 @@ func _input(event):
 		elif mode == "playing" and is_instance_valid(pause_overlay):
 			get_viewport().set_input_as_handled()
 			_close_pause_menu()
+
+func _cycle_slot(step: int) -> int:
+	return wrapi(desired_slot+step,0,4)
 
 func _show_pause_menu():
 	pause_overlay = Control.new()
@@ -799,7 +813,7 @@ func _physics_process(dt):
 			var move = Input.get_vector("left","right","forward","back") if active else Vector2.ZERO
 			var eye: Vector3 = actors[local_id].p+Vector3.UP*EYE_HEIGHT if actors.has(local_id) else camera.position
 			var target = (camera.global_position if third_person else eye)+_look_direction()*SHOT_RANGE
-			var packet = {"m":move,"yaw":yaw,"aim":target,"reload":Input.is_action_pressed("reload") and active,"fire":Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT) and active and not release_fire_to_resume,"dash":Input.is_action_pressed("dash") and active,"jump":Input.is_action_pressed("jump") and active}
+			var packet = {"m":move,"yaw":yaw,"aim":target,"reload":Input.is_action_pressed("reload") and active,"slot":desired_slot,"skill":Input.is_action_pressed("skill") and active,"interact":Input.is_action_pressed("interact") and active,"fire":Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT) and active and not release_fire_to_resume,"dash":Input.is_action_pressed("dash") and active,"jump":Input.is_action_pressed("jump") and active}
 			if network == "client":
 				input_sequence += 1
 				packet["seq"] = input_sequence
@@ -848,24 +862,25 @@ func _broadcast_state():
 		ids.append(id)
 		var a = actors[id]
 		var dash_direction: Vector3 = a.get("dash_direction",Vector3.ZERO)
-		a_data.append_array(PackedFloat32Array([a.p.x,a.p.y,a.p.z,a.hp,a.cd,a.dash,a.y,a.v,a.get("max_hp",100),a.get("speed",6.5),a.get("fire_interval",0.16),a.get("ack",0),a.get("dash_left",0),dash_direction.x,dash_direction.y,dash_direction.z,a.get("ammo",MAG_SIZE),a.get("mag",MAG_SIZE),float(a.get("reload",0))/maxf(0.01,float(a.get("reload_time",RELOAD_TIME)))]))
+		a_data.append_array(PackedFloat32Array([a.p.x,a.p.y,a.p.z,a.hp,a.cd,a.dash,a.y,a.v,a.get("max_hp",100),a.get("speed",6.5),a.get("fire_interval",0.16),a.get("ack",0),a.get("dash_left",0),dash_direction.x,dash_direction.y,dash_direction.z,a.get("ammo",MAG_SIZE),a.get("mag",MAG_SIZE),float(a.get("reload",0))/maxf(0.01,float(a.get("reload_time",RELOAD_TIME))),a.get("slot",0),a.get("skill_cd",0),a.get("revive",0)]))
 	for id in enemies:
 		var e = enemies[id]
-		e_data.append_array(PackedFloat32Array([id,e.p.x,e.p.y,e.p.z,e.hp,e.y,1.0 if e.boss else 0.0,e.get("max_hp",e.hp)]))
+		e_data.append_array(PackedFloat32Array([id,e.p.x,e.p.y,e.p.z,e.hp,e.y,1.0 if e.boss else 0.0,e.get("max_hp",e.hp),e.get("kind_id",0),e.get("state",0)]))
 	_snapshot.rpc(ids,a_data,e_data,wave,kills,elapsed)
 
 @rpc("authority", "call_remote", "unreliable_ordered")
 func _snapshot(ids: PackedInt32Array, a: PackedFloat32Array, e: PackedFloat32Array, w: int, k: int, t: float):
-	var stride = 19 if a.size() == ids.size()*19 else 16
-	if a.size() != ids.size()*stride or e.size()%8 != 0: return
+	var stride = 22 if a.size() == ids.size()*22 else 16
+	var estride = 10 if e.size()%10 == 0 else 8
+	if a.size() != ids.size()*stride or e.size()%estride != 0: return
 	var old_position: Vector3 = actors[local_id].p if actors.has(local_id) else Vector3.ZERO
 	var had_local = actors.has(local_id)
 	actors.clear()
 	for i in range(ids.size()):
 		var j = i*stride
 		actors[ids[i]] = {"p":Vector3(a[j],a[j+1],a[j+2]),"hp":a[j+3],"cd":a[j+4],"dash":a[j+5],"y":a[j+6],"v":a[j+7],"max_hp":a[j+8],"speed":a[j+9],"fire_interval":a[j+10],"ack":int(a[j+11]),"dash_left":a[j+12],"dash_direction":Vector3(a[j+13],a[j+14],a[j+15])}
-		if stride == 19:
-			actors[ids[i]].merge({"ammo":int(a[j+16]),"mag":int(a[j+17]),"reload_ratio":a[j+18]},true)
+		if stride == 22:
+			actors[ids[i]].merge({"ammo":int(a[j+16]),"mag":int(a[j+17]),"reload_ratio":a[j+18],"slot":int(a[j+19]),"skill_cd":a[j+20],"revive":a[j+21]},true)
 	if actors.has(local_id):
 		var local_actor = actors[local_id]
 		while not pending_movement.is_empty() and int(pending_movement[0].packet.seq) <= local_actor.ack:
@@ -881,8 +896,9 @@ func _snapshot(ids: PackedInt32Array, a: PackedFloat32Array, e: PackedFloat32Arr
 			camera_correction = Vector3.ZERO
 		local_position_initialized = true
 	enemies.clear()
-	for j in range(0,e.size(),8):
+	for j in range(0,e.size(),estride):
 		enemies[int(e[j])] = {"p":Vector3(e[j+1],e[j+2],e[j+3]),"hp":e[j+4],"y":e[j+5],"boss":e[j+6]>0,"max_hp":e[j+7]}
+		if estride == 10: enemies[int(e[j])].merge({"kind_id":int(e[j+8]),"state":int(e[j+9])},true)
 	wave = w
 	kills = k
 	elapsed = t
@@ -913,7 +929,25 @@ func _move_actor(a: Dictionary, packet: Dictionary, dt: float):
 	a.p.y = maxf(0,a.p.y+a.v*dt)
 	a.p.x = clampf(a.p.x,-21,21)
 	a.p.z = clampf(a.p.z,-21,21)
+	a.p = _push_out_of_cover(a.p,0.4)
 	a.y = rotation_y
+
+func _push_out_of_cover(p: Vector3, radius: float) -> Vector3:
+	for c in COVERS:
+		if p.y >= c[4]: continue
+		var dx = p.x-c[0]
+		var dz = p.z-c[1]
+		var ox = c[2]+radius-absf(dx)
+		var oz = c[3]+radius-absf(dz)
+		if ox > 0 and oz > 0:
+			if ox < oz: p.x += ox*signf(dx if dx != 0 else 1.0)
+			else: p.z += oz*signf(dz if dz != 0 else 1.0)
+	return p
+
+func _in_cover(p: Vector3) -> bool:
+	for c in COVERS:
+		if p.y < c[4] and absf(p.x-c[0]) < c[2] and absf(p.z-c[1]) < c[3]: return true
+	return false
 
 func _simulate(dt: float):
 	elapsed += dt
@@ -953,10 +987,16 @@ func _simulate(dt: float):
 		var toward: Vector3 = dest-e.p
 		toward.y = 0
 		e.y = atan2(-toward.x,-toward.z)
-		if distance > 1.4:
+		var keep = float(e.get("keep",1.4))
+		if distance > keep:
 			e.p += toward.normalized()*e.speed*dt
+		elif distance < keep-2.0:
+			e.p -= toward.normalized()*e.speed*0.6*dt
+		e.p = _push_out_of_cover(e.p,0.5 if not e.boss else 1.0)
+		e.p.x = clampf(e.p.x,-21,21)
+		e.p.z = clampf(e.p.z,-21,21)
 		e.cd = maxf(0,e.cd-dt)
-		if distance < (2.4 if e.boss else 1.7) and e.cd <= 0:
+		if distance < (2.4 if e.boss else 1.7) and e.cd <= 0 and not e.get("ranged_only",false):
 			e.cd = 0.85
 			actors[closest].hp = maxf(0,actors[closest].hp-float(e.get("damage",20 if e.boss else 10)))
 	if enemies.is_empty():
@@ -991,33 +1031,58 @@ func _spawn_wave():
 		next_enemy += 1
 
 func _fire(id: int, target: Vector3):
-	var origin: Vector3 = actors[id].p+Vector3.UP*EYE_HEIGHT
-	var direction = (target-origin).normalized()
+	var a = actors[id]
+	var origin: Vector3 = a.p+Vector3.UP*EYE_HEIGHT
+	var aim_direction = (target-origin).normalized()
+	var pellets = int(a.get("pellets",1))
+	var spread = float(a.get("spread",0.0))
+	for i in range(pellets):
+		var direction = aim_direction
+		if spread > 0:
+			direction = (aim_direction+Vector3(randf_range(-spread,spread),randf_range(-spread,spread)*0.7,randf_range(-spread,spread))).normalized()
+		_fire_ray(id,origin,direction,i == 0)
+	shots += 1
+
+func _fire_ray(id: int, origin: Vector3, direction: Vector3, primary: bool):
 	var best = -1
 	var nearest = SHOT_RANGE
 	var head = false
 	for eid in enemies:
-		var boss = enemies[eid].boss
+		var e = enemies[eid]
+		var boss = e.boss
+		var scale = float(e.get("scale",1.5 if boss else 1.0))
 		# Head and body are separate hit spheres; the head sits on top of the model.
-		var spheres = [[enemies[eid].p+Vector3(0,HEAD_HEIGHT*(1.5 if boss else 1.0),0),HEAD_RADIUS*(1.6 if boss else 1.0),true],[enemies[eid].p+Vector3(0,1.0*(1.4 if boss else 1.0),0),1.4 if boss else 0.75,false]]
-		for s in spheres:
-			var along = (s[0]-origin).dot(direction)
-			if along > 0 and along < nearest and s[0].distance_to(origin+direction*along) < s[1]:
+		var spheres = [[e.p+Vector3(0,HEAD_HEIGHT*scale,0),HEAD_RADIUS*scale*(1.07 if boss else 1.0),true],[e.p+Vector3(0,1.0*scale*(0.93 if boss else 1.0),0),(1.4 if boss else 0.75*scale),false]]
+		for sp in spheres:
+			var along = (sp[0]-origin).dot(direction)
+			if along > 0 and along < nearest and sp[0].distance_to(origin+direction*along) < sp[1]:
 				best = eid
 				nearest = along
-				head = s[2]
+				head = sp[2]
 	var end = origin+direction*nearest
+	var dealt = 0.0
+	var killed = false
 	if best != -1:
-		enemies[best].hp -= float(actors[id].get("damage",28))*(HEADSHOT_MULTIPLIER if head else 1.0)
-		if enemies[best].hp <= 0:
+		var e = enemies[best]
+		dealt = float(actors[id].get("damage",28))*(float(actors[id].get("head_mult",HEADSHOT_MULTIPLIER)) if head else 1.0)
+		dealt *= _damage_multiplier(e,direction,head,id)
+		e.hp -= dealt
+		if e.hp <= 0:
 			kills += 1
+			_on_enemy_killed(best,e,id)
 			enemies.erase(best)
-	shots += 1
-	if network == "host": _shot_fx.rpc(origin,end,best != -1,id,head)
-	_shot_fx(origin,end,best != -1,id,head)
+			killed = true
+	if network == "host": _shot_fx.rpc(origin,end,best != -1,id,head,dealt,killed)
+	_shot_fx(origin,end,best != -1,id,head,dealt,killed)
+
+func _damage_multiplier(_e: Dictionary, _direction: Vector3, _head: bool, _shooter: int) -> float:
+	return 1.0
+
+func _on_enemy_killed(_eid: int, _e: Dictionary, _shooter: int):
+	pass
 
 @rpc("authority", "call_remote", "unreliable")
-func _shot_fx(origin: Vector3, end: Vector3, hit: bool, shooter: int, head: bool = false):
+func _shot_fx(origin: Vector3, end: Vector3, hit: bool, shooter: int, head: bool = false, dealt: float = 0.0, killed: bool = false):
 	if dedicated: return
 	if shooter == local_id and is_instance_valid(muzzle): origin = muzzle.global_position
 	var length = origin.distance_to(end)
@@ -1035,7 +1100,15 @@ func _shot_fx(origin: Vector3, end: Vector3, hit: bool, shooter: int, head: bool
 		shake = 0.035
 		if hit: hit_flash = 0.18
 		head_flash = 0.35 if head else head_flash
+		if dealt > 0: _damage_number(end,dealt,head)
+		if killed: _on_local_kill()
 		_tone(1100 if head else (740 if hit else 360),0.045,0.1)
+
+func _damage_number(_at: Vector3, _amount: float, _head: bool):
+	pass
+
+func _on_local_kill():
+	pass
 
 func _tone(freq: float, duration: float, volume: float):
 	if dedicated or DisplayServer.get_name() == "headless": return
@@ -1071,7 +1144,7 @@ func _render_models(dt: float):
 			visuals.erase(id)
 	for id in enemies:
 		if not enemy_visuals.has(id):
-			enemy_visuals[id] = _actor_model(ORANGE,enemies[id].boss)
+			enemy_visuals[id] = _enemy_model(enemies[id])
 			add_child(enemy_visuals[id])
 			enemy_visuals[id].position = enemies[id].p
 		var v = enemy_visuals[id]
@@ -1087,6 +1160,9 @@ func _render_models(dt: float):
 			effects.append([burst,0.12])
 			v.queue_free()
 			enemy_visuals.erase(id)
+
+func _enemy_model(e: Dictionary) -> Node3D:
+	return _actor_model(ORANGE,e.boss)
 
 func _update_camera(dt: float):
 	if dedicated: return
@@ -1112,7 +1188,10 @@ func _update_camera(dt: float):
 		shake = maxf(0,shake-dt)
 		var animation_offset = blend/float(Engine.physics_ticks_per_second)
 		var strength = _dash_animation_strength(actors[local_id],animation_offset) if weapon.visible and not modal_open else 0.0
-		camera.fov = BASE_FOV+DASH_FOV_BOOST*strength
+		var zooming = Input.is_mouse_button_pressed(MOUSE_BUTTON_RIGHT) and not modal_open and weapon.visible
+		var target_fov = BASE_FOV*(float(actors[local_id].get("zoom",0.8)) if zooming else 1.0)
+		zoom_fov = lerpf(zoom_fov if zoom_fov > 0 else BASE_FOV,target_fov,1.0-exp(-14.0*dt))
+		camera.fov = zoom_fov+DASH_FOV_BOOST*strength
 		weapon.position = WEAPON_REST_POSITION+Vector3(0.02,-0.045,0.10)*strength+Vector3(0,0,shake)
 		weapon.rotation = Vector3(-0.10,0.04,-0.10)*strength
 	else:

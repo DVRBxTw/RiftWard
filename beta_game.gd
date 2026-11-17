@@ -1,6 +1,6 @@
 extends "res://main.gd"
 
-const VERSION = "0.3.0-beta.4"
+const VERSION = "0.4.0-beta.1"
 const SESSION_PATH = "user://login-session.cfg"
 const BASE_WEAPON_DAMAGE = 28.0
 const BUFFS = [
@@ -399,7 +399,13 @@ func _home():
 	var pv = VBoxContainer.new()
 	pv.add_theme_constant_override("separation",2)
 	pilot.add_child(pv)
-	pv.add_child(_label("槍手  " + str(profile.get("username","")),20))
+	var name_row = HBoxContainer.new()
+	pv.add_child(name_row)
+	name_row.add_child(_label("槍手  " + str(profile.get("username","")),20))
+	var fill = Control.new()
+	fill.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	name_row.add_child(fill)
+	name_row.add_child(_label("◆ %d G" % int(profile.get("gold",0)),20,GOLD))
 	status_label = _label(str(profile.get("save_error",_connection_text())),14,CYAN)
 	status_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	pv.add_child(status_label)
@@ -428,6 +434,8 @@ func _home():
 	var actions = HBoxContainer.new()
 	actions.add_theme_constant_override("separation",8)
 	left.add_child(actions)
+	var armory_button = _button("軍械庫",_show_armory,actions,46)
+	armory_button.add_theme_color_override("font_color",GOLD)
 	var story_button = _button("故事與教學",func():
 		if network != "offline":
 			multiplayer.multiplayer_peer = OfflineMultiplayerPeer.new()
@@ -436,7 +444,7 @@ func _home():
 		_show_story(),actions,46)
 	var logout_button = _button("登出帳號",_logout,actions,46)
 	var exit_button = _button("離開遊戲",_exit_game,actions,46)
-	for b in [story_button,logout_button,exit_button]:
+	for b in [armory_button,story_button,logout_button,exit_button]:
 		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		b.add_theme_font_size_override("font_size",16)
 	# Right: mission briefing card.
@@ -447,7 +455,7 @@ func _home():
 	brief.anchor_bottom = 1.0
 	brief.offset_left = -560
 	brief.offset_right = -48
-	brief.offset_top = -420
+	brief.offset_top = -470
 	brief.offset_bottom = -40
 	var bv = VBoxContainer.new()
 	bv.add_theme_constant_override("separation",10)
@@ -466,7 +474,7 @@ func _home():
 	grid.add_theme_constant_override("h_separation",24)
 	grid.add_theme_constant_override("v_separation",6)
 	bv.add_child(grid)
-	for pair in [["WASD","移動"],["左鍵","射擊（爆頭 ×2）"],["R","換彈"],["Shift","衝刺"],["Space","跳躍"],["V","切換視角"]]:
+	for pair in [["WASD","移動"],["左鍵","射擊（爆頭 ×2）"],["右鍵","瞄準 / 開鏡"],["R","換彈"],["1–4","切換武器"],["Q","手榴彈"],["Shift","衝刺"],["E","救援倒地隊友"],["Space","跳躍"],["V","切換視角"]]:
 		var row = HBoxContainer.new()
 		row.add_theme_constant_override("separation",8)
 		var key = _label(pair[0],14,CYAN)
@@ -474,11 +482,14 @@ func _home():
 		row.add_child(key)
 		row.add_child(_label(pair[1],15))
 		grid.add_child(row)
-	var tip = _label("擊敗敵人獲得經驗值，升級可三選一 Buff；等級越高敵人越強。
-敵人會發射能量彈，善用走位與衝刺閃避。",15,GOLD)
+	var tip = _label("升級三選一 Buff（普通 / 稀有 / 傳說）；完成任務獲得金幣，到軍械庫升級武器。
+小心狙擊兵的紅線預警、自爆蟲與正面無敵的護盾兵。",15,GOLD)
 	tip.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	bv.add_child(tip)
 	_select(clampi(selected,0,int(profile.get("unlocked",0))))
+
+func _show_armory():
+	pass
 
 func _logout():
 	if logging_out: return
@@ -724,6 +735,7 @@ func _simulate_bullets(dt: float):
 	# Enemies fire slow energy bolts that players can sidestep or dash through.
 	for e in enemies.values():
 		if alive.is_empty() or bullets.size() >= MAX_BULLETS: break
+		if not e.get("shoots",true): continue
 		e["shot_cd"] = float(e.get("shot_cd",randf_range(1.5,3.5)))-dt
 		if e.shot_cd > 0: continue
 		var target = -1
@@ -738,16 +750,10 @@ func _simulate_bullets(dt: float):
 			continue
 		var origin: Vector3 = e.p+Vector3(0,1.2*(1.5 if e.boss else 1.0),0)
 		var aim: Vector3 = (actors[target].p+Vector3(0,1.0,0)-origin).normalized()
-		var damage = float(e.get("damage",10))*0.6
-		if e.boss:
-			for spread in [-0.36,-0.18,0.0,0.18,0.36]:
-				_spawn_bullet(origin,aim.rotated(Vector3.UP,spread)*BOSS_BULLET_SPEED,damage*0.8)
-			e.shot_cd = randf_range(1.8,2.6)
-		else:
-			_spawn_bullet(origin,aim*BULLET_SPEED,damage)
-			e.shot_cd = randf_range(2.4,4.2)
+		_enemy_shoot(e,origin,aim)
 	for bid in bullets.keys():
 		var b = bullets[bid]
+		if b.get("grenade",false): continue
 		b.p += b.v*dt
 		b.life -= dt
 		var hit = false
@@ -759,30 +765,42 @@ func _simulate_bullets(dt: float):
 				hit = true
 				if pid == local_id: shake = 0.06
 				break
-		if hit or b.life <= 0 or absf(b.p.x) > 23 or absf(b.p.z) > 23 or b.p.y < 0:
+		if hit or b.life <= 0 or absf(b.p.x) > 23 or absf(b.p.z) > 23 or b.p.y < 0 or _in_cover(b.p):
 			bullets.erase(bid)
 
-func _spawn_bullet(origin: Vector3, velocity: Vector3, damage: float):
-	bullets[next_bullet] = {"p":origin,"v":velocity,"dmg":damage,"life":BULLET_LIFE}
+func _enemy_shoot(e: Dictionary, origin: Vector3, aim: Vector3):
+	var damage = float(e.get("damage",10))*0.6
+	if e.boss:
+		for spread in [-0.36,-0.18,0.0,0.18,0.36]:
+			_spawn_bullet(origin,aim.rotated(Vector3.UP,spread)*BOSS_BULLET_SPEED,damage*0.8)
+		e.shot_cd = randf_range(1.8,2.6)
+	else:
+		_spawn_bullet(origin,aim*BULLET_SPEED,damage)
+		e.shot_cd = randf_range(2.4,4.2)
+
+func _spawn_bullet(origin: Vector3, velocity: Vector3, damage: float, kind: int = 0) -> int:
+	bullets[next_bullet] = {"p":origin,"v":velocity,"dmg":damage,"life":BULLET_LIFE,"kind":kind}
 	next_bullet += 1
+	return next_bullet-1
 
 func _bullet_data() -> PackedFloat32Array:
 	var data = PackedFloat32Array()
 	for bid in bullets:
 		var b = bullets[bid]
-		data.append_array(PackedFloat32Array([bid,b.p.x,b.p.y,b.p.z,b.v.x,b.v.y,b.v.z]))
+		data.append_array(PackedFloat32Array([bid,b.p.x,b.p.y,b.p.z,b.v.x,b.v.y,b.v.z,b.get("kind",0)]))
 	return data
 
 @rpc("authority", "call_remote", "unreliable_ordered")
 func _bullets_sync(data: PackedFloat32Array):
-	if data.size()%7 != 0: return
+	if data.size()%8 != 0: return
 	var seen = {}
-	for j in range(0,data.size(),7):
+	for j in range(0,data.size(),8):
 		var bid = int(data[j])
 		seen[bid] = true
 		var p = Vector3(data[j+1],data[j+2],data[j+3])
 		if bullets.has(bid): bullets[bid].p = bullets[bid].p.lerp(p,0.5)
-		else: bullets[bid] = {"p":p,"v":Vector3(data[j+4],data[j+5],data[j+6]),"dmg":0.0,"life":BULLET_LIFE}
+		else: bullets[bid] = {"p":p,"v":Vector3(data[j+4],data[j+5],data[j+6]),"dmg":0.0,"life":BULLET_LIFE,"kind":int(data[j+7]),"grenade":int(data[j+7]) == 2}
+		bullets[bid].v = Vector3(data[j+4],data[j+5],data[j+6])
 	for bid in bullets.keys():
 		if not seen.has(bid): bullets.erase(bid)
 
@@ -796,7 +814,7 @@ func _render_models(dt: float):
 			var ball = SphereMesh.new()
 			ball.radius = 0.16
 			ball.height = 0.32
-			bullet_visuals[bid] = _mesh(self,ball,bullets[bid].p,_mat(Color("ff5a3c"),4))
+			bullet_visuals[bid] = _mesh(self,ball,bullets[bid].p,_mat(Color("ff5a3c"),1.4))
 			bullet_visuals[bid].cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 		bullet_visuals[bid].position = bullets[bid].p
 	for bid in bullet_visuals.keys():
@@ -956,12 +974,12 @@ func _fire(id: int, target: Vector3):
 		return
 	var original_damage = actors[id].get("damage",BASE_WEAPON_DAMAGE)
 	if randf()<actors[id].get("critical",0.0): actors[id].damage = original_damage*2
-	var before = enemies.duplicate()
 	super._fire(id,target)
 	actors[id].damage = original_damage
-	for eid in before:
-		if not enemies.has(eid):
-			_gain_xp(300 if before[eid].get("boss",false) else 20+5*selected)
+
+func _on_enemy_killed(eid: int, e: Dictionary, shooter: int):
+	if test_mode: return
+	_gain_xp(300 if e.get("boss",false) else int(e.get("xp",20+5*selected)))
 
 func _update_hud():
 	super._update_hud()
@@ -997,6 +1015,15 @@ func _finish(success: bool):
 		return
 	if mode != "playing": return
 	mode = "saving"
+	var gold = _mission_gold(success)
+	for id in verified.keys():
+		if not verified.has(id): continue
+		var reward = await _api("/api/server/reward",{"account_id":verified[id].id,"gold":gold},true)
+		if not id in multiplayer.get_peers(): continue
+		if reward.get("ok",false):
+			verified[id] = reward.profile
+			_profile_sync.rpc_id(id,reward.profile)
+		_gold_reward.rpc_id(id,gold)
 	if success:
 		for id in verified.keys():
 			if not verified.has(id): continue
@@ -1010,6 +1037,17 @@ func _finish(success: bool):
 	mode = "playing"
 	super._finish(success)
 
+func _mission_gold(success: bool) -> int:
+	var gold = kills*3+wave*12+(level-1)*15
+	if success: gold += 200+150*selected
+	return clampi(gold,0,3000)
+
+var last_gold = -1
+
+@rpc("authority", "call_remote", "reliable")
+func _gold_reward(gold: int):
+	last_gold = gold
+
 @rpc("authority", "call_remote", "reliable")
 func _finish_remote(success: bool, duration: float, defeated: int, index: int):
 	if left_mission and not dedicated:
@@ -1019,6 +1057,16 @@ func _finish_remote(success: bool, duration: float, defeated: int, index: int):
 	buff_overlay = null
 	modal_open = false
 	super._finish_remote(success,duration,defeated,index)
+	if not test_mode and not dedicated and last_gold >= 0:
+		var reward = _label("獲得金幣  +%d G      持有  %d G" % [last_gold,int(profile.get("gold",0))],22,GOLD)
+		reward.anchor_left = 0.5
+		reward.anchor_right = 0.5
+		reward.offset_left = -300
+		reward.offset_right = 300
+		reward.offset_top = 600
+		reward.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		screen.add_child(reward)
+		last_gold = -1
 	if not test_mode and not dedicated and profile.has("save_error"):
 		var warning = _label("進度尚未保存："+str(profile.save_error),18,ORANGE)
 		warning.position = Vector2(240,680)

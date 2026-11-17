@@ -50,6 +50,29 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(code,201)
         return response
 
+    def test_gold_and_armory(self):
+        account = self.register()
+        auth = {"Authorization":"Bearer "+account["token"]}
+        key = {"X-Server-Key":self.store.server_key}
+        self.assertEqual(account["profile"]["gold"],0)
+        self.assertEqual(account["profile"]["loadout"]["owned"],["pistol"])
+        # Players cannot grant themselves gold; only the game server can.
+        self.assertEqual(self.call("/api/server/reward",{"account_id":account["profile"]["id"],"gold":500})[0],403)
+        self.assertEqual(self.call("/api/server/reward",{"account_id":account["profile"]["id"],"gold":99999},key)[0],400)
+        code, reward = self.call("/api/server/reward",{"account_id":account["profile"]["id"],"gold":1000},key)
+        self.assertEqual((code,reward["profile"]["gold"]),(200,1000))
+        self.assertEqual(self.call("/api/shop/buy",{"weapon":"sniper"},auth)[0],200)
+        code, broke = self.call("/api/shop/buy",{"weapon":"rifle"},auth)
+        self.assertEqual((code,broke["error"]),(400,"金幣不足"))
+        code, upgraded = self.call("/api/shop/upgrade",{"weapon":"pistol","stat":"damage"},auth)
+        self.assertEqual(code,200)
+        self.assertEqual(upgraded["profile"]["gold"],1000-800-120)
+        profile = self.store.profile(account["profile"]["id"])
+        self.assertEqual(profile["loadout"]["owned"],["pistol","sniper"])
+        self.assertEqual(profile["loadout"]["levels"]["pistol"]["damage"],1)
+        self.assertEqual(self.call("/api/shop/upgrade",{"weapon":"rifle","stat":"damage"},auth)[0],400)
+        self.assertEqual(self.call("/api/shop/upgrade",{"weapon":"pistol","stat":"speed"},auth)[0],400)
+
     def test_auth_and_persistence(self):
         account = self.register()
         self.assertFalse(account["profile"]["tutorial_complete"])

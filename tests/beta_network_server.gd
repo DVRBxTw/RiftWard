@@ -22,10 +22,12 @@ func _process(dt):
 		game._start_mission(0)
 		stage = 1
 	if stage == 1 and game.mode == "playing" and not game.buff_pending and not game.enemies.is_empty():
+		# Clearing a wave grants one level so every wave offers a level-up buff.
 		game.enemies.clear()
+		game._gain_xp(game.xp_need)
 	if stage == 1 and game.mode == "result":
 		assert(game.result_success)
-		for user in game.verified.values(): assert(user.unlocked == 1)
+		for user in game.verified.values(): assert(user.unlocked == 1 and int(user.gold) > 0)
 		stage = 2
 		print("BETA_SERVER_PASS verified_accounts waves buffs progress")
 	if stage == 2 and game.mode == "home" and game.actors.is_empty():

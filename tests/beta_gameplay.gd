@@ -9,6 +9,7 @@ func _run():
 	game.set_physics_process(false)
 	game.set_process(false)
 	game.test_mode = false
+	game.enemy_variety = false
 	game.profile = {"id":123,"username":"Test","unlocked":0,"tutorial_complete":false}
 	game._show_story()
 	assert(game.mode == "story")
@@ -33,7 +34,7 @@ func _run():
 	assert(game.actors[1].ammo == 0 and game.actors[1].reload > 0)
 	game.inputs[1] = {"yaw":0.0}
 	game._simulate(2.0)
-	assert(game.actors[1].ammo == game.MAG_SIZE)
+	assert(game.actors[1].ammo == game.actors[1].mag)
 	game.wave = 1
 	game.wave_delay = 99
 	game.enemies.clear()

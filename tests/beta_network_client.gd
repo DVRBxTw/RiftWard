@@ -33,7 +33,7 @@ func _process(dt):
 			buttons[0].pressed.emit()
 			picks += 1
 	if stage == 1 and game.mode == "result":
-		assert(game.result_success and game.profile.unlocked == 1 and picks == 20)
+		assert(game.result_success and game.profile.unlocked == 1 and picks == 20 and int(game.profile.gold) > 0)
 		print("BETA_CLIENT_PASS authenticated twenty_buff_choices persisted_progress")
 		game._request_home()
 		stage = 2

@@ -20,7 +20,23 @@ HOST = "192.168.213.100"
 PORT = 24771
 ITERATIONS = 310_000
 USERNAME = re.compile(r"[A-Za-z0-9_]{3,24}\Z")
-VERSION = "0.3.0-beta.4"
+VERSION = "0.4.0-beta.1"
+
+# Armory catalog. The game client mirrors these numbers for display only;
+# every purchase is priced and validated here.
+WEAPON_PRICES = {"pistol": 0, "rifle": 400, "shotgun": 600, "sniper": 800}
+UPGRADE_STATS = ("damage", "mag", "reload")
+MAX_UPGRADE = 5
+MAX_REWARD = 3000
+
+
+def upgrade_cost(weapon: str, level: int) -> int:
+    factor = {"pistol": 1.0, "rifle": 1.3, "shotgun": 1.4, "sniper": 1.6}[weapon]
+    return int(round(120 * (level + 1) * factor))
+
+
+def default_loadout():
+    return {"owned": ["pistol"], "levels": {}}
 
 
 class Store:
@@ -50,6 +66,11 @@ class Store:
                 );
                 CREATE INDEX IF NOT EXISTS session_account ON sessions(account_id);
             """)
+            columns = {row[1] for row in db.execute("PRAGMA table_info(progress)")}
+            if "gold" not in columns:
+                db.execute("ALTER TABLE progress ADD COLUMN gold INTEGER NOT NULL DEFAULT 0")
+            if "loadout" not in columns:
+                db.execute("ALTER TABLE progress ADD COLUMN loadout TEXT NOT NULL DEFAULT '{}'")
 
     @contextmanager
     def connect(self):
@@ -69,14 +90,72 @@ class Store:
     def profile(self, account_id: int):
         with self.connect() as db:
             row = db.execute(
-                "SELECT a.id,a.username,p.unlocked,p.tutorial_complete FROM accounts a "
+                "SELECT a.id,a.username,p.unlocked,p.tutorial_complete,p.gold,p.loadout FROM accounts a "
                 "JOIN progress p ON p.account_id=a.id WHERE a.id=?", (account_id,)
             ).fetchone()
         if row is None:
             return None
         result = dict(row)
         result["tutorial_complete"] = bool(result["tutorial_complete"])
+        result["loadout"] = self._parse_loadout(result.get("loadout"))
         return result
+
+    @staticmethod
+    def _parse_loadout(raw):
+        loadout = default_loadout()
+        try:
+            data = json.loads(raw or "{}")
+        except ValueError:
+            data = {}
+        if isinstance(data, dict):
+            owned = [w for w in data.get("owned", []) if w in WEAPON_PRICES]
+            loadout["owned"] = ["pistol"] + [w for w in dict.fromkeys(owned) if w != "pistol"]
+            levels = data.get("levels", {})
+            if isinstance(levels, dict):
+                for weapon, stats in levels.items():
+                    if weapon in loadout["owned"] and isinstance(stats, dict):
+                        loadout["levels"][weapon] = {k: max(0, min(MAX_UPGRADE, int(v))) for k, v in stats.items()
+                                                     if k in UPGRADE_STATS and isinstance(v, int)}
+        return loadout
+
+    def _spend(self, account_id: int, cost: int, loadout: dict):
+        with self.connect() as db:
+            cursor = db.execute("UPDATE progress SET gold=gold-?, loadout=? WHERE account_id=? AND gold>=?",
+                                (cost, json.dumps(loadout), account_id, cost))
+            if cursor.rowcount != 1:
+                raise ValueError("金幣不足")
+        return self.profile(account_id)
+
+    def buy_weapon(self, account_id: int, weapon):
+        profile = self.profile(account_id)
+        if profile is None or weapon not in WEAPON_PRICES:
+            raise ValueError("找不到此武器")
+        loadout = profile["loadout"]
+        if weapon in loadout["owned"]:
+            raise ValueError("已擁有此武器")
+        loadout["owned"].append(weapon)
+        return self._spend(account_id, WEAPON_PRICES[weapon], loadout)
+
+    def upgrade_weapon(self, account_id: int, weapon, stat):
+        profile = self.profile(account_id)
+        if profile is None or weapon not in WEAPON_PRICES or stat not in UPGRADE_STATS:
+            raise ValueError("升級項目不合法")
+        loadout = profile["loadout"]
+        if weapon not in loadout["owned"]:
+            raise ValueError("尚未擁有此武器")
+        levels = loadout["levels"].setdefault(weapon, {})
+        level = levels.get(stat, 0)
+        if level >= MAX_UPGRADE:
+            raise ValueError("已達最高等級")
+        levels[stat] = level + 1
+        return self._spend(account_id, upgrade_cost(weapon, level), loadout)
+
+    def reward(self, account_id: int, gold):
+        if self.profile(account_id) is None or not isinstance(gold, int) or not 0 <= gold <= MAX_REWARD:
+            raise ValueError("獎勵不合法")
+        with self.connect() as db:
+            db.execute("UPDATE progress SET gold=gold+? WHERE account_id=?", (gold, account_id))
+        return self.profile(account_id)
 
     def session(self, account_id: int):
         token = secrets.token_urlsafe(32)
@@ -274,6 +353,19 @@ class Handler(BaseHTTPRequestHandler):
                     return
                 self._json(200, {"ok": True, "profile": profile})
                 return
+            if self.path in ("/api/server/reward", "/api/server/profile"):
+                try:
+                    if self.path.endswith("reward"):
+                        profile = store.reward(data.get("account_id"), data.get("gold"))
+                    else:
+                        profile = store.profile(data.get("account_id")) if isinstance(data.get("account_id"), int) else None
+                        if profile is None:
+                            raise ValueError("找不到帳號")
+                except ValueError as exc:
+                    self._json(400, {"ok": False, "error": str(exc)})
+                    return
+                self._json(200, {"ok": True, "profile": profile})
+                return
         token = self.headers.get("Authorization", "").removeprefix("Bearer ")
         profile = store.authenticate(token)
         if profile is None:
@@ -283,6 +375,16 @@ class Handler(BaseHTTPRequestHandler):
             self._json(200, {"ok": True, "profile": profile, "game_online": bool(self.server.game_online())})
         elif self.path == "/api/tutorial":
             self._json(200, {"ok": True, "profile": store.tutorial(profile["id"])})
+        elif self.path in ("/api/shop/buy", "/api/shop/upgrade"):
+            try:
+                if self.path.endswith("buy"):
+                    result = store.buy_weapon(profile["id"], data.get("weapon"))
+                else:
+                    result = store.upgrade_weapon(profile["id"], data.get("weapon"), data.get("stat"))
+            except ValueError as exc:
+                self._json(400, {"ok": False, "error": str(exc)})
+                return
+            self._json(200, {"ok": True, "profile": result})
         elif self.path == "/api/logout":
             with store.connect() as db:
                 db.execute("DELETE FROM sessions WHERE token_hash=?", (hashlib.sha256(token.encode()).hexdigest(),))
