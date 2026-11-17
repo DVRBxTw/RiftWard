@@ -34,6 +34,9 @@ namespace RiftWard.Client
         Transform weaponHolder, muzzle;
 
         readonly Dictionary<int, GameObject> actorViews = new Dictionary<int, GameObject>();
+        readonly Dictionary<int, List<Transform>> droneViews = new Dictionary<int, List<Transform>>();
+        readonly Dictionary<int, TextMesh> nameTags = new Dictionary<int, TextMesh>();
+        readonly Dictionary<int, List<Transform>> bladeViews = new Dictionary<int, List<Transform>>();
         readonly Dictionary<int, GameObject> enemyViews = new Dictionary<int, GameObject>();
         readonly Dictionary<int, GameObject> bulletViews = new Dictionary<int, GameObject>();
         readonly Dictionary<int, GameObject> pickupViews = new Dictionary<int, GameObject>();
@@ -61,6 +64,7 @@ namespace RiftWard.Client
             Camera.fieldOfView = BaseFov;
             Camera.nearClipPlane = 0.05f;
             Camera.farClipPlane = 260f;
+            PostFx.Attach(Camera);
             camGo.AddComponent<AudioListener>();
             weaponHolder = new GameObject("Weapon").transform;
             weaponHolder.SetParent(Camera.transform, false);
@@ -322,6 +326,7 @@ namespace RiftWard.Client
 
         void ShotEffect(ShotEvent shot)
         {
+            if (shot.Shooter < 0) { GadgetEffect(shot); return; }
             Vector3 origin = shot.Shooter == LocalId && muzzle != null && !thirdPerson ? muzzle.position : shot.Origin;
             var beam = new GameObject("Beam");
             var line = beam.AddComponent<LineRenderer>();
@@ -341,6 +346,90 @@ namespace RiftWard.Client
             Hud.OnLocalShot(shot, Camera);
             Sfx.Play(shot.Head ? "head" : shot.Hit ? "hit" : "shot", 0.6f);
             ApplyRecoil();
+        }
+
+        void GadgetEffect(ShotEvent shot)
+        {
+            int type = GameSim.GadgetType(shot.Shooter);
+            bool plasma = type == GameSim.GadgetPlasma, lightning = type == GameSim.GadgetLightning, laser = type == GameSim.GadgetLaser;
+            var beam = new GameObject("GadgetBeam");
+            var line = beam.AddComponent<LineRenderer>();
+            if (lightning)
+            {
+                // Jagged bolt: jitter the midpoints so each strike looks different.
+                line.positionCount = 7;
+                for (int i = 0; i < 7; i++)
+                {
+                    float t = i / 6f;
+                    var jitter = i == 0 || i == 6 ? Vector3.zero : UnityEngine.Random.insideUnitSphere * 0.35f;
+                    line.SetPosition(i, Vector3.Lerp(shot.Origin, shot.End, t) + jitter);
+                }
+            }
+            else
+            {
+                line.positionCount = 2;
+                line.SetPosition(0, shot.Origin);
+                line.SetPosition(1, shot.End);
+            }
+            line.startWidth = plasma ? 0.22f : lightning ? 0.07f : laser ? 0.06f : 0.025f;
+            line.endWidth = plasma ? 0.1f : lightning ? 0.04f : laser ? 0.06f : 0.025f;
+            var color = plasma ? Palette.Hex("9b7bff") : lightning ? Palette.Hex("bfe4ff") : laser ? Palette.Hex("ff3b5c") : Palette.Hex("5ee6ff");
+            line.sharedMaterial = Build.Mat(color, 4f);
+            line.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+            effects.Add((beam, plasma ? 0.14f : lightning ? 0.12f : 0.05f, Vector3.zero, 0));
+            if (GameSim.GadgetOwner(shot.Shooter) == LocalId) Sfx.Play(plasma ? "explosion" : lightning ? "head" : "shot", plasma ? 0.35f : 0.12f);
+        }
+
+        void RenderGadgets(Actor a, GameObject view)
+        {
+            if (!droneViews.TryGetValue(a.Id, out var drones)) droneViews[a.Id] = drones = new List<Transform>();
+            while (drones.Count < a.Drones) drones.Add(Models.Drone().transform);
+            while (drones.Count > a.Drones) { Destroy(drones[drones.Count - 1].gameObject); drones.RemoveAt(drones.Count - 1); }
+            float t = Sim.Elapsed;
+            for (int i = 0; i < drones.Count; i++)
+            {
+                var offset = Defs.DroneOffset(i, drones.Count, t);
+                bool firstPerson = a.Id == LocalId && !thirdPerson;
+                // Keep your own drones out of the first-person camera: wider, higher orbit and smaller.
+                if (firstPerson) offset = new Vector3(offset.x * 1.9f, offset.y + 0.9f, offset.z * 1.9f);
+                drones[i].localScale = Vector3.one * (firstPerson ? 0.7f : 1f);
+                drones[i].position = view.transform.position + offset;
+                drones[i].rotation = Quaternion.Euler(0, t * 140f + i * 90f, 0);
+                drones[i].gameObject.SetActive(a.Alive);
+            }
+            var cannon = view.transform.Find("Plasma");
+            if (a.Plasma && cannon == null) Models.PlasmaCannon(view.transform);
+            if (!bladeViews.TryGetValue(a.Id, out var blades)) bladeViews[a.Id] = blades = new List<Transform>();
+            int bladeCount = a.Alive ? Defs.BladeCount(a.OrbitLevel) : 0;
+            while (blades.Count < bladeCount) blades.Add(Models.Blade().transform);
+            while (blades.Count > bladeCount) { Destroy(blades[blades.Count - 1].gameObject); blades.RemoveAt(blades.Count - 1); }
+            for (int i = 0; i < blades.Count; i++)
+            {
+                blades[i].position = view.transform.position + Defs.BladeOffset(i, blades.Count, t);
+                blades[i].rotation = Quaternion.Euler(0, -t * 600f, 0);
+            }
+        }
+
+        void RenderNameTag(Actor a, GameObject view)
+        {
+            if (a.Id == LocalId || string.IsNullOrEmpty(a.Name)) return;
+            if (!nameTags.TryGetValue(a.Id, out var tag))
+            {
+                var go = new GameObject("NameTag");
+                tag = go.AddComponent<TextMesh>();
+                var font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+                tag.font = font;
+                go.GetComponent<MeshRenderer>().sharedMaterial = font.material;
+                tag.anchor = TextAnchor.LowerCenter;
+                tag.alignment = TextAlignment.Center;
+                tag.fontSize = 48;
+                tag.characterSize = 0.045f;
+                nameTags[a.Id] = tag;
+            }
+            tag.text = a.Alive ? a.Name : a.Name + "  [E 救援]";
+            tag.color = a.Alive ? Palette.Teammate : Palette.Danger;
+            tag.transform.position = view.transform.position + Vector3.up * 2.75f;
+            tag.transform.rotation = Camera.transform.rotation;
         }
 
         float lastRecoil;
@@ -397,14 +486,23 @@ namespace RiftWard.Client
                 float lying = a.Alive ? 0f : -80f;
                 view.transform.rotation = Quaternion.Euler(lying, a.Yaw * Mathf.Rad2Deg, 0);
                 view.SetActive(a.Id != LocalId || thirdPerson);
+                RenderGadgets(a, view);
+                RenderNameTag(a, view);
             }
-            foreach (var id in actorViews.Keys.Where(id => !Sim.Actors.ContainsKey(id)).ToList()) { Destroy(actorViews[id]); actorViews.Remove(id); }
+            foreach (var id in actorViews.Keys.Where(id => !Sim.Actors.ContainsKey(id)).ToList())
+            {
+                Destroy(actorViews[id]); actorViews.Remove(id);
+                if (droneViews.TryGetValue(id, out var ds)) { foreach (var d in ds) Destroy(d.gameObject); droneViews.Remove(id); }
+                if (nameTags.TryGetValue(id, out var tag)) { Destroy(tag.gameObject); nameTags.Remove(id); }
+                if (bladeViews.TryGetValue(id, out var bs)) { foreach (var b in bs) Destroy(b.gameObject); bladeViews.Remove(id); }
+            }
 
             foreach (var e in Sim.Enemies.Values)
             {
                 if (!enemyViews.TryGetValue(e.Id, out var view))
                 {
                     view = Models.Enemy(e.Kind);
+                    if (e.Elite) Models.MakeElite(view);
                     view.transform.position = e.Position;
                     enemyViews[e.Id] = view;
                 }

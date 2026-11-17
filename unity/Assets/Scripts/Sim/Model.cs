@@ -74,6 +74,17 @@ namespace RiftWard.Sim
         public float Regen, Critical, Lifesteal, Explode;
         public float SkillCooldown, Revive;
 
+        // Companion gadgets (mission upgrades)
+        public string Name = "";
+        public int Drones;
+        public float DroneDamageMult = 1f, DroneRateMult = 1f, DroneTimer;
+        public bool Plasma;
+        public float PlasmaDamageMult = 1f, PlasmaRateMult = 1f, PlasmaTimer;
+        public bool DroneEvolved, PlasmaEvolved;
+        public int OrbitLevel, MineLevel, MissileLevel, LightningLevel;
+        public float OrbitTimer, MineTimer, MissileTimer, LightningTimer;
+        public float Magnet = Defs.BaseMagnet;
+
         // Admin
         public AdminSettings Admin = new AdminSettings();
         public bool IsAdmin;
@@ -96,6 +107,8 @@ namespace RiftWard.Sim
         public float Scale = 1f, Keep = 1.4f;
         public int Xp;
         public int Phase = 1;
+        public bool Elite;
+        public int Wave;
         /// 0 idle, 1 sniper aiming (telegraph), 2 boss enraged.
         public int State;
         public float RingCooldown = 2f;
@@ -104,7 +117,7 @@ namespace RiftWard.Sim
         public Vector3 Facing => new Vector3(Mathf.Sin(Yaw), 0f, Mathf.Cos(Yaw));
     }
 
-    public enum BulletKind { Enemy = 0, Sniper = 1, Grenade = 2 }
+    public enum BulletKind { Enemy = 0, Sniper = 1, Grenade = 2, Mine = 3, Missile = 4 }
 
     public sealed class Bullet
     {
@@ -113,9 +126,10 @@ namespace RiftWard.Sim
         public float Damage, Life = Defs.BulletLife;
         public BulletKind Kind;
         public int Owner = -1;
+        public int Target = -1;
     }
 
-    public enum PickupKind { Health = 0, Ammo = 1 }
+    public enum PickupKind { Health = 0, Ammo = 1, Xp = 2, Chest = 3 }
 
     public sealed class Pickup
     {
@@ -123,6 +137,7 @@ namespace RiftWard.Sim
         public Vector3 Position;
         public PickupKind Kind;
         public float Life = 20f;
+        public int Value;
     }
 
     /// Things the client turns into effects and sounds; drained every tick.

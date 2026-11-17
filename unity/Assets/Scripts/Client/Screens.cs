@@ -181,6 +181,26 @@ namespace RiftWard.Client
             var grid = Ui.HStack(stack, 8).Sized(48);
             Ui.Button(grid, "軍械庫", ShowArmory, 15);
             Ui.Button(grid, "故事與教學", () => ShowStory(0), 15);
+            if (app.Net.Welcomed)
+            {
+                Ui.Rect(stack, "Gap").Sized(20);
+                Widgets.Section(stack, "多人房間").Sized(26);
+                if (app.InRoom)
+                {
+                    var info = Ui.HStack(stack, 8).Sized(48);
+                    Ui.Label(info, app.RoomCode, 30, Palette.Amber, TextAnchor.MiddleLeft, true);
+                    Ui.Label(info, $"{app.PartySize} / 4 名隊員\n{(app.IsLeader ? "你是隊長，把房號告訴隊友" : "等待隊長部署")}", 13, Palette.Muted, TextAnchor.MiddleLeft);
+                    Ui.Button(info, "離開房間", app.LeaveRoom, 14);
+                }
+                else
+                {
+                    var row = Ui.HStack(stack, 8).Sized(44);
+                    var code = Widgets.Input(row, "輸入房號", false, 4);
+                    code.characterValidation = InputField.CharacterValidation.Alphanumeric;
+                    Ui.Button(row, "加入", () => app.JoinRoom(code.text), 15);
+                    Ui.Button(row, "建立房間", app.CreateRoom, 15);
+                }
+            }
             Ui.Rect(stack, "Spacer").gameObject.AddComponent<LayoutElement>().flexibleHeight = 1;
             Ui.Box(stack, Palette.Line, "Rule").Sized(1);
             Ui.Rect(stack, "Gap").Sized(14);

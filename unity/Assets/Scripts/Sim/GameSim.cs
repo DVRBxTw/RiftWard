@@ -287,6 +287,8 @@ namespace RiftWard.Sim
                 }
             }
             UpdateEnemyFire(dt);
+            UpdateGadgets(dt);
+            UpdateOrdnance(dt);
             UpdateBullets(dt);
             UpdatePlayers(dt);
             UpdateEnemyKinds(dt);
@@ -399,7 +401,22 @@ namespace RiftWard.Sim
                     ApplyKind(e, kind);
                 }
                 e.MaxHp = e.Hp;
+                e.Wave = Wave;
                 Enemies[e.Id] = e;
+            }
+            // Every third regular wave promotes one enemy to an elite that drops a chest.
+            if (!hasBoss && Wave % (int)Defs.EliteEvery == 0)
+            {
+                var elite = Enemies.Values.Where(x => !x.Boss && x.Wave == Wave).OrderBy(_ => rng.Next()).FirstOrDefault();
+                if (elite != null)
+                {
+                    elite.Elite = true;
+                    elite.Hp = elite.MaxHp = elite.MaxHp * 4f;
+                    elite.Damage *= 1.4f;
+                    elite.Scale *= 1.35f;
+                    elite.Xp *= 3;
+                    Announcements.Add("精英敵人出現 · 擊敗可獲得寶箱");
+                }
             }
             foreach (var a in Actors.Values)
                 if (a.Alive) a.Hp = Mathf.Min(a.MaxHp, a.Hp + a.Regen);
@@ -505,7 +522,13 @@ namespace RiftWard.Sim
         {
             if (!Enemies.Remove(e.Id)) return;
             Kills++;
-            GainXp(e.Boss ? 300 : e.Xp);
+            if (e.Boss) GainXp(300);
+            else
+            {
+                var crystal = new Pickup { Id = nextPickup++, Position = new Vector3(e.Position.x, 0, e.Position.z), Kind = PickupKind.Xp, Value = e.Xp, Life = 40f };
+                Pickups[crystal.Id] = crystal;
+            }
+            if (e.Elite) SpawnPickup(e.Position + new Vector3(0.8f, 0, 0), PickupKind.Chest);
             if (Actors.TryGetValue(shooter, out var a) && a.Alive)
             {
                 a.StatKills++;
@@ -514,6 +537,168 @@ namespace RiftWard.Sim
             }
             if (e.Boss) SpawnPickup(e.Position, PickupKind.Health);
             else if (Rand01() < Defs.PickupChance) SpawnPickup(e.Position, Rand01() < 0.4f ? PickupKind.Health : PickupKind.Ammo);
+        }
+
+        // ------------------------------------------------------------ companion gadgets
+
+        /// Gadget shots carry Shooter = -(owner + 1) so clients draw them without recoil or muzzle flash.
+        public const int GadgetDrone = 0, GadgetPlasma = 1, GadgetLightning = 2, GadgetLaser = 3;
+        public static int GadgetShooter(int owner, int type = GadgetDrone) => -(owner + 1 + 1000 * type);
+        public static int GadgetType(int shooter) => (-shooter - 1) / 1000;
+        public static int GadgetOwner(int shooter) => (-shooter - 1) % 1000;
+
+        void UpdateGadgets(float dt)
+        {
+            float scale = 1f + 0.25f * Region;
+            foreach (var a in Actors.Values)
+            {
+                if (!a.Alive) continue;
+                if (a.Drones > 0 && (a.DroneTimer -= dt) <= 0)
+                {
+                    a.DroneTimer = Defs.DroneInterval * a.DroneRateMult * (a.DroneEvolved ? 0.75f : 1f);
+                    var targets = Enemies.Values.Where(e => e.Hp > 0 && (e.Position - a.Position).sqrMagnitude < Defs.DroneRange * Defs.DroneRange)
+                        .OrderBy(e => (e.Position - a.Position).sqrMagnitude).Take(a.Drones).ToList();
+                    for (int i = 0; i < targets.Count; i++)
+                    {
+                        var e = targets[i];
+                        if (!Enemies.ContainsKey(e.Id)) continue;
+                        Vector3 origin = a.Position + Defs.DroneOffset(i, a.Drones, Elapsed);
+                        Vector3 end = e.Position + Vector3.up * 1.1f * e.Scale;
+                        float dealt = Defs.DroneDamage * scale * a.DroneDamageMult * a.DamageMult * (a.DroneEvolved ? 2f : 1f);
+                        e.Hp -= dealt;
+                        bool killed = e.Hp <= 0;
+                        if (killed) KillEnemy(e, a.Id);
+                        Shots.Add(new ShotEvent { Shooter = GadgetShooter(a.Id, a.DroneEvolved ? GadgetLaser : GadgetDrone), Origin = origin, End = end, Hit = true, Dealt = dealt, Killed = killed });
+                    }
+                    if (targets.Count == 0) a.DroneTimer = 0.2f;
+                }
+                if (a.Plasma && (a.PlasmaTimer -= dt) <= 0)
+                {
+                    // Aim at the enemy with the most neighbours inside the blast radius.
+                    var inRange = Enemies.Values.Where(e => e.Hp > 0 && (e.Position - a.Position).sqrMagnitude < Defs.PlasmaRange * Defs.PlasmaRange).ToList();
+                    if (inRange.Count == 0) { a.PlasmaTimer = 0.3f; continue; }
+                    float radius = Defs.PlasmaRadius * (a.PlasmaEvolved ? 1.5f : 1f);
+                    var targets = inRange.OrderByDescending(e => inRange.Count(o => (o.Position - e.Position).sqrMagnitude < radius * radius)).Take(a.PlasmaEvolved ? 2 : 1).ToList();
+                    a.PlasmaTimer = Defs.PlasmaInterval * a.PlasmaRateMult;
+                    foreach (var target in targets)
+                    {
+                        Vector3 at = target.Position + Vector3.up;
+                        Shots.Add(new ShotEvent { Shooter = GadgetShooter(a.Id, GadgetPlasma), Origin = a.Position + new Vector3(0, 2.0f, 0), End = at, Hit = true });
+                        Explode(at, radius, Defs.PlasmaDamage * scale * a.PlasmaDamageMult * a.DamageMult, a.Id, new Color32(0x9b, 0x7b, 0xff, 255));
+                    }
+                }
+            }
+        }
+
+        void UpdateOrdnance(float dt)
+        {
+            float scale = 1f + 0.25f * Region;
+            foreach (var a in Actors.Values)
+            {
+                if (!a.Alive) continue;
+                // Orbiting blades: damage everything they sweep through on a short tick.
+                if (a.OrbitLevel > 0 && (a.OrbitTimer -= dt) <= 0)
+                {
+                    a.OrbitTimer = 0.35f;
+                    int n = Defs.BladeCount(a.OrbitLevel);
+                    float damage = (10f + 6f * a.OrbitLevel) * scale * a.DamageMult;
+                    for (int i = 0; i < n; i++)
+                    {
+                        Vector3 blade = a.Position + Defs.BladeOffset(i, n, Elapsed);
+                        foreach (var e in Enemies.Values.ToList())
+                        {
+                            if (!Enemies.ContainsKey(e.Id)) continue;
+                            if (new Vector2(e.Position.x - blade.x, e.Position.z - blade.z).magnitude > 0.8f + 0.4f * e.Scale) continue;
+                            e.Hp -= damage;
+                            if (e.Hp <= 0) KillEnemy(e, a.Id);
+                        }
+                    }
+                }
+                // Proximity mines dropped at the player's feet.
+                if (a.MineLevel > 0 && (a.MineTimer -= dt) <= 0)
+                {
+                    a.MineTimer = 4.5f * (1f - 0.1f * (a.MineLevel - 1));
+                    if (Bullets.Values.Count(b => b.Kind == BulletKind.Mine && b.Owner == a.Id) < 6)
+                    {
+                        var mine = new Bullet { Id = nextBullet++, Kind = BulletKind.Mine, Owner = a.Id, Position = new Vector3(a.Position.x, 0.1f, a.Position.z), Life = 25f,
+                            Damage = (55f + 20f * (a.MineLevel - 1)) * scale * a.DamageMult };
+                        Bullets[mine.Id] = mine;
+                    }
+                }
+                // Homing missiles, one per level, each after a different target.
+                if (a.MissileLevel > 0 && (a.MissileTimer -= dt) <= 0)
+                {
+                    var targets = Enemies.Values.Where(e => (e.Position - a.Position).sqrMagnitude < 900f).OrderBy(e => (e.Position - a.Position).sqrMagnitude).Take(Mathf.Min(5, a.MissileLevel)).ToList();
+                    a.MissileTimer = targets.Count == 0 ? 0.3f : 2.6f;
+                    for (int i = 0; i < targets.Count; i++)
+                    {
+                        float side = (i - (targets.Count - 1) / 2f) * 2.5f;
+                        var missile = new Bullet { Id = nextBullet++, Kind = BulletKind.Missile, Owner = a.Id, Target = targets[i].Id, Life = 4f,
+                            Position = a.Position + Vector3.up * 2f, Velocity = new Vector3(Mathf.Cos(a.Yaw) * side, 7f, -Mathf.Sin(a.Yaw) * side),
+                            Damage = (30f + 8f * a.MissileLevel) * scale * a.DamageMult };
+                        Bullets[missile.Id] = missile;
+                    }
+                }
+                // Chain lightning: jumps between nearby enemies, losing strength each hop.
+                if (a.LightningLevel > 0 && (a.LightningTimer -= dt) <= 0)
+                {
+                    var first = Enemies.Values.Where(e => (e.Position - a.Position).sqrMagnitude < 18f * 18f).OrderBy(e => (e.Position - a.Position).sqrMagnitude).FirstOrDefault();
+                    if (first == null) { a.LightningTimer = 0.3f; continue; }
+                    a.LightningTimer = 3.2f * (1f - 0.08f * (a.LightningLevel - 1));
+                    float damage = (28f + 10f * a.LightningLevel) * scale * a.DamageMult;
+                    var hit = new HashSet<int>();
+                    Vector3 from = a.Position + Vector3.up * 1.6f;
+                    var current = first;
+                    for (int jump = 0; jump < 2 + a.LightningLevel && current != null; jump++)
+                    {
+                        hit.Add(current.Id);
+                        Vector3 to = current.Position + Vector3.up * current.Scale;
+                        current.Hp -= damage;
+                        bool killed = current.Hp <= 0;
+                        Shots.Add(new ShotEvent { Shooter = GadgetShooter(a.Id, GadgetLightning), Origin = from, End = to, Hit = true, Dealt = damage, Killed = killed });
+                        Vector3 at = current.Position;
+                        if (killed) KillEnemy(current, a.Id);
+                        damage *= 0.9f;
+                        from = to;
+                        current = Enemies.Values.Where(e => !hit.Contains(e.Id) && (e.Position - at).sqrMagnitude < 49f).OrderBy(e => (e.Position - at).sqrMagnitude).FirstOrDefault();
+                    }
+                }
+            }
+            foreach (var b in Bullets.Values.ToList())
+            {
+                if (b.Kind == BulletKind.Mine)
+                {
+                    b.Life -= dt;
+                    var trigger = Enemies.Values.FirstOrDefault(e => new Vector2(e.Position.x - b.Position.x, e.Position.z - b.Position.z).magnitude < 1.6f);
+                    if (trigger != null || b.Life <= 0)
+                    {
+                        Bullets.Remove(b.Id);
+                        if (trigger != null) Explode(b.Position + Vector3.up * 0.5f, 3.5f, b.Damage, b.Owner, new Color32(0xff, 0xd1, 0x66, 255));
+                    }
+                }
+                else if (b.Kind == BulletKind.Missile)
+                {
+                    b.Life -= dt;
+                    if (!Enemies.TryGetValue(b.Target, out var target))
+                    {
+                        target = Enemies.Values.OrderBy(e => (e.Position - b.Position).sqrMagnitude).FirstOrDefault();
+                        b.Target = target?.Id ?? -1;
+                    }
+                    if (target != null)
+                    {
+                        Vector3 aim = target.Position + Vector3.up * target.Scale - b.Position;
+                        b.Velocity = Vector3.Lerp(b.Velocity, aim.normalized * 17f, Mathf.Min(1f, dt * 4f));
+                        if (aim.magnitude < 0.8f + 0.5f * target.Scale)
+                        {
+                            Bullets.Remove(b.Id);
+                            Explode(b.Position, 2.2f, b.Damage, b.Owner, new Color32(0xff, 0x8a, 0x3d, 255));
+                            continue;
+                        }
+                    }
+                    b.Position += b.Velocity * dt;
+                    if (b.Life <= 0 || b.Position.y < 0) Bullets.Remove(b.Id);
+                }
+            }
         }
 
         void Explode(Vector3 position, float radius, float damage, int owner, Color32 color)
@@ -582,7 +767,7 @@ namespace RiftWard.Sim
             var alive = Actors.Values.Where(a => a.Alive).ToList();
             foreach (var b in Bullets.Values.ToList())
             {
-                if (b.Kind == BulletKind.Grenade) continue;
+                if (b.Kind == BulletKind.Grenade || b.Kind == BulletKind.Mine || b.Kind == BulletKind.Missile) continue;
                 b.Position += b.Velocity * dt;
                 b.Life -= dt;
                 bool hit = false;
@@ -703,6 +888,17 @@ namespace RiftWard.Sim
 
         // ------------------------------------------------------------ pickups
 
+        /// Elite chests grant a free upgrade of at least rare quality to whoever opens them.
+        void OpenChest(Actor a)
+        {
+            var offer = RollOffer(a);
+            int code = offer[rng.Next(offer.Length)];
+            code = Defs.BuffIndex(code) + 100 * Mathf.Max(1, Defs.BuffTier(code));
+            ApplyBuff(a.Id, code);
+            string who = string.IsNullOrEmpty(a.Name) ? "" : a.Name + " ";
+            Announcements.Add($"{who}開啟寶箱：{Defs.Buffs[Defs.BuffIndex(code)].Name}（{Defs.RarityNames[Defs.BuffTier(code)]}）");
+        }
+
         public void SpawnPickup(Vector3 position, PickupKind kind)
         {
             var p = new Pickup { Id = nextPickup++, Position = new Vector3(position.x, 0, position.z), Kind = kind };
@@ -711,14 +907,41 @@ namespace RiftWard.Sim
 
         void UpdatePickups(float dt)
         {
+            bool cleared = Enemies.Count == 0;
             foreach (var p in Pickups.Values.ToList())
             {
                 p.Life -= dt;
-                if (p.Life <= 0) { Pickups.Remove(p.Id); continue; }
+                if (p.Life <= 0)
+                {
+                    if (p.Kind == PickupKind.Xp) GainXp(p.Value);
+                    Pickups.Remove(p.Id);
+                    continue;
+                }
+                if (p.Kind == PickupKind.Xp)
+                {
+                    // Crystals drift to the nearest player inside their magnet radius; all fly in once a wave is cleared.
+                    Actor nearest = null;
+                    float best = float.MaxValue;
+                    foreach (var a in Actors.Values)
+                    {
+                        if (!a.Alive) continue;
+                        float d = new Vector2(a.Position.x - p.Position.x, a.Position.z - p.Position.z).magnitude;
+                        if ((cleared || d < a.Magnet) && d < best) { best = d; nearest = a; }
+                    }
+                    if (nearest == null) continue;
+                    if (best < 0.9f) { GainXp(p.Value); Pickups.Remove(p.Id); continue; }
+                    Vector3 to = new Vector3(nearest.Position.x - p.Position.x, 0, nearest.Position.z - p.Position.z).normalized;
+                    p.Position += to * Mathf.Min(best, (cleared ? 18f : 11f) * dt);
+                    continue;
+                }
                 foreach (var a in Actors.Values)
                 {
                     if (!a.Alive || new Vector2(a.Position.x - p.Position.x, a.Position.z - p.Position.z).magnitude > 1.4f) continue;
-                    if (p.Kind == PickupKind.Health)
+                    if (p.Kind == PickupKind.Chest)
+                    {
+                        OpenChest(a);
+                    }
+                    else if (p.Kind == PickupKind.Health)
                     {
                         if (a.Hp >= a.MaxHp) continue;
                         a.Hp = Mathf.Min(a.MaxHp, a.Hp + 30);
@@ -754,18 +977,27 @@ namespace RiftWard.Sim
             BuffPending = true;
             BuffWait = 0;
             BuffOffers.Clear();
-            foreach (var a in Actors.Values.Where(a => a.Alive)) BuffOffers[a.Id] = RollOffer();
+            foreach (var a in Actors.Values.Where(a => a.Alive)) BuffOffers[a.Id] = RollOffer(a);
             if (BuffOffers.Count == 0) ResolveBuffs();
         }
 
-        int[] RollOffer()
+        int[] RollOffer(Actor a)
         {
-            var pool = Enumerable.Range(0, Defs.Buffs.Length).OrderBy(_ => rng.Next()).Take(3).ToArray();
+            // Gadget upgrades only appear once the gadget is owned; extra drones stop at the cap.
+            var pool = Enumerable.Range(0, Defs.Buffs.Length).Where(i =>
+                (i != Defs.BuffDroneDamage && i != Defs.BuffDroneRate || a.Drones > 0) &&
+                (i != Defs.BuffPlasmaRate || a.Plasma) &&
+                (i != Defs.BuffDrone || a.Drones < Defs.MaxDrones) &&
+                (i != Defs.BuffOrbit || a.OrbitLevel < Defs.MaxGadgetLevel) &&
+                (i != Defs.BuffMine || a.MineLevel < Defs.MaxGadgetLevel) &&
+                (i != Defs.BuffMissile || a.MissileLevel < Defs.MaxGadgetLevel) &&
+                (i != Defs.BuffLightning || a.LightningLevel < Defs.MaxGadgetLevel) &&
+                (i != Defs.BuffMagnet || a.Magnet < 10f)).OrderBy(_ => rng.Next()).Take(3).ToArray();
             for (int i = 0; i < pool.Length; i++)
             {
                 float roll = Rand01();
                 int tier = roll < 0.06f ? 2 : roll < 0.32f ? 1 : 0;
-                pool[i] += 10 * tier;
+                pool[i] += 100 * tier;
             }
             return pool;
         }
@@ -783,8 +1015,9 @@ namespace RiftWard.Sim
         {
             BuffOffers.Remove(id);
             if (!Actors.TryGetValue(id, out var a)) return;
-            int index = code % 10;
-            float m = Defs.RarityMultiplier[Mathf.Clamp(code / 10, 0, 2)];
+            int index = Defs.BuffIndex(code);
+            float m = Defs.RarityMultiplier[Defs.BuffTier(code)];
+            int steps = Defs.BuffTier(code) == 2 ? 2 : 1;
             switch (index)
             {
                 case 0: a.DamageMult += 0.2f * m; break;
@@ -804,6 +1037,30 @@ namespace RiftWard.Sim
                 case 7: a.SkillMult = Mathf.Max(0.35f, a.SkillMult * (1f - 0.2f * m)); break;
                 case 8: a.Lifesteal += Mathf.Round(4 * m); break;
                 case 9: a.Explode += Mathf.Round(35 * m); break;
+                case Defs.BuffDrone: a.Drones = Mathf.Min(Defs.MaxDrones, a.Drones + steps); break;
+                case Defs.BuffDroneDamage: a.DroneDamageMult += 0.35f * m; break;
+                case Defs.BuffDroneRate: a.DroneRateMult = Mathf.Max(0.3f, a.DroneRateMult * (1f - 0.15f * m)); break;
+                case Defs.BuffPlasma:
+                    if (a.Plasma) a.PlasmaDamageMult += 0.4f * m;
+                    else { a.Plasma = true; a.PlasmaTimer = 1.5f; }
+                    break;
+                case Defs.BuffPlasmaRate: a.PlasmaRateMult = Mathf.Max(0.3f, a.PlasmaRateMult * (1f - 0.15f * m)); break;
+                case Defs.BuffOrbit: a.OrbitLevel = Mathf.Min(Defs.MaxGadgetLevel, a.OrbitLevel + steps); break;
+                case Defs.BuffMine: a.MineLevel = Mathf.Min(Defs.MaxGadgetLevel, a.MineLevel + steps); a.MineTimer = Mathf.Min(a.MineTimer, 1f); break;
+                case Defs.BuffMissile: a.MissileLevel = Mathf.Min(Defs.MaxGadgetLevel, a.MissileLevel + steps); break;
+                case Defs.BuffLightning: a.LightningLevel = Mathf.Min(Defs.MaxGadgetLevel, a.LightningLevel + steps); break;
+                case Defs.BuffMagnet: a.Magnet = Mathf.Min(10f, a.Magnet * (1f + 0.4f * m)); break;
+            }
+            // Evolutions: a fully built gadget transforms into a stronger form.
+            if (!a.DroneEvolved && a.Drones >= Defs.MaxDrones && a.DroneDamageMult >= 1.7f)
+            {
+                a.DroneEvolved = true;
+                Announcements.Add("裝置進化：雷射無人機群");
+            }
+            if (!a.PlasmaEvolved && a.Plasma && a.PlasmaDamageMult >= 1.8f && a.PlasmaRateMult <= 0.8f)
+            {
+                a.PlasmaEvolved = true;
+                Announcements.Add("裝置進化：電漿風暴");
             }
             RefreshWeapon(a);
             if (index == 6 && a.Reload <= 0) a.Ammo = a.Mag;

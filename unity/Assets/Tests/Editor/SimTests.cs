@@ -39,6 +39,72 @@ namespace RiftWard.Tests
         }
 
         [Test]
+        public void DronesAndPlasmaFireOnCooldownAndUpgrade()
+        {
+            var sim = NewMission();
+            var a = sim.Actors[1];
+            sim.ApplyBuff(1, Defs.BuffDrone);
+            sim.ApplyBuff(1, Defs.BuffDrone + 200);
+            Assert.AreEqual(3, a.Drones);
+            sim.ApplyBuff(1, Defs.BuffDroneRate);
+            Assert.Less(a.DroneRateMult, 1f);
+            var e = PlaceEnemy(sim, new Vector3(0, 0, 8), 5000f);
+            sim.Enemies.Keys.Where(k => k != e.Id).ToList().ForEach(k => sim.Enemies.Remove(k));
+            sim.Tick(0.02f);
+            float afterFirst = e.Hp;
+            Assert.Less(afterFirst, 5000f);
+            Assert.IsTrue(sim.Shots.Any(s => s.Shooter == GameSim.GadgetShooter(1)));
+            sim.Shots.Clear();
+            sim.Tick(0.02f);
+            Assert.AreEqual(afterFirst, e.Hp, 0.001f, "drones must wait for their cooldown");
+            sim.ApplyBuff(1, Defs.BuffPlasma);
+            Assert.IsTrue(a.Plasma);
+            sim.ApplyBuff(1, Defs.BuffPlasma);
+            Assert.Greater(a.PlasmaDamageMult, 1f);
+        }
+
+        [Test]
+        public void KillsDropXpCrystalsThatTheMagnetCollects()
+        {
+            var sim = NewMission();
+            var a = sim.Actors[1];
+            sim.Enemies.Clear();
+            var e = PlaceEnemy(sim, new Vector3(0, 0, 6), 1f);
+            var keep = PlaceEnemy(sim, new Vector3(15, 0, 15), 99999f);
+            int xp = sim.Xp;
+            sim.Fire(1, e.Position + Vector3.up);
+            var crystal = sim.Pickups.Values.Single(p => p.Kind == PickupKind.Xp);
+            Assert.AreEqual(xp, sim.Xp, "XP waits until the crystal is picked up");
+            a.Magnet = 8f;
+            for (int i = 0; i < 60 && sim.Pickups.ContainsKey(crystal.Id); i++) sim.Tick(0.05f);
+            Assert.IsFalse(sim.Pickups.ContainsKey(crystal.Id));
+            Assert.Greater(sim.Xp + sim.Level * 1000, xp + 1000 - 1);
+        }
+
+        [Test]
+        public void NewGadgetsLevelUpAndEvolve()
+        {
+            var sim = NewMission();
+            var a = sim.Actors[1];
+            foreach (var b in new[] { Defs.BuffOrbit, Defs.BuffMine, Defs.BuffMissile, Defs.BuffLightning }) sim.ApplyBuff(1, b + 200);
+            Assert.AreEqual(2, a.OrbitLevel);
+            Assert.AreEqual(2, a.LightningLevel);
+            sim.Enemies.Clear();
+            var e = PlaceEnemy(sim, new Vector3(0, 0, 9), 99999f);
+            sim.Tick(0.02f);
+            Assert.Less(e.Hp, 99999f, "lightning strikes the nearest enemy");
+            Assert.IsTrue(sim.Shots.Any(s => s.Shooter < 0 && GameSim.GadgetType(s.Shooter) == GameSim.GadgetLightning && GameSim.GadgetOwner(s.Shooter) == 1));
+            for (int i = 0; i < 40; i++) sim.Tick(0.05f);
+            Assert.IsTrue(sim.Bullets.Values.Any(b => b.Kind == BulletKind.Mine));
+            sim.ApplyBuff(1, Defs.BuffDrone + 200);
+            sim.ApplyBuff(1, Defs.BuffDrone + 200);
+            Assert.IsFalse(a.DroneEvolved);
+            sim.ApplyBuff(1, Defs.BuffDroneDamage + 100);
+            sim.ApplyBuff(1, Defs.BuffDroneDamage + 100);
+            Assert.IsTrue(a.DroneEvolved);
+        }
+
+        [Test]
         public void EmptyMagazineAutoReloads()
         {
             var sim = NewMission();
@@ -114,7 +180,7 @@ namespace RiftWard.Tests
             Assert.IsFalse(sim.BuffPending);
             var a = sim.Actors[1];
             float before = a.DamageMult;
-            sim.ApplyBuff(1, 20);
+            sim.ApplyBuff(1, 200);
             Assert.AreEqual(before + 0.5f, a.DamageMult, 0.001f);
         }
 

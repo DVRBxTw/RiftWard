@@ -29,17 +29,43 @@ namespace RiftWard.Client
         static readonly Dictionary<(Color, float, float), Material> cache = new Dictionary<(Color, float, float), Material>();
         static Shader standard;
 
+        static readonly Dictionary<Color, Material> matte = new Dictionary<Color, Material>();
+
+        /// Rough, non-reflective surface for floors and walls: grazing sunlight must not wash them out.
+        public static Material Matte(Color color)
+        {
+            if (matte.TryGetValue(color, out var m)) return m;
+            m = new Material(Mat(color));
+            m.SetFloat("_Glossiness", 0.04f);
+            m.SetFloat("_Metallic", 0f);
+            m.SetFloat("_SpecularHighlights", 0f);
+            m.EnableKeyword("_SPECULARHIGHLIGHTS_OFF");
+            m.SetFloat("_GlossyReflections", 0f);
+            m.EnableKeyword("_GLOSSYREFLECTIONS_OFF");
+            matte[color] = m;
+            return m;
+        }
+
         public static Material Mat(Color color, float glow = 0f, float alpha = 1f)
         {
             var key = (color, glow, alpha);
             if (cache.TryGetValue(key, out var m)) return m;
             if (standard == null) standard = Shader.Find("Standard") ?? Shader.Find("Unlit/Color") ?? Shader.Find("Hidden/InternalErrorShader");
             m = new Material(standard) { color = new Color(color.r, color.g, color.b, alpha) };
-            m.SetFloat("_Glossiness", 0.15f);
+            // Material classes by look: glowing parts are glassy, dark neutral parts read as gunmetal,
+            // saturated parts as painted armour, the rest as matte fabric/ground.
+            Color.RGBToHSV(color, out _, out float sat, out float val);
+            float smooth = 0.18f, metal = 0f;
+            if (glow > 0) smooth = 0.75f;
+            else if (val < 0.3f && sat < 0.35f) { smooth = 0.5f; metal = 0.3f; }
+            else if (sat > 0.35f) smooth = 0.38f;
+            m.SetFloat("_Glossiness", smooth);
+            m.SetFloat("_Metallic", metal);
             if (glow > 0)
             {
                 m.EnableKeyword("_EMISSION");
-                m.SetColor("_EmissionColor", color * glow);
+                m.SetColor("_EmissionColor", color * glow * 1.6f);
+                m.globalIlluminationFlags = MaterialGlobalIlluminationFlags.RealtimeEmissive;
             }
             if (alpha < 1f)
             {

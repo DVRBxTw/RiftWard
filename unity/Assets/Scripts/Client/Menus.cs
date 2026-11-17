@@ -58,7 +58,7 @@ namespace RiftWard.Client
             for (int i = 0; i < offer.Length; i++)
             {
                 int code = offer[i];
-                int tier = Mathf.Clamp(code / 10, 0, 2);
+                int tier = Defs.BuffTier(code);
                 Color rarity = Defs.RarityColors[tier];
                 var card = Ui.Button(row, "", () =>
                 {
@@ -71,7 +71,7 @@ namespace RiftWard.Client
                 stack.Fill();
                 stack.GetComponent<VerticalLayoutGroup>().padding = new RectOffset(18, 18, 30, 30);
                 Ui.Label(stack, Defs.RarityNames[tier], 13, rarity, TextAnchor.MiddleCenter).Sized(20);
-                Ui.Label(stack, Defs.Buffs[code % 10].Name, 26, Palette.Bone, TextAnchor.MiddleCenter, true).Sized(36);
+                Ui.Label(stack, Defs.Buffs[Defs.BuffIndex(code)].Name, 26, Palette.Bone, TextAnchor.MiddleCenter, true).Sized(36);
                 Ui.Label(stack, Defs.BuffDescription(code), 17, Palette.Hex("d6d1c6"), TextAnchor.MiddleCenter).Sized(60);
             }
             Ui.Label(root, "選擇後等待隊友；所有人選完就繼續作戰。", 14, Palette.Muted, TextAnchor.MiddleCenter)

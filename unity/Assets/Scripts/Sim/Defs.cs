@@ -6,7 +6,7 @@ namespace RiftWard.Sim
     /// Static game data shared by server and client. Values mirror the Godot 0.4.2 build.
     public static class Defs
     {
-        public const string Version = "0.5.0-unity.1";
+        public const string Version = "0.6.0-unity.1";
 
         // Player movement
         public const float EyeHeight = 1.65f;
@@ -107,18 +107,59 @@ namespace RiftWard.Sim
             new BuffDef("戰術冷卻", "手榴彈冷卻 -{0}%", 20),
             new BuffDef("吸能模組", "每次擊殺恢復 {0} 護盾", 4),
             new BuffDef("爆裂彈頭", "擊殺時爆炸，造成 {0} 範圍傷害", 35),
+            new BuffDef("僚機無人機", "無人機 +{0} 架，自動射擊附近敵人", 1),
+            new BuffDef("無人機火控", "無人機傷害 +{0}%", 35),
+            new BuffDef("無人機超頻", "無人機攻擊冷卻 -{0}%", 15),
+            new BuffDef("肩載電漿砲", "電漿砲定時轟擊敵群；已裝備則傷害 +{0}%", 40),
+            new BuffDef("電漿冷卻", "電漿砲冷卻 -{0}%", 15),
+            new BuffDef("旋轉刃盾", "環繞刃片 Lv +{0}：刃片數與傷害提升", 1),
+            new BuffDef("感應地雷", "定時在腳下佈雷 Lv +{0}", 1),
+            new BuffDef("追蹤飛彈", "定時發射追蹤飛彈 Lv +{0}", 1),
+            new BuffDef("閃電鏈", "定時釋放連鎖閃電 Lv +{0}", 1),
+            new BuffDef("磁力場", "經驗晶體吸收範圍 +{0}%", 40),
         };
+
+        public const int BuffDrone = 10, BuffDroneDamage = 11, BuffDroneRate = 12, BuffPlasma = 13, BuffPlasmaRate = 14;
+        public const int BuffOrbit = 15, BuffMine = 16, BuffMissile = 17, BuffLightning = 18, BuffMagnet = 19;
+        public const int MaxGadgetLevel = 5;
+        public const float BaseMagnet = 2.5f, EliteEvery = 3;
+
+        /// Buffs whose value is a count/level: rare tiers grant +2 instead of scaling a percentage.
+        public static bool IsLevelBuff(int index) => index == BuffDrone || index == BuffOrbit || index == BuffMine || index == BuffMissile || index == BuffLightning;
+
+        /// Orbiting blade i of n around its owner (shared by sim and renderer).
+        public static Vector3 BladeOffset(int i, int n, float time)
+        {
+            float angle = time * 3.2f + i * Mathf.PI * 2f / Mathf.Max(1, n);
+            return new Vector3(Mathf.Cos(angle) * 2.4f, 1.0f, Mathf.Sin(angle) * 2.4f);
+        }
+
+        public static int BladeCount(int level) => level <= 0 ? 0 : Mathf.Min(5, 1 + level);
+        public const int MaxDrones = 4;
+        public const float DroneInterval = 1.1f, DroneDamage = 14f, DroneRange = 24f;
+        public const float PlasmaInterval = 6f, PlasmaDamage = 70f, PlasmaRadius = 4.2f, PlasmaRange = 30f;
+
+        /// Buff codes pack the buff index and its rarity tier: code = index + 100 * tier.
+        public static int BuffIndex(int code) => code % 100;
+        public static int BuffTier(int code) => Mathf.Clamp(code / 100, 0, 2);
+
+        /// Where drone i of n orbits its owner at a given time (shared by sim and renderer).
+        public static Vector3 DroneOffset(int i, int n, float time)
+        {
+            float angle = time * 1.6f + i * Mathf.PI * 2f / Mathf.Max(1, n);
+            return new Vector3(Mathf.Cos(angle) * 1.1f, 2.3f + Mathf.Sin(time * 3f + i) * 0.12f, Mathf.Sin(angle) * 1.1f);
+        }
 
         public static readonly string[] RarityNames = { "普通", "稀有", "傳說" };
         public static readonly float[] RarityMultiplier = { 1f, 1.6f, 2.5f };
         public static readonly Color32[] RarityColors = { new Color32(0xa7, 0xa9, 0xac, 255), new Color32(0x7f, 0xb2, 0xe5, 255), new Color32(0xf0, 0xb2, 0x4a, 255) };
 
-        /// Buff codes pack the buff index and its rarity tier: code = index + 10 * tier.
         public static string BuffDescription(int code)
         {
-            var buff = Buffs[code % 10];
-            int tier = Mathf.Clamp(code / 10, 0, 2);
-            return string.Format(buff.Description, Mathf.RoundToInt(buff.BaseValue * RarityMultiplier[tier]));
+            var buff = Buffs[BuffIndex(code)];
+            int tier = BuffTier(code);
+            float value = IsLevelBuff(BuffIndex(code)) ? (tier == 2 ? 2 : 1) : Mathf.RoundToInt(buff.BaseValue * RarityMultiplier[tier]);
+            return string.Format(buff.Description, value);
         }
     }
 

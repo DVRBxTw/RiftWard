@@ -19,6 +19,15 @@ namespace RiftWard.Client
         public int SelectedRegion { get; private set; }
         public bool CanDeploy => Profile != null && (!Net.Welcomed || leaderId == Net.LocalId);
         public NetClient Net { get; } = new NetClient();
+        /// Room code shown to the party; empty when playing alone.
+        public string RoomCode { get; private set; } = "";
+        public bool InRoom => RoomCode != "";
+        public bool IsLeader => leaderId == Net.LocalId;
+        public int PartySize => partySize;
+
+        public void CreateRoom() { if (Net.Welcomed) Net.Send(Msg.CreateRoom); }
+        public void JoinRoom(string code) { if (Net.Welcomed && !string.IsNullOrWhiteSpace(code)) Net.Send(Msg.JoinRoom, w => w.Write(code.Trim().ToUpperInvariant())); }
+        public void LeaveRoom() { if (Net.Welcomed) Net.Send(Msg.LeaveRoom); }
         int leaderId = -1, partySize, gamePort = Protocol.DefaultPort;
         bool inNetMission, netTest;
         string lobbyMode = "lobby";
@@ -109,6 +118,7 @@ namespace RiftWard.Client
             {
                 case Msg.Welcome:
                     Debug.Log("UNITY_CLIENT_WELCOME id=" + Net.LocalId);
+                    if (netTest) JoinRoom("TEST");
                     break;
                 case Msg.Lobby:
                     SelectedRegion = r.ReadInt32();
@@ -116,7 +126,9 @@ namespace RiftWard.Client
                     leaderId = r.ReadInt32();
                     partySize = r.ReadInt32();
                     lobbyMode = r.ReadString();
-                    homeStatus = leaderId == Net.LocalId ? $"已連線 · 隊長 · {partySize} / 4" : $"已連線 · 等待隊長部署 · {partySize} / 4";
+                    RoomCode = r.ReadString();
+                    homeStatus = !InRoom ? "已連線 · 單人任務（建立或加入房間即可組隊）"
+                        : leaderId == Net.LocalId ? $"房號 {RoomCode} · 隊長 · {partySize} / 4" : $"房號 {RoomCode} · 等待隊長部署 · {partySize} / 4";
                     if (Screens.Mode == "home" || Screens.Mode == "connecting") ShowHome();
                     if (netTest && leaderId == Net.LocalId && partySize >= 2 && lobbyMode == "lobby" && !inNetMission && !testDone) Net.Send(Msg.RequestDeploy, w => w.Write(0));
                     break;
@@ -379,6 +391,10 @@ namespace RiftWard.Client
             Client.StartOffline(0, kit, false, null);
             var sim = Client.Sim;
             sim.EnemyVariety = true;
+            sim.ApplyBuff(Client.LocalId, Defs.BuffDrone + 200);
+            sim.ApplyBuff(Client.LocalId, Defs.BuffPlasma);
+            sim.ApplyBuff(Client.LocalId, Defs.BuffOrbit + 200);
+            sim.ApplyBuff(Client.LocalId, Defs.BuffMissile + 200);
             sim.Wave = 5;
             sim.SpawnWave();
             var me = sim.Actors[Client.LocalId];
@@ -401,6 +417,16 @@ namespace RiftWard.Client
             Client.Menus.ShowResult(true, 0, 86, 742, 740, 1980, "A", new[] { 41, 13, 290, 176 });
             yield return Settle(0.2f);
             yield return Shot(folder, "unity-result");
+            Client.Menus.HideAll();
+            Client.SetThirdPerson(true);
+            yield return Settle(0.3f);
+            yield return Shot(folder, "unity-third-0");
+            for (int region = 1; region <= 2; region++)
+            {
+                Client.World.ApplyRegion(region);
+                yield return Settle(0.3f);
+                yield return Shot(folder, "unity-third-" + region);
+            }
             Application.Quit();
         }
 

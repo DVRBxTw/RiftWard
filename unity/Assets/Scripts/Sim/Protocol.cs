@@ -11,7 +11,7 @@ namespace RiftWard.Sim
     public enum Msg : byte
     {
         // client → server
-        Hello = 1, Input = 2, ChooseBuff = 3, Admin = 4, RequestDeploy = 5, SelectRegion = 6, LeaveMission = 7, RefreshProfile = 8, RequestHome = 9,
+        Hello = 1, Input = 2, ChooseBuff = 3, Admin = 4, RequestDeploy = 5, SelectRegion = 6, LeaveMission = 7, RefreshProfile = 8, RequestHome = 9, CreateRoom = 10, JoinRoom = 11, LeaveRoom = 12,
         // server → client
         Welcome = 50, Error = 51, Lobby = 52, Deploy = 53, Snapshot = 54, Events = 55, BuffOffer = 56, Finish = 57, ProfileSync = 58, Notice = 59, BackHome = 60,
     }
@@ -81,12 +81,14 @@ namespace RiftWard.Sim
                 w.Write(a.IsAdmin && a.Admin.Fly); w.Write(a.Zoom);
                 w.Write((byte)a.Loadout.Equipped.Count);
                 foreach (var weapon in a.Loadout.Equipped) w.Write(weapon);
+                w.Write(a.Name ?? ""); w.Write((byte)a.Drones); w.Write(a.Plasma);
+                w.Write((byte)a.OrbitLevel); w.Write(a.DroneEvolved); w.Write(a.PlasmaEvolved);
             }
             w.Write(sim.Enemies.Count);
             foreach (var e in sim.Enemies.Values)
             {
                 w.Write(e.Id); w.Write(e.Position); w.Write(e.Hp); w.Write(e.MaxHp); w.Write(e.Yaw);
-                w.Write(e.Boss); w.Write((byte)e.Kind); w.Write((byte)e.State);
+                w.Write(e.Boss); w.Write((byte)e.Kind); w.Write((byte)e.State); w.Write(e.Elite);
             }
             w.Write(sim.Bullets.Count);
             foreach (var b in sim.Bullets.Values) { w.Write(b.Id); w.Write(b.Position); w.Write(b.Velocity); w.Write((byte)b.Kind); }
@@ -119,6 +121,8 @@ namespace RiftWard.Sim
                 var equipped = new List<string>();
                 for (int k = 0; k < kit; k++) equipped.Add(r.ReadString());
                 a.Loadout.Equipped = equipped.Where(Defs.Weapons.ContainsKey).DefaultIfEmpty("pistol").ToList();
+                a.Name = r.ReadString(); a.Drones = r.ReadByte(); a.Plasma = r.ReadBoolean();
+                a.OrbitLevel = r.ReadByte(); a.DroneEvolved = r.ReadBoolean(); a.PlasmaEvolved = r.ReadBoolean();
                 a.Speed = speed;
                 if (id == localId) { ack = a.Ack; localSpeed = speed; localFly = fly; }
             }
@@ -132,8 +136,8 @@ namespace RiftWard.Sim
                 seen.Add(id);
                 if (!sim.Enemies.TryGetValue(id, out var e)) sim.Enemies[id] = e = new Enemy { Id = id };
                 e.Position = r.ReadVector3(); e.Hp = r.ReadSingle(); e.MaxHp = r.ReadSingle(); e.Yaw = r.ReadSingle();
-                e.Boss = r.ReadBoolean(); e.Kind = r.ReadByte(); e.State = r.ReadByte();
-                e.Scale = Defs.Kinds[Mathf.Clamp(e.Kind, 0, Defs.Kinds.Length - 1)].Scale;
+                e.Boss = r.ReadBoolean(); e.Kind = r.ReadByte(); e.State = r.ReadByte(); e.Elite = r.ReadBoolean();
+                e.Scale = Defs.Kinds[Mathf.Clamp(e.Kind, 0, Defs.Kinds.Length - 1)].Scale * (e.Elite ? 1.35f : 1f);
             }
             foreach (var id in sim.Enemies.Keys.Where(id => !seen.Contains(id)).ToList()) sim.Enemies.Remove(id);
 

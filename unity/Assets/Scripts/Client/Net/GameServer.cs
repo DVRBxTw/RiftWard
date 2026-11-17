@@ -22,21 +22,33 @@ namespace RiftWard.Client
             public int[] OfferSent;
             public float LastInput;
             public AdminSettings Admin = new AdminSettings();
+            public Room Room;
         }
 
-        const int MaxPlayers = 4;
+        /// A party with its own leader, mission and snapshots. Players outside a room are alone.
+        sealed class Room
+        {
+            public string Code;
+            public readonly List<int> Members = new List<int>();
+            public bool Private;
+            public GameSim Sim;
+            public int Selected, Leader = -1;
+            public string Mode = "lobby";
+            public float SnapshotTimer;
+            public bool Finishing;
+            public int FastWave = -1;
+        }
+
+        const int MaxPlayers = 64, RoomSize = 4;
+        const string CodeChars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+        readonly Dictionary<string, Room> rooms = new Dictionary<string, Room>();
+        readonly System.Random rng = new System.Random();
         TcpListener listener;
         readonly ConcurrentQueue<TcpClient> accepted = new ConcurrentQueue<TcpClient>();
         readonly Dictionary<int, Player> players = new Dictionary<int, Player>();
         int nextId = 1;
         AccountApi api;
-        GameSim sim;
-        int selected, leader = -1;
-        string mode = "lobby";
-        float snapshotTimer;
-        bool finishing;
         bool testFast;
-        int fastWave = -1;
         float clock;
 
         static string Env(string name, string fallback) { var v = Environment.GetEnvironmentVariable(name); return string.IsNullOrEmpty(v) ? fallback : v; }
@@ -107,13 +119,22 @@ namespace RiftWard.Client
                 while (p.Conn.Inbox.TryDequeue(out var msg)) Handle(p, msg.type, msg.payload);
                 if (p.Conn.Closed) Drop(p.Conn.Id);
             }
-            if (sim == null || mode != "playing") return;
-            foreach (var kv in players)
+            foreach (var room in rooms.Values.ToList()) TickRoom(room);
+        }
+
+        IEnumerable<KeyValuePair<int, Player>> MembersOf(Room room) =>
+            room.Members.Where(players.ContainsKey).Select(id => new KeyValuePair<int, Player>(id, players[id])).ToList();
+
+        void TickRoom(Room room)
+        {
+            var sim = room.Sim;
+            if (sim == null || room.Mode != "playing") return;
+            foreach (var kv in MembersOf(room))
                 if (sim.Actors.TryGetValue(kv.Key, out var actor) && clock - kv.Value.LastInput > 0.25f)
                     sim.Inputs[kv.Key] = new PlayerInput { Seq = sim.Inputs.TryGetValue(kv.Key, out var old) ? old.Seq : 0, Yaw = actor.Yaw, Slot = actor.Slot };
-            if (testFast && sim.Wave != fastWave && sim.Enemies.Count > 0 && !sim.BuffPending)
+            if (testFast && sim.Wave != room.FastWave && sim.Enemies.Count > 0 && !sim.BuffPending)
             {
-                fastWave = sim.Wave;
+                room.FastWave = sim.Wave;
                 sim.Enemies.Clear();
                 sim.GainXp(sim.XpNeed);
             }
@@ -121,22 +142,22 @@ namespace RiftWard.Client
             if (sim.Shots.Count + sim.Explosions.Count + sim.Announcements.Count > 0)
             {
                 var events = Protocol.Frame(Msg.Events, w => Protocol.WriteEvents(w, sim));
-                Broadcast(events);
+                Broadcast(room, events);
                 sim.Shots.Clear(); sim.Explosions.Clear(); sim.Announcements.Clear();
             }
-            foreach (var kv in players)
+            foreach (var kv in MembersOf(room))
             {
                 if (!sim.BuffPending || !sim.BuffOffers.TryGetValue(kv.Key, out var offer) || kv.Value.OfferSent == offer) continue;
                 kv.Value.OfferSent = offer;
                 kv.Value.Conn.Send(Protocol.Frame(Msg.BuffOffer, w => { w.Write(sim.Level); w.Write(offer.Length); foreach (var c in offer) w.Write(c); }));
             }
-            snapshotTimer += Time.fixedDeltaTime;
-            if (snapshotTimer >= 0.05f)
+            room.SnapshotTimer += Time.fixedDeltaTime;
+            if (room.SnapshotTimer >= 0.05f)
             {
-                snapshotTimer = 0;
-                Broadcast(Protocol.Frame(Msg.Snapshot, w => Protocol.WriteSnapshot(w, sim)));
+                room.SnapshotTimer = 0;
+                Broadcast(room, Protocol.Frame(Msg.Snapshot, w => Protocol.WriteSnapshot(w, sim)));
             }
-            if ((sim.State == MissionState.Victory || sim.State == MissionState.Defeat) && !finishing) StartCoroutine(Finish());
+            if ((sim.State == MissionState.Victory || sim.State == MissionState.Defeat) && !room.Finishing) StartCoroutine(Finish(room));
         }
 
         System.Collections.IEnumerator AuthTimeout(int id)
@@ -145,22 +166,96 @@ namespace RiftWard.Client
             if (players.TryGetValue(id, out var p) && p.Profile == null) { p.Conn.Close("auth timeout"); Drop(id); }
         }
 
-        void Broadcast(byte[] frame)
+        void Broadcast(Room room, byte[] frame)
         {
-            foreach (var p in players.Values) if (p.Profile != null) p.Conn.Send(frame);
+            foreach (var kv in MembersOf(room)) if (kv.Value.Profile != null) kv.Value.Conn.Send(frame);
         }
 
         void Drop(int id)
         {
-            if (!players.Remove(id)) return;
+            if (!players.TryGetValue(id, out var p)) return;
+            LeaveRoom(p, false);
+            players.Remove(id);
             Debug.Log("PEER_LEFT " + id);
-            if (sim != null && sim.Actors.ContainsKey(id))
+        }
+
+        // ------------------------------------------------------------ rooms
+
+        Room CreateRoom(Player p, bool isPrivate)
+        {
+            LeaveRoom(p, false);
+            string code;
+            do code = new string(Enumerable.Range(0, 4).Select(_ => CodeChars[rng.Next(CodeChars.Length)]).ToArray());
+            while (rooms.ContainsKey(code));
+            var room = new Room { Code = code, Private = isPrivate, Leader = p.Conn.Id };
+            rooms[code] = room;
+            room.Members.Add(p.Conn.Id);
+            p.Room = room;
+            Debug.Log($"ROOM_CREATED {code} by={p.Conn.Id} private={isPrivate}");
+            SendLobby(room);
+            return room;
+        }
+
+        void JoinRoom(Player p, string code)
+        {
+            code = (code ?? "").Trim().ToUpperInvariant();
+            if (testFast && code == "TEST" && !rooms.ContainsKey(code))
             {
-                sim.RemoveActor(id);
-                if (mode == "playing" && sim.Actors.Count == 0) EndToLobby();
+                LeaveRoom(p, false);
+                var test = rooms[code] = new Room { Code = code, Leader = p.Conn.Id };
+                test.Members.Add(p.Conn.Id);
+                p.Room = test;
+                SendLobby(test);
+                return;
             }
-            if (id == leader) leader = players.Keys.Where(k => players[k].Profile != null).DefaultIfEmpty(-1).First();
-            BroadcastLobby();
+            if (!rooms.TryGetValue(code, out var room) || room.Private) { Notice(p, "找不到房號 " + code); return; }
+            if (room == p.Room) return;
+            if (room.Members.Count >= RoomSize) { Notice(p, "房間已滿（最多 4 人）"); return; }
+            if (room.Mode == "result") { Notice(p, "房間正在結算，請稍後再試"); return; }
+            LeaveRoom(p, false);
+            room.Members.Add(p.Conn.Id);
+            p.Room = room;
+            Debug.Log($"ROOM_JOINED {code} id={p.Conn.Id}");
+            SendLobby(room);
+            if (room.Mode == "playing") JoinMission(room, p.Conn.Id);
+        }
+
+        void LeaveRoom(Player p, bool notify)
+        {
+            var room = p.Room;
+            if (room == null) return;
+            int id = p.Conn.Id;
+            room.Members.Remove(id);
+            p.Room = null;
+            if (room.Sim != null && room.Sim.Actors.ContainsKey(id))
+            {
+                room.Sim.RemoveActor(id);
+                if (notify) p.Conn.Send(Protocol.Frame(Msg.BackHome));
+            }
+            if (room.Members.Count == 0) { rooms.Remove(room.Code); Debug.Log("ROOM_CLOSED " + room.Code); }
+            else
+            {
+                if (room.Leader == id) room.Leader = room.Members[0];
+                if (room.Mode == "playing" && room.Sim != null && room.Sim.Actors.Count == 0) EndToLobby(room);
+                else SendLobby(room);
+            }
+            if (notify) SendSoloLobby(p);
+        }
+
+        void Notice(Player p, string text) => p.Conn.Send(Protocol.Frame(Msg.Notice, w => w.Write(text)));
+
+        void SendLobby(Room room)
+        {
+            int unlocked = players.TryGetValue(room.Leader, out var l) && l.Profile != null ? l.Profile.Unlocked : 0;
+            int count = MembersOf(room).Count(kv => kv.Value.Profile != null);
+            string code = room.Private ? "" : room.Code;
+            Broadcast(room, Protocol.Frame(Msg.Lobby, w => { w.Write(room.Selected); w.Write(unlocked); w.Write(room.Leader); w.Write(count); w.Write(room.Mode); w.Write(code); }));
+        }
+
+        /// A player outside any room is the leader of a party of one.
+        void SendSoloLobby(Player p)
+        {
+            p.Conn.Send(Protocol.Frame(Msg.Lobby, w => { w.Write(0); w.Write(p.Profile.Unlocked); w.Write(p.Conn.Id); w.Write(1); w.Write("lobby"); w.Write(""); }));
         }
 
         // ------------------------------------------------------------ messages
@@ -176,8 +271,21 @@ namespace RiftWard.Client
                     return;
                 }
                 int id = p.Conn.Id;
+                var room = p.Room;
+                var sim = room?.Sim;
+                string mode = room?.Mode ?? "lobby";
                 switch (type)
                 {
+                    case Msg.CreateRoom:
+                        if (mode != "playing") CreateRoom(p, false);
+                        break;
+                    case Msg.JoinRoom:
+                        string code = r.ReadString();
+                        if (mode != "playing") JoinRoom(p, code);
+                        break;
+                    case Msg.LeaveRoom:
+                        LeaveRoom(p, true);
+                        break;
                     case Msg.Input:
                         var input = r.ReadInput();
                         if (sim != null && mode == "playing" && sim.Actors.ContainsKey(id) && (!sim.Inputs.TryGetValue(id, out var prev) || input.Seq >= prev.Seq))
@@ -197,22 +305,23 @@ namespace RiftWard.Client
                         break;
                     case Msg.SelectRegion:
                         int region = r.ReadInt32();
-                        if (id == leader && mode != "playing") { selected = Mathf.Clamp(region, 0, p.Profile.Unlocked); BroadcastLobby(); }
+                        if (room != null && id == room.Leader && mode != "playing") { room.Selected = Mathf.Clamp(region, 0, p.Profile.Unlocked); SendLobby(room); }
                         break;
                     case Msg.RequestDeploy:
                         int target = r.ReadInt32();
-                        if (id == leader && mode != "playing") StartMission(target);
+                        if (room == null) room = CreateRoom(p, true);
+                        if (id == room.Leader && room.Mode == "lobby") StartMission(room, target);
                         break;
                     case Msg.LeaveMission:
                         if (mode == "playing" && sim != null && sim.Actors.ContainsKey(id))
                         {
                             sim.RemoveActor(id);
                             p.Conn.Send(Protocol.Frame(Msg.BackHome));
-                            if (sim.Actors.Count == 0) EndToLobby();
+                            if (sim.Actors.Count == 0) EndToLobby(room);
                         }
                         break;
                     case Msg.RequestHome:
-                        if (mode == "result") EndToLobby();
+                        if (mode == "result") EndToLobby(room);
                         break;
                     case Msg.RefreshProfile:
                         RefreshProfile(p);
@@ -236,11 +345,9 @@ namespace RiftWard.Client
                 if (!profile.TutorialComplete) { Reject(p, "請先完成新手教學"); return; }
                 if (players.Values.Any(o => o != p && o.Profile != null && o.Profile.Id == profile.Id)) { Reject(p, "這個帳號已在其他視窗登入遊戲"); return; }
                 p.Profile = profile;
-                if (leader < 0 || !players.ContainsKey(leader) || players[leader].Profile == null) { leader = id; selected = Mathf.Min(selected, profile.Unlocked); }
                 p.Conn.Send(Protocol.Frame(Msg.Welcome, w => w.Write(id)));
                 Debug.Log("ACCOUNT_PEER_VERIFIED id=" + id);
-                BroadcastLobby();
-                if (mode == "playing") JoinMission(id);
+                SendSoloLobby(p);
             });
         }
 
@@ -256,13 +363,6 @@ namespace RiftWard.Client
             c.Close("rejected");
         }
 
-        void BroadcastLobby()
-        {
-            int unlocked = leader >= 0 && players.TryGetValue(leader, out var l) && l.Profile != null ? l.Profile.Unlocked : 0;
-            int count = players.Values.Count(p => p.Profile != null);
-            Broadcast(Protocol.Frame(Msg.Lobby, w => { w.Write(selected); w.Write(unlocked); w.Write(leader); w.Write(count); w.Write(mode); }));
-        }
-
         void RefreshProfile(Player p)
         {
             api.Post("/api/server/profile", new Dictionary<string, object> { ["account_id"] = p.Profile.Id }, result =>
@@ -274,56 +374,63 @@ namespace RiftWard.Client
 
         // ------------------------------------------------------------ missions
 
-        void StartMission(int region)
+        void StartMission(Room room, int region)
         {
-            var ready = players.Where(kv => kv.Value.Profile != null).ToList();
+            var ready = MembersOf(room).Where(kv => kv.Value.Profile != null).ToList();
             if (ready.Count == 0) return;
             if (ready.Any(kv => region > kv.Value.Profile.Unlocked))
             {
-                players[leader].Conn.Send(Protocol.Frame(Msg.Notice, w => w.Write("隊友尚未解鎖此區域，請先完成前一區域")));
+                Notice(players[room.Leader], "隊友尚未解鎖此區域，請先完成前一區域");
                 return;
             }
-            selected = region;
-            sim = new GameSim();
-            foreach (var kv in ready) AddToSim(kv.Key, kv.Value);
+            room.Selected = region;
+            var sim = room.Sim = new GameSim();
+            foreach (var kv in ready) AddToSim(sim, kv.Key, kv.Value);
             sim.StartMission(region);
             foreach (var kv in ready) sim.SetAdmin(kv.Key, kv.Value.Admin);
-            mode = "playing";
-            finishing = false;
-            fastWave = -1;
-            Broadcast(Protocol.Frame(Msg.Deploy, w => w.Write(region)));
-            BroadcastLobby();
-            Debug.Log("MISSION_START region=" + region + " players=" + ready.Count);
+            room.Mode = "playing";
+            room.Finishing = false;
+            room.FastWave = -1;
+            Broadcast(room, Protocol.Frame(Msg.Deploy, w => w.Write(region)));
+            SendLobby(room);
+            Debug.Log($"MISSION_START room={room.Code} region={region} players={ready.Count}");
         }
 
-        void AddToSim(int id, Player p)
+        void AddToSim(GameSim sim, int id, Player p)
         {
             var lo = new Loadout { Owned = new List<string>(p.Profile.Loadout.Owned), Equipped = new List<string>(p.Profile.Loadout.Equipped) };
             foreach (var kv in p.Profile.Loadout.Levels) lo.Levels[kv.Key] = new Dictionary<string, int>(kv.Value);
-            sim.AddActor(id, lo, p.Profile.Admin);
+            sim.AddActor(id, lo, p.Profile.Admin).Name = p.Profile.Username;
             p.OfferSent = null;
             p.LastInput = clock;
         }
 
-        void JoinMission(int id)
+        void JoinMission(Room room, int id)
         {
-            AddToSim(id, players[id]);
+            var sim = room.Sim;
+            AddToSim(sim, id, players[id]);
             sim.SetAdmin(id, players[id].Admin);
             players[id].Conn.Send(Protocol.Frame(Msg.Deploy, w => w.Write(sim.Region)));
         }
 
-        void EndToLobby()
+        void EndToLobby(Room room)
         {
-            mode = "lobby";
-            sim = null;
-            Broadcast(Protocol.Frame(Msg.BackHome));
-            BroadcastLobby();
+            room.Mode = "lobby";
+            room.Sim = null;
+            Broadcast(room, Protocol.Frame(Msg.BackHome));
+            if (room.Private)
+            {
+                foreach (var kv in MembersOf(room)) { kv.Value.Room = null; SendSoloLobby(kv.Value); }
+                rooms.Remove(room.Code);
+            }
+            else SendLobby(room);
             Debug.Log("RETURNED_HOME");
         }
 
-        System.Collections.IEnumerator Finish()
+        System.Collections.IEnumerator Finish(Room room)
         {
-            finishing = true;
+            room.Finishing = true;
+            var sim = room.Sim;
             bool success = sim.State == MissionState.Victory;
             int gold = sim.MissionGold();
             int region = sim.Region, kills = sim.Kills, wave = sim.Wave;
@@ -331,8 +438,8 @@ namespace RiftWard.Client
             string grade = sim.MissionGrade();
             var records = new Dictionary<int, int[]>();
             foreach (var a in sim.Actors.Values) records[a.Id] = new[] { a.StatKills, a.StatHeadshots, a.StatShots, a.StatHits };
-            Broadcast(Protocol.Frame(Msg.Snapshot, w => Protocol.WriteSnapshot(w, sim)));
-            foreach (var kv in players.Where(kv => kv.Value.Profile != null).ToList())
+            Broadcast(room, Protocol.Frame(Msg.Snapshot, w => Protocol.WriteSnapshot(w, sim)));
+            foreach (var kv in MembersOf(room).Where(kv => kv.Value.Profile != null).ToList())
             {
                 var p = kv.Value;
                 bool done = false;
@@ -357,8 +464,8 @@ namespace RiftWard.Client
                 }
                 p.Conn.Send(Protocol.Frame(Msg.ProfileSync));
             }
-            mode = "result";
-            foreach (var kv in players.Where(kv => kv.Value.Profile != null))
+            room.Mode = "result";
+            foreach (var kv in MembersOf(room).Where(kv => kv.Value.Profile != null))
             {
                 var rec = records.TryGetValue(kv.Key, out var r) ? r : new int[4];
                 kv.Value.Conn.Send(Protocol.Frame(Msg.Finish, w =>
@@ -367,8 +474,8 @@ namespace RiftWard.Client
                     foreach (var v in rec) w.Write(v);
                 }));
             }
-            if (leader >= 0 && players.TryGetValue(leader, out var l) && l.Profile != null) selected = Mathf.Min(selected, l.Profile.Unlocked);
-            BroadcastLobby();
+            if (players.TryGetValue(room.Leader, out var l) && l.Profile != null) room.Selected = Mathf.Min(room.Selected, l.Profile.Unlocked);
+            SendLobby(room);
             Debug.Log($"MISSION_RESULT success={success} region={region} kills={kills} gold={gold}");
         }
     }

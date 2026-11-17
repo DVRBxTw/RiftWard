@@ -6,7 +6,8 @@ ROOT = Path(__file__).resolve().parents[1]
 SPEC = importlib.util.spec_from_file_location("service", ROOT / "server/service.py")
 service = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(service)
-VERSION = "0.5.0-unity.1"
+import re
+VERSION = re.search(r'Version = "([^"]+)"', (ROOT / "unity/Assets/Scripts/Sim/Defs.cs").read_text(encoding="utf-8"))[1]
 
 
 def free_port(kind):
