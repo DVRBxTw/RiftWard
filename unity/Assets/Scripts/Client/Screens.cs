@@ -1915,8 +1915,23 @@ namespace RiftWard.Client
             weaponKeysInput.text = "0";
             int weaponPick = 0;
             string[] choices = { "不發放武器", "解鎖 AR-27 突擊步槍", "解鎖 SG-8 霰彈槍", "解鎖 LR-50 狙擊槍", "解鎖 EX-1 能量光劍" };
-            Button weaponButton = null;
-            weaponButton = Ui.Button(Ui.HStack(gs, 10).Sized(40), choices[0], () => { weaponPick = (weaponPick + 1) % choices.Length; weaponButton.SetCaption(choices[weaponPick]); }, 14);
+            Button weaponButton = null, rarityButton = null;
+            int rarityPick = 1;
+            var weaponRow = Ui.HStack(gs, 10).Sized(40);
+            weaponButton = Ui.Button(weaponRow, choices[0], () => { weaponPick = (weaponPick + 1) % choices.Length; weaponButton.SetCaption(choices[weaponPick]); rarityButton.interactable = weaponPick > 0; }, 14);
+            // Rarity of the granted weapon (cycles 劣質 → 神話); an owned weapon gets the copy added to the armory.
+            void PaintRarity()
+            {
+                rarityButton.SetCaption($"稀有度：{Gear.RarityNames[rarityPick]}");
+                rarityButton.GetComponentInChildren<Text>().color = Gear.RarityColors[rarityPick];
+                rarityButton.GetComponent<Outline>().effectColor = rarityPick >= 3 ? Gear.RarityColors[rarityPick] : Palette.Line;
+            }
+            rarityButton = Ui.Button(weaponRow, "", () => { rarityPick = (rarityPick + 1) % Gear.RarityNames.Length; PaintRarity(); }, 14);
+            rarityButton.gameObject.AddComponent<LayoutElement>().preferredWidth = 130;
+            weaponRow.GetComponent<HorizontalLayoutGroup>().childForceExpandWidth = false;
+            weaponButton.gameObject.AddComponent<LayoutElement>().flexibleWidth = 1;
+            rarityButton.interactable = false;
+            PaintRarity();
             var actions = Ui.HStack(gs, 10).Sized(46);
             void Send(bool all)
             {
@@ -1925,7 +1940,7 @@ namespace RiftWard.Client
                 int.TryParse(goldInput.text, out int gold);
                 adminStatus.color = Palette.Amber;
                 adminStatus.text = "發放中…";
-                app.Api.Post("/api/admin/grant", new Dictionary<string, object> { ["username"] = who, ["gold"] = gold, ["keys"] = int.TryParse(keysInput.text, out var keyCount) ? keyCount : 0, ["weapon_keys"] = int.TryParse(weaponKeysInput.text, out var weaponKeyCount) ? weaponKeyCount : 0, ["weapon"] = weaponPick == 0 ? "" : Defs.WeaponOrder[weaponPick] }, result =>
+                app.Api.Post("/api/admin/grant", new Dictionary<string, object> { ["username"] = who, ["gold"] = gold, ["keys"] = int.TryParse(keysInput.text, out var keyCount) ? keyCount : 0, ["weapon_keys"] = int.TryParse(weaponKeysInput.text, out var weaponKeyCount) ? weaponKeyCount : 0, ["weapon"] = weaponPick == 0 ? "" : Defs.WeaponOrder[weaponPick], ["rarity"] = rarityPick }, result =>
                 {
                     if (Mode != "admin") return;
                     if (result.Bool("ok"))

@@ -31,11 +31,12 @@ namespace RiftWard.Client
         }
 
         /// Sword swing: a curved, fading ribbon of light sweeping through the arc in front of the swinger.
-        public static void Slash(Vector3 centre, float yaw, float radius, Color color, bool leftToRight)
+        public static void Slash(Vector3 centre, float yaw, float radius, Color color, bool leftToRight, int rarity = 1)
         {
             const int points = 14;
+            float width = rarity >= 3 ? 0.2f : rarity == 0 ? 0.08f : 0.12f;   // 傳奇+ sweep a broader band
             var go = new GameObject("Slash");
-            var line = Line(go, color, 0.12f, 0.12f);
+            var line = Line(go, color, width, width);
             line.positionCount = points;
             float half = Defs.MeleeHalfArc * Mathf.Deg2Rad;
             for (int i = 0; i < points; i++)
@@ -46,13 +47,29 @@ namespace RiftWard.Client
             }
             // Thin at the start of the stroke, full at the leading edge.
             line.widthCurve = new AnimationCurve(new Keyframe(0, 0.15f), new Keyframe(0.75f, 1f), new Keyframe(1, 0.4f));
-            go.AddComponent<Beam>().Init(line, color, 0.12f, 0.16f);
+            go.AddComponent<Beam>().Init(line, color, width, rarity >= 3 ? 0.22f : 0.16f);
             var core = new GameObject("SlashCore");
             var coreLine = Line(core, Color.white, 0.04f, 0.04f);
             coreLine.positionCount = points;
             for (int i = 0; i < points; i++) coreLine.SetPosition(i, line.GetPosition(i));
             coreLine.widthCurve = line.widthCurve;
             core.AddComponent<Beam>().Init(coreLine, Color.white, 0.04f, 0.1f);
+            if (rarity >= 4)
+            {
+                // 神話: crackling red arcs wrapped around the sweep.
+                for (int k = 0; k < 2; k++)
+                {
+                    var arc = new GameObject("SlashArc");
+                    var arcLine = Line(arc, Palette.Hex("ff4d4d"), 1f, 1f);
+                    arcLine.positionCount = points * 2;
+                    for (int i = 0; i < points * 2; i++)
+                    {
+                        var p = line.GetPosition(Mathf.Min(points - 1, i / 2));
+                        arcLine.SetPosition(i, p + Random.insideUnitSphere * 0.12f);
+                    }
+                    arc.AddComponent<Beam>().Init(arcLine, Palette.Hex("ff6b6b"), 0.025f, 0.18f);
+                }
+            }
         }
 
         static readonly Queue<GameObject> scorches = new Queue<GameObject>();
@@ -183,6 +200,51 @@ namespace RiftWard.Client
             line.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
             line.receiveShadows = false;
             return line;
+        }
+    }
+
+    /// Motes of light drifting along an energy blade (local +Z, centred on the transform), spiralling slightly,
+    /// twinkling, and fading in at the hilt and out at the tip before starting over.
+    public sealed class BladeMotes : MonoBehaviour
+    {
+        const float Length = 0.9f, Radius = 0.075f;
+        Transform[] motes = new Transform[0];
+        float[] phase, speed, angle;
+        float size;
+
+        public void Build(int count, Color color, float brightness)
+        {
+            motes = new Transform[count];
+            phase = new float[count]; speed = new float[count]; angle = new float[count];
+            size = 0.02f * brightness + 0.006f;
+            for (int i = 0; i < count; i++)
+            {
+                var mote = global::RiftWard.Client.Build.Sphere(transform, Vector3.zero, size, color, 5f * brightness, false);
+                foreach (var c in mote.GetComponents<Collider>()) Destroy(c);
+                // Unlit and additive-looking: the motes stay bright against any sky or shade.
+                mote.GetComponent<MeshRenderer>().sharedMaterial = global::RiftWard.Client.Build.Mat(color, 4f, 0.95f);
+                motes[i] = mote.transform;
+                phase[i] = (float)i / count + Random.Range(0f, 0.08f);
+                speed[i] = Random.Range(0.18f, 0.32f);
+                angle[i] = Random.Range(0f, Mathf.PI * 2f);
+            }
+        }
+
+        void Update()
+        {
+            float t = Time.time;
+            for (int i = 0; i < motes.Length; i++)
+            {
+                if (motes[i] == null) continue;
+                phase[i] = Mathf.Repeat(phase[i] + speed[i] * Time.deltaTime, 1f);
+                float p = phase[i], a = angle[i] + p * 5f;
+                float r = Radius * (0.45f + 0.55f * Mathf.Sin(t * 2.3f + i * 1.3f) * Mathf.Sin(t * 2.3f + i * 1.3f) + 0.3f * p);   // drift outward as they rise
+                motes[i].localPosition = new Vector3(Mathf.Cos(a) * r, Mathf.Sin(a) * r, (p - 0.5f) * Length);
+                // Fade in from the hilt, out at the tip, and twinkle on the way.
+                float life = Mathf.Sin(Mathf.PI * p);
+                float twinkle = 0.6f + 0.4f * Mathf.Sin(t * 11f + i * 1.7f);
+                motes[i].localScale = Vector3.one * size * life * twinkle;
+            }
         }
     }
 

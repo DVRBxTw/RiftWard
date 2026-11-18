@@ -662,6 +662,24 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(response[1]["profile"]["loadout"]["levels"]["saber"]["mag"],1)
         self.assertEqual(response[1]["profile"]["gold"],5000-service.upgrade_cost("saber",0,1))
 
+    def test_admin_grants_weapons_at_a_rarity(self):
+        account = self.register()
+        auth = {"Authorization":"Bearer "+account["token"]}
+        self.store.admin_file.write_text("Beta_Test\n",encoding="utf-8")
+        grant = lambda **kw: self.call("/api/admin/grant",{"username":"Beta_Test","gold":0,**kw},auth)
+        # A new weapon arrives at the chosen rarity.
+        profile = grant(weapon="saber",rarity=4)[1]["profile"]
+        self.assertEqual(profile["loadout"]["copies"]["saber"],[4])
+        self.assertEqual(profile["loadout"]["rarity"]["saber"],4)
+        # Granting one the player already owns adds a copy; the active copy stays as it was.
+        profile = grant(weapon="saber",rarity=0)[1]["profile"]
+        self.assertEqual(profile["loadout"]["copies"]["saber"],[4,0])
+        self.assertEqual(profile["loadout"]["rarity"]["saber"],4)
+        # Without a rarity the old default (普通) applies.
+        self.assertEqual(grant(weapon="sniper")[1]["profile"]["loadout"]["copies"]["sniper"],[1])
+        for bad in (5,-1,True,"4"):
+            self.assertEqual(grant(weapon="saber",rarity=bad)[1]["error"],"稀有度不正確")
+
     def test_manifest_and_path_restriction(self):
         code, manifest = self.call("/api/version")
         self.assertEqual(code,200)

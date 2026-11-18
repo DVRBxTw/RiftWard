@@ -17,6 +17,7 @@ namespace RiftWard.Client
             var canvas = go.GetComponent<Canvas>();
             canvas.renderMode = RenderMode.ScreenSpaceOverlay;
             canvas.sortingOrder = order;
+            canvas.pixelPerfect = true;   // snap text and edges to whole pixels at any UI scale (no half-pixel blur)
             var scaler = go.GetComponent<CanvasScaler>();
             scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
             scaler.referenceResolution = new Vector2(1280, 800);
@@ -67,7 +68,9 @@ namespace RiftWard.Client
             t.fontSize = size;
             t.color = color;
             t.alignment = align;
-            t.fontStyle = bold ? FontStyle.Bold : FontStyle.Normal;
+            // The CJK font has one weight, so bold is synthesised by smearing the glyphs; below 15 px that turns
+            // the strokes to mush, so small text stays regular (colour and size carry the emphasis).
+            t.fontStyle = bold && size >= 15 ? FontStyle.Bold : FontStyle.Normal;
             t.horizontalOverflow = HorizontalWrapMode.Wrap;
             t.verticalOverflow = VerticalWrapMode.Overflow;
             t.supportRichText = false;
@@ -79,7 +82,7 @@ namespace RiftWard.Client
         {
             var o = t.gameObject.AddComponent<Outline>();
             o.effectColor = new Color(0, 0, 0, alpha);
-            o.effectDistance = new Vector2(1.2f, -1.2f);
+            o.effectDistance = new Vector2(1f, -1f);   // whole pixels: a fractional offset smears the glyphs
             return t;
         }
 

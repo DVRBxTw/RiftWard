@@ -1129,13 +1129,17 @@ class Store:
         return [dict(row) for row in rows]
 
     @_locked
-    def admin_grant(self, username, gold, weapon, keys=0, weapon_keys=0):
+    def admin_grant(self, username, gold, weapon, keys=0, weapon_keys=0, rarity=1):
+        """Gives gold, keys and optionally a weapon at a chosen rarity. A player without that weapon gets it
+        (equipped if a slot is free); one who has it gets the copy added to their armory."""
         if not isinstance(gold, int) or not 0 <= gold <= 100000:
             raise ValueError("金幣數量需為 0–100000")
         if not isinstance(keys, int) or not 0 <= keys <= 1000 or not isinstance(weapon_keys, int) or not 0 <= weapon_keys <= 1000:
             raise ValueError("鑰匙數量需為 0–1000")
         if weapon not in (None, "") and weapon not in WEAPON_PRICES:
             raise ValueError("找不到此武器")
+        if isinstance(rarity, bool) or not isinstance(rarity, int) or not 0 <= rarity < len(RARITIES):
+            raise ValueError("稀有度不正確")
         if gold == 0 and not weapon and keys == 0 and weapon_keys == 0:
             raise ValueError("請選擇要發放的金幣、鑰匙或武器")
         if not isinstance(username, str) or not (username == "*" or USERNAME.fullmatch(username)):
@@ -1156,13 +1160,17 @@ class Store:
                 loadout = profile["loadout"]
                 if weapon not in loadout["owned"]:
                     loadout["owned"].append(weapon)
-                    loadout["copies"][weapon] = [1]
+                    loadout["copies"][weapon] = [rarity]
                     loadout["active"][weapon] = 0
-                    sync_rarity(loadout)
                     if len(loadout["equipped"]) < 2:
                         loadout["equipped"].append(weapon)
-                    with self.connect() as db:
-                        db.execute("UPDATE progress SET loadout=? WHERE account_id=?", (json.dumps(loadout), account_id))
+                elif len(loadout["copies"][weapon]) < WEAPON_COPY_LIMIT:
+                    loadout["copies"][weapon].append(rarity)   # kept in the armory; the player picks which to use
+                else:
+                    continue
+                sync_rarity(loadout)
+                with self.connect() as db:
+                    db.execute("UPDATE progress SET loadout=? WHERE account_id=?", (json.dumps(loadout), account_id))
         return len(ids)
 
     @staticmethod
@@ -1623,7 +1631,7 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(200, {"ok": True, "count": count, "profile": store.profile(profile["id"])})
             elif self.path == "/api/admin/grant":
                 try:
-                    count = store.admin_grant(data.get("username"), data.get("gold", 0), data.get("weapon"), data.get("keys", 0), data.get("weapon_keys", 0))
+                    count = store.admin_grant(data.get("username"), data.get("gold", 0), data.get("weapon"), data.get("keys", 0), data.get("weapon_keys", 0), data.get("rarity", 1))
                 except ValueError as exc:
                     self._json(400, {"ok": False, "error": str(exc)})
                     return

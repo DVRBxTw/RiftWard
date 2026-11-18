@@ -693,7 +693,7 @@ namespace RiftWard.Client
         }
 
         /// Blade colour by rarity: cyan up to 普通, then the rarity colour (稀世 violet, 傳奇 gold, 神話 crimson).
-        public static Color BladeColor(int rarity) => rarity >= 2 ? Gear.RarityColors[Mathf.Clamp(rarity, 0, 4)] : Palette.Hex("6fd3ff");
+        public static Color BladeColor(int rarity) => rarity >= 2 ? Gear.RarityColors[Mathf.Clamp(rarity, 0, 4)] : rarity == 1 ? Palette.Hex("6fd3ff") : Palette.Hex("8fb3bd");
 
         /// EX-1 energy sword: ribbed metal hilt with an emitter, guard ring and glowing switch, and a plasma blade
         /// (white-hot core inside a coloured glow). Held angled up and forward; 傳奇+ get gold hilt bands, 神話
@@ -711,18 +711,70 @@ namespace RiftWard.Client
             P(saber, new Vector3(0, 0.024f, 0.03f), new Vector3(0.012f, 0.008f, 0.02f), blade, 4f);  // switch
             if (rarity >= 3)
                 foreach (float z in new[] { -0.04f, 0.06f }) Barrel(saber, new Vector3(0, 0, z), 0.047f, 0.008f, Palette.Hex("d9a73e"));
+            if (rarity == 0)
+            {
+                // 劣質: rust patches and a scratch on the hilt.
+                foreach (var (x, y, z) in new[] { (0.02f, 0.012f, -0.05f), (-0.021f, -0.008f, 0.04f), (0.0f, -0.022f, 0.09f) })
+                    P(saber, new Vector3(x, y, z), new Vector3(0.012f, 0.008f, 0.03f), Palette.Hex("6a4a2c"));
+                P(saber, new Vector3(-0.0215f, 0.01f, -0.01f), new Vector3(0.002f, 0.004f, 0.07f), Palette.Hex("8a8f96"));
+            }
+            if (rarity >= 2)
+            {
+                // 稀世+: glowing lines running down the hilt in the blade colour.
+                foreach (float a in new[] { 0f, 120f, 240f })
+                {
+                    float r = a * Mathf.Deg2Rad;
+                    P(saber, new Vector3(Mathf.Cos(r) * 0.0215f, Mathf.Sin(r) * 0.0215f, 0.0f), new Vector3(0.004f, 0.004f, 0.17f), blade, 4f);
+                }
+            }
             var b = Part(saber, "Blade", new Vector3(0, 0, 0.56f));
-            Barrel(b, Vector3.zero, 0.02f, 0.86f, Color.Lerp(blade, Color.white, 0.75f));
+            Barrel(b, Vector3.zero, 0.02f, 0.86f, Color.Lerp(blade, Color.white, rarity == 0 ? 0.4f : 0.75f));
             var glow = Build.Cylinder(b, Vector3.zero, 0.05f, 0.9f, blade, 4f);
             glow.transform.localRotation = Quaternion.Euler(90, 0, 0);
-            glow.GetComponent<MeshRenderer>().sharedMaterial = Build.Mat(blade, 4f, 0.45f);
+            glow.GetComponent<MeshRenderer>().sharedMaterial = Build.Mat(blade, 4f, rarity == 0 ? 0.25f : 0.45f);
             Build.Sphere(b, new Vector3(0, 0, 0.45f), 0.05f, Color.Lerp(blade, Color.white, 0.6f), 4f, false);
+            if (rarity == 0) glow.AddComponent<Spinner>().Flicker = 0.62f;   // an unsteady, sputtering blade
+            // Light trail from the tip (and a fainter one mid-blade) that streaks behind every swing.
+            foreach (var (z, width, alpha) in new[] { (0.43f, rarity >= 3 ? 0.11f : 0.08f, rarity == 0 ? 0.5f : 0.9f), (0.1f, 0.05f, 0.45f) })
+            {
+                var tip = new GameObject("Trail").transform;
+                tip.SetParent(b, false);
+                tip.localPosition = new Vector3(0, 0, z);
+                var trail = tip.gameObject.AddComponent<TrailRenderer>();
+                trail.time = rarity >= 3 ? 0.18f : 0.13f;
+                trail.minVertexDistance = 0.01f;
+                trail.widthCurve = new AnimationCurve(new Keyframe(0, width), new Keyframe(1, 0));
+                trail.sharedMaterial = Build.Mat(blade, 4f, 0.99f);
+                var fade = new Gradient();
+                fade.SetKeys(new[] { new GradientColorKey(Color.Lerp(blade, Color.white, 0.5f), 0), new GradientColorKey(blade, 1) },
+                             new[] { new GradientAlphaKey(alpha, 0), new GradientAlphaKey(0, 1) });
+                trail.colorGradient = fade;
+                trail.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+                trail.receiveShadows = false;
+            }
+            // Motes of light drifting up the blade; more and brighter with rarity.
+            var motes = b.gameObject.AddComponent<BladeMotes>();
+            motes.Build(new[] { 3, 6, 8, 11, 15 }[Mathf.Clamp(rarity, 0, 4)], Color.Lerp(blade, Color.white, 0.45f), rarity == 0 ? 0.6f : 1f);
+            if (rarity >= 2)
+            {
+                // A soft halo around the blade; it breathes on 神話.
+                var outer = Build.Cylinder(b, Vector3.zero, rarity >= 4 ? 0.1f : 0.075f, 0.94f, blade, 3f);
+                outer.transform.localRotation = Quaternion.Euler(90, 0, 0);
+                outer.GetComponent<MeshRenderer>().sharedMaterial = Build.Mat(blade, 3f, rarity >= 4 ? 0.22f : 0.14f);
+                if (rarity >= 4) outer.AddComponent<Spinner>().Pulse = 0.25f;
+            }
             if (rarity >= 4)
             {
-                var outer = Build.Cylinder(b, Vector3.zero, 0.09f, 0.94f, blade, 3f);
-                outer.transform.localRotation = Quaternion.Euler(90, 0, 0);
-                outer.GetComponent<MeshRenderer>().sharedMaterial = Build.Mat(blade, 3f, 0.2f);
-                outer.AddComponent<Spinner>().Pulse = 0.25f;
+                // 神話: rift shards circling the blade.
+                var ring = new GameObject("Shards").transform;
+                ring.SetParent(b, false);
+                ring.gameObject.AddComponent<Spinner>().Speed = 160f;
+                for (int i = 0; i < 5; i++)
+                {
+                    float a = i * Mathf.PI * 2f / 5f;
+                    var shard = P(ring, new Vector3(Mathf.Cos(a) * 0.075f, Mathf.Sin(a) * 0.075f, -0.3f + i * 0.15f), new Vector3(0.016f, 0.016f, 0.045f), Palette.Hex("ff6b6b"), 5f);
+                    shard.transform.localRotation = Quaternion.Euler(0, 0, a * Mathf.Rad2Deg + 45f);
+                }
             }
             return 0.2f;
         }

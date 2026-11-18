@@ -141,7 +141,7 @@ namespace RiftWard.Client
                 case "kill": return Events(name, new[] { (0f, 0.05f, 1320f, 0.05f, 0.35f), (0.045f, 0.11f, 520f, 0.15f, 0.45f) });
                 case "vent": return Hiss(name, 0.75f);
                 // Blade connecting: a hot sizzle with a low thump.
-                case "saber_hit": return Events(name, new[] { (0f, 0.05f, 140f, 0.3f, 0.6f), (0.01f, 0.16f, 2600f, 0.9f, 0.4f) });
+                case "saber_hit": return Events(name, new[] { (0f, 0.06f, 160f, 0.15f, 0.6f), (0.01f, 0.1f, 1200f, 0.35f, 0.3f) });
                 case "heartbeat": return Events(name, new[] { (0f, 0.09f, 55f, 0.1f, 0.9f), (0.22f, 0.08f, 50f, 0.1f, 0.7f) });
                 default: return Tone(name, 440, 0.05f, 0.1f, 0f);
             }
@@ -202,18 +202,21 @@ namespace RiftWard.Client
                     }
                     case "saber":
                     {
-                        // Energy blade swing: an airy whoosh that rises and falls, over a buzzing hum that bends
-                        // in pitch as the blade moves (Doppler-like), with a bright crackle on top.
-                        float swell = Mathf.Sin(Mathf.PI * Mathf.Clamp01(t / 0.3f));
-                        band += (noise - band) * Mathf.Lerp(0.08f, 0.4f, swell);
-                        float hum = 92f * (1f + 0.35f * swell);
+                        // Energy blade swing: a smooth, rounded hum (pure sines, no buzz) whose pitch rises and
+                        // falls with the sweep like a passing tone, a soft air whoosh filtered twice, and a faint
+                        // glassy shimmer on top.
+                        float k = Mathf.Clamp01(t / 0.3f);
+                        float swell = Mathf.Sin(Mathf.PI * k);
+                        swell *= swell;                                           // smooth in and out
+                        float hum = 140f * (1f + 0.22f * Mathf.Sin(Mathf.PI * k)); // gentle Doppler bend
                         p1 += 2 * Mathf.PI * hum * dt;
-                        p2 += 2 * Mathf.PI * hum * 2.01f * dt;
-                        float saw = (p1 / (2 * Mathf.PI)) % 1f * 2f - 1f;
-                        if (rng.NextDouble() < 0.01 * swell) crackle = 1f;
-                        crackle *= 0.9f;
-                        v = band * swell * 0.7f + (saw * 0.35f + Mathf.Sin(p2) * 0.25f) * (0.35f + 0.65f * swell) * Mathf.Exp(-t * 3f)
-                            + noise * crackle * 0.25f;
+                        p2 += 2 * Mathf.PI * hum * 1.5f * dt;                      // a fifth above: warm, not buzzy
+                        p3 += 2 * Mathf.PI * (880f + 260f * swell) * dt;
+                        low += (noise - low) * Mathf.Lerp(0.04f, 0.16f, swell);   // airy whoosh, two-pole low-pass
+                        band += (low - band) * 0.3f;
+                        float tone = Mathf.Sin(p1) * 0.55f + Mathf.Sin(p2) * 0.2f;
+                        v = tone * (0.25f + 0.75f * swell) + band * swell * 1.6f + Mathf.Sin(p3) * swell * 0.06f;
+                        v *= Mathf.Min(1f, (0.34f - t) / 0.06f);                  // soft tail, no click
                         break;
                     }
                     case "shotgun":

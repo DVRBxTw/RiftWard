@@ -873,6 +873,24 @@ namespace RiftWard.Client
                 }
                 yield return Shot(folder, "unity-chapter2-foes");
                 foreach (var go in new[] { guard, calm, emperor }) Destroy(go);
+                // 光劍 at every rarity, left to right 劣質 → 神話, standing upright with their light motes.
+                var sabers = new List<GameObject>();
+                for (int k = 0; k < 5; k++)
+                {
+                    var holder = new GameObject("SaberRarity" + k).transform;
+                    holder.position = new Vector3(-1.6f + k * 0.8f, 0.9f, 15f);
+                    holder.rotation = Quaternion.Euler(-32f, 0, 0);
+                    Models.Viewmodel("saber", holder, k);
+                    sabers.Add(holder.gameObject);
+                }
+                for (int f = 0; f < 30; f++)
+                {
+                    Client.Camera.transform.position = new Vector3(0, 1.45f, 13.55f);
+                    Client.Camera.transform.LookAt(new Vector3(0, 1.3f, 15.2f));
+                    yield return null;
+                }
+                yield return Shot(folder, "unity-saber-rarities");
+                foreach (var go in sabers) Destroy(go);
                 Client.enabled = true;
                 Client.enabled = true;
             }

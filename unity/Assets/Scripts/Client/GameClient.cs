@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using RiftWard.Sim;
 using UnityEngine;
+using UnityEngine.UI;
 
 namespace RiftWard.Client
 {
@@ -79,7 +80,7 @@ namespace RiftWard.Client
         float visualClock;
         readonly Dictionary<int, CharacterRig> actorRigs = new Dictionary<int, CharacterRig>();   // reused each frame to find views whose entity is gone
         readonly Dictionary<int, List<Transform>> droneViews = new Dictionary<int, List<Transform>>();
-        readonly Dictionary<int, TextMesh> nameTags = new Dictionary<int, TextMesh>();
+        readonly Dictionary<int, Text> nameTags = new Dictionary<int, Text>();
         readonly Dictionary<int, List<Transform>> bladeViews = new Dictionary<int, List<Transform>>();
         readonly Dictionary<int, GameObject> enemyViews = new Dictionary<int, GameObject>();
         readonly Dictionary<int, GameObject> bulletViews = new Dictionary<int, GameObject>();
@@ -467,14 +468,16 @@ namespace RiftWard.Client
                 if (mine) { ApplyRecoil(); swingLeft = !swingLeft; }
                 bool firstPerson = mine && !thirdPerson;
                 Vector3 centre = firstPerson ? Camera.transform.position + Vector3.down * 0.25f : shot.Origin + Vector3.down * 0.35f;
-                WeaponFx.Slash(centre, swinger.Yaw, firstPerson ? 1.25f : Mathf.Max(1.2f, swinger.Range * 0.7f), blade, mine ? swingLeft : true);
+                WeaponFx.Slash(centre, swinger.Yaw, firstPerson ? 1.25f : Mathf.Max(1.2f, swinger.Range * 0.7f), blade, mine ? swingLeft : true, rarity);
                 if (mine) Sfx.Play(Sfx.FireName("saber", rarity), 0.55f);
                 else Sfx.PlayAt(Sfx.FireName("saber", rarity), shot.Origin, 0.5f);
                 if (mine) Hud.OnLocalShot(shot, Camera);
             }
             if (!shot.Hit) return;
             if (mine) { localHit = true; localKill |= shot.Killed; localSlash = true; }
-            Burst.Sphere(shot.End, Color.Lerp(blade, Color.white, 0.4f), 0.85f, 5f, 0.15f, 0.7f, 0.12f).GetComponent<Burst>().AddLight(blade, 3f, 4f);
+            Burst.Sphere(shot.End, Color.Lerp(blade, Color.white, 0.4f), 0.85f, 5f, 0.15f, rarity >= 3 ? 1.1f : 0.7f, 0.12f).GetComponent<Burst>().AddLight(blade, 3f, 4f);
+            // 傳奇+: an expanding ring of light where the blade connects.
+            if (rarity >= 3) Burst.Sphere(shot.End, blade, 0.35f, 3f, 0.3f, 1.8f, 0.25f);
             for (int i = 0; i < 6; i++)
             {
                 var spark = Build.Cube(null, shot.End, Vector3.one * 0.05f, Color.Lerp(blade, Color.white, 0.5f), 5f, false);
@@ -669,23 +672,28 @@ namespace RiftWard.Client
         void RenderNameTag(Actor a, GameObject view)
         {
             if (a.Id == LocalId || string.IsNullOrEmpty(a.Name)) return;
+            // Drawn on the HUD in the game font (the old 3D text used a Latin-only font, so Chinese titles fell
+            // back to a system font, and fog and bloom softened it further).
             if (!nameTags.TryGetValue(a.Id, out var tag))
             {
-                var go = new GameObject("NameTag");
-                tag = go.AddComponent<TextMesh>();
-                var font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
-                tag.font = font;
-                go.GetComponent<MeshRenderer>().sharedMaterial = font.material;
-                tag.anchor = TextAnchor.LowerCenter;
-                tag.alignment = TextAlignment.Center;
-                tag.fontSize = 48;
-                tag.characterSize = 0.045f;
+                tag = Ui.Label(Hud.Canvas.transform, "", 15, Palette.Teammate, TextAnchor.LowerCenter, true).Outlined(0.85f);
+                tag.rectTransform.sizeDelta = new Vector2(320, 24);
+                tag.rectTransform.pivot = new Vector2(0.5f, 0f);
+                tag.rectTransform.anchorMin = tag.rectTransform.anchorMax = Vector2.zero;
+                tag.rectTransform.SetAsFirstSibling();   // under the HUD panels
                 nameTags[a.Id] = tag;
             }
-            tag.text = a.Alive ? a.Name : a.Name + "  [E 救援]";
+            tag.text = a.Alive ? a.Name : a.Name + $"  [{Bindings.Name(Bindings.Action.Interact)} 救援]";
             tag.color = a.Alive ? Palette.Teammate : Palette.Danger;
-            tag.transform.position = view.transform.position + Vector3.up * 2.75f;
-            tag.transform.rotation = Camera.transform.rotation;
+            Vector3 screen = Camera.WorldToScreenPoint(view.transform.position + Vector3.up * 2.6f);
+            bool visible = screen.z > 0.2f && Hud.Canvas.gameObject.activeInHierarchy;
+            tag.enabled = visible;
+            if (visible)
+            {
+                float scale = Hud.Canvas.scaleFactor > 0 ? Hud.Canvas.scaleFactor : 1f;
+                tag.rectTransform.anchoredPosition = new Vector2(Mathf.Round(screen.x / scale), Mathf.Round(screen.y / scale));
+                tag.fontSize = Mathf.RoundToInt(Mathf.Clamp(15f * 12f / Mathf.Max(4f, screen.z), 11f, 16f));   // smaller far away
+            }
         }
 
         /// 傳奇 / 神話 weapons only: a thick glowing tracer with a white core, a coloured muzzle burst and impact
