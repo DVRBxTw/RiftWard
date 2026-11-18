@@ -33,6 +33,7 @@ namespace RiftWard.Sim
             new DifficultyDef("普通", "NORMAL", "標準的帝國部隊。", 1f, 1f, 0, 1f, 1f, new Color32(0x9b, 0xd3, 0x6a, 255)),
             new DifficultyDef("困難", "HARD", "敵人血量 ×1.6、傷害 ×1.3，每波多 2 名。金幣 ×1.6、經驗 ×1.25。", 1.6f, 1.3f, 2, 1.6f, 1.25f, new Color32(0xf0, 0xb2, 0x4a, 255)),
             new DifficultyDef("噩夢", "NIGHTMARE", "敵人血量 ×2.4、傷害 ×1.7，每波多 4 名。金幣 ×2.4、經驗 ×1.5。", 2.4f, 1.7f, 4, 2.4f, 1.5f, new Color32(0xe5, 0x53, 0x4b, 255)),
+            new DifficultyDef("地獄", "INFERNO", "敵人血量 ×4.5、傷害 ×2.4，每波多 6 名。金幣 ×3.5、經驗 ×1.75。給頂尖裝備的挑戰。", 4.5f, 2.4f, 6, 3.5f, 1.75f, new Color32(0xff, 0x3b, 0x9a, 255)),
         };
 
         public static DifficultyDef Difficulty(int tier) => Difficulties[Mathf.Clamp(tier, 0, Difficulties.Length - 1)];
@@ -48,6 +49,8 @@ namespace RiftWard.Sim
         // Player movement
         public const float EyeHeight = 1.65f;
         public const float BaseSpeed = 6.5f;
+        /// Crit chance cap from talents, gear and buffs combined.
+        public const float MaxCritical = 0.5f;
         public const float JumpVelocity = 7f;
         public const float Gravity = 20f;
         public const float DashDuration = 0.18f;

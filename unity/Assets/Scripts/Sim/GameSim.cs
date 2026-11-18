@@ -123,7 +123,7 @@ namespace RiftWard.Sim
             a.DamageMult *= 1f + damagePct / 100f;
             a.Speed *= 1f + speedPct / 100f;
             a.ReloadMult = Mathf.Max(0.4f, a.ReloadMult * (1f - reloadPct / 100f));
-            a.Critical = Mathf.Min(0.8f, a.Critical + critPct / 100f);
+            a.Critical = Mathf.Min(Defs.MaxCritical, a.Critical + critPct / 100f);
             RefreshWeapon(a);
         }
 
@@ -1389,7 +1389,7 @@ namespace RiftWard.Sim
                     a.Hp = Mathf.Min(a.MaxHp, a.Hp + bonus);
                     break;
                 case 4: a.Regen += Mathf.Round(15 * m); break;
-                case 5: a.Critical = Mathf.Min(0.8f, a.Critical + 0.2f * m); break;
+                case 5: a.Critical = Mathf.Min(Defs.MaxCritical, a.Critical + 0.2f * m); break;
                 case 6:
                     a.MagBonus += Mathf.RoundToInt(4 * m);
                     a.ReloadMult = Mathf.Max(0.4f, a.ReloadMult * 0.85f);
@@ -1437,7 +1437,7 @@ namespace RiftWard.Sim
         // ------------------------------------------------------------ rewards
 
         /// Upper bound of one mission's gold; mirrors MAX_REWARD in server/service.py.
-        public const int MaxMissionGold = 8000;
+        public const int MaxMissionGold = 12000;
 
         public int MissionGold() =>
             Mathf.Clamp(Mathf.RoundToInt((Kills * 3 + Wave * 12 + (Level - 1) * 15 + (State == MissionState.Victory ? 200 + 150 * Region : 0)) * Defs.Difficulty(Difficulty).Gold), 0, MaxMissionGold);

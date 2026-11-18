@@ -30,15 +30,15 @@ VERSION = "0.4.2-beta.1"
 WEAPON_PRICES = {"pistol": 0, "rifle": 400, "shotgun": 600, "sniper": 800, "saber": 0}
 UPGRADE_STATS = ("damage", "mag", "reload")
 MAX_UPGRADE = 5
-MAX_REWARD = 8000   # mirrors GameSim.MaxMissionGold (噩夢 multiplies the gold of a cleared mission)
+MAX_REWARD = 12000   # mirrors GameSim.MaxMissionGold (地獄 multiplies the gold of a cleared mission)
 
-# Difficulty tiers (普通, 困難, 噩夢); mirrors Defs.Difficulties in the game client.
-DIFFICULTY_NAMES = ["普通", "困難", "噩夢"]
-DIFFICULTY_XP = [1.0, 1.25, 1.5]
+# Difficulty tiers (普通, 困難, 噩夢, 地獄); mirrors Defs.Difficulties in the game client.
+DIFFICULTY_NAMES = ["普通", "困難", "噩夢", "地獄"]
+DIFFICULTY_XP = [1.0, 1.25, 1.5, 1.75]
 REGION_COUNT = 6   # two chapters of three regions; mirrors Defs.Regions
 
 
-DIFFICULTY_GOLD = [1.0, 1.6, 2.4]
+DIFFICULTY_GOLD = [1.0, 1.6, 2.4, 3.5]
 
 
 def mission_gold(team_kills, wave, level, victory, region, tier) -> int:
@@ -120,7 +120,7 @@ def roll_daily(account_id, day, veteran):
 RARITY_UPGRADE_MULT = [0.6, 1.0, 1.4, 2.0, 3.0]
 GEAR_UPGRADE_BASE = [40, 70, 120, 200, 320]   # gold for gear +1; level n -> n+1 costs base * (n + 1)
 GEAR_MAX_LEVEL = 5
-GEAR_LEVEL_BONUS = 0.2                         # every enhancement level adds 20% to all of an item's stats
+GEAR_LEVEL_BONUS = 0.12                        # every enhancement level adds 12% to all of an item's stats (+60% at +5)
 
 
 def upgrade_cost(weapon: str, level: int, rarity: int = 1) -> int:

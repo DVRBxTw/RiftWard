@@ -50,6 +50,28 @@ namespace RiftWard.Tests
         }
 
         [Test]
+        public void CritCapsAtHalfAndInfernoScalesEnemies()
+        {
+            var sim = NewMission(new Loadout());
+            sim.ApplyProfileBonus(1, 0f, 0f, 0f, 0f, 60f);
+            Assert.AreEqual(Defs.MaxCritical, sim.Actors[1].Critical, 0.001f);
+            Assert.AreEqual(0.5f, Defs.MaxCritical, 0.001f);
+            // 地獄: the fourth tier, opened by clearing 噩夢 in that region.
+            Assert.AreEqual(4, Defs.Difficulties.Length);
+            Assert.AreEqual(4.5f, Defs.Difficulty(3).Hp, 0.001f);
+            Assert.IsFalse(Defs.DifficultyOpen(new[] { 1 }, 0, 3));
+            Assert.IsTrue(Defs.DifficultyOpen(new[] { 2 }, 0, 3));
+            var normal = new GameSim(7) { EnemyVariety = false }; normal.AddActor(1, new Loadout(), false); normal.StartMission(0, 0);
+            var inferno = new GameSim(7) { EnemyVariety = false }; inferno.AddActor(1, new Loadout(), false); inferno.StartMission(0, 3);
+            normal.SpawnWave(); inferno.SpawnWave();
+            float n = float.MaxValue, i = float.MaxValue;   // the weakest one: an elite (×4) may be promoted
+            foreach (var e in normal.Enemies.Values) n = Mathf.Min(n, e.MaxHp);
+            foreach (var e in inferno.Enemies.Values) i = Mathf.Min(i, e.MaxHp);
+            Assert.AreEqual(n * 4.5f, i, 0.01f);
+            Assert.AreEqual(normal.Enemies.Count + 6, inferno.Enemies.Count);
+        }
+
+        [Test]
         public void PistolIsStarterAndUpgradesApply()
         {
             var lo = new Loadout();

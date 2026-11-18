@@ -250,7 +250,7 @@ class ServiceTests(unittest.TestCase):
         self.assertGreaterEqual(r["profile"]["bonus"][primary], item["stats"][primary])
         self.assertEqual(self.call("/api/gear/salvage", {"item": item["id"]}, auth)[0], 400)
         other = r["profile"]["inventory"][1]
-        # Gear enhancement: price by rarity and level, +20% stats per level, half refunded on salvage.
+        # Gear enhancement: price by rarity and level, +12% stats per level, half refunded on salvage.
         with self.store.connect() as db:
             db.execute("UPDATE progress SET gold=10000 WHERE account_id=?", (r["profile"]["id"],))
         for level in range(service.GEAR_MAX_LEVEL):
@@ -260,7 +260,7 @@ class ServiceTests(unittest.TestCase):
         paid = sum(service.gear_upgrade_cost(other["rarity"], n) for n in range(service.GEAR_MAX_LEVEL))
         self.assertEqual((upgraded["level"], up["profile"]["gold"]), (5, 10000 - paid))
         for k, v in upgraded["base"].items():
-            self.assertEqual(upgraded["stats"][k], round(v * 2))
+            self.assertEqual(upgraded["stats"][k], round(v * 1.6))   # +12% per level, +60% at +5
         self.assertEqual(self.call("/api/gear/upgrade", {"item": other["id"]}, auth)[0], 400)
         self.assertGreater(service.gear_upgrade_cost(4, 0), service.gear_upgrade_cost(0, 0))
         gold = up["profile"]["gold"]
@@ -373,7 +373,7 @@ class ServiceTests(unittest.TestCase):
 
     def test_legacy_accounts_count_passed_regions_as_cleared(self):
         self.assertEqual(service.Store._parse_cleared("[]",2),[0,0,-1,-1,-1,-1])
-        self.assertEqual(service.Store._parse_cleared("[2,\"x\",true,7]",0),[2,-1,-1,2,-1,-1])   # 7 is capped at 噩夢
+        self.assertEqual(service.Store._parse_cleared("[2,\"x\",true,7]",0),[2,-1,-1,3,-1,-1])   # 7 is capped at 地獄
         self.assertEqual(service.Store._parse_cleared("not json",1),[0,-1,-1,-1,-1,-1])
 
     def test_daily_missions(self):
