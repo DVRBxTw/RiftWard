@@ -375,9 +375,16 @@ namespace RiftWard.Client
                 tierNote += $"在此區域通關{tier.Name}即可解鎖{Defs.Difficulty(nextTier).Name}。";
             if (app.InRoom && !app.IsLeader) tierNote = "難度由隊長選擇：" + tier.Name;
             Ui.Label(stack, tierNote, 13, Palette.Muted).Sized(36);
-            Ui.Rect(stack, "Gap").Sized(10);
+            // 無盡模式: opens per region once it is cleared; waves never stop, a boss every 10 waves.
+            bool endlessOpen = app.EndlessOpen(selected), endless = app.SelectedEndless && endlessOpen;
+            var endlessRow = Widgets.Toggle(stack, endlessOpen ? "無盡模式  ·  波次無上限，每 10 波 Boss" : "無盡模式  ·  通關此區域後開放", endless,
+                on => app.SetEndless(on), "開啟", "關閉").Sized(38);
+            endlessRow.interactable = endlessOpen && app.CanDeploy && (!app.InRoom || app.IsLeader);
+            if (endless) endlessRow.GetComponentInChildren<Text>().color = Palette.Hex("ff6a8a");
+            Ui.Rect(stack, "Gap").Sized(8);
             var deploy = PrimaryButton(stack, "", app.Deploy).Sized(64);
-            deploy.SetCaption(tierIndex > 0 ? $"部署          0{selected + 1} {region.Name} · {tier.Name}" : $"部署          0{selected + 1} {region.Name}");
+            string mode = endless ? " · 無盡" : "";
+            deploy.SetCaption(tierIndex > 0 || endless ? $"部署          0{selected + 1} {region.Name} · {tier.Name}{mode}" : $"部署          0{selected + 1} {region.Name}");
             deploy.interactable = app.CanDeploy;
             Ui.DefaultButton = deploy;   // Enter deploys
             Ui.Rect(stack, "Gap").Sized(12);
@@ -410,14 +417,15 @@ namespace RiftWard.Client
             // Briefing sheet over the live region backdrop.
             var brief = Ui.Box(body, new Color(0.063f, 0.067f, 0.075f, 0.92f), "Briefing").rectTransform;
             // Top-aligned with the left column's title, so the two read as one layout.
-            brief.Place(new Vector2(1, 1), new Vector2(-40, -32), new Vector2(520, 500), new Vector2(1, 1));
+            brief.Place(new Vector2(1, 1), new Vector2(-40, -32), new Vector2(520, endless ? 596 : 500), new Vector2(1, 1));
             Ui.Box(brief, region.Accent, "Rule").rectTransform.Place(new Vector2(0.5f, 1), Vector2.zero, new Vector2(520, 2), new Vector2(0.5f, 1));
             var b2 = Ui.VStack(brief, 12);
             b2.Fill();
             b2.GetComponent<VerticalLayoutGroup>().padding = new RectOffset(32, 32, 28, 26);
             Caps(b2, $"任務簡報 / 0{selected + 1}").Sized(18);
             Ui.Label(b2, region.Name, 34, region.Accent, TextAnchor.UpperLeft, true).Sized(44);
-            Ui.Label(b2, region.Story.Replace("\n", ""), 16, Palette.Hex("d6d1c6")).Sized(54);
+            if (endless) EndlessBoard(b2);
+            else Ui.Label(b2, region.Story.Replace("\n", ""), 16, Palette.Hex("d6d1c6")).Sized(54);
             Ui.Box(b2, Palette.Line, "Rule").Sized(1);
             var head = Ui.Rect(b2, "LoadoutHead").Sized(20);
             Caps(head, "出擊配置").rectTransform.Fill();
@@ -450,6 +458,49 @@ namespace RiftWard.Client
             }
             }
             Caps(b2, Bindings.Summary()).Sized(40);
+        }
+
+        /// 無盡排行榜 on the briefing sheet: top five, then your own rank. Fetched at most every 30 s, cached between redraws.
+        List<(int rank, string name, int wave)> endlessTop;
+        (int rank, int wave)? endlessMe;
+        float endlessFetched = -99f;
+        public void SetEndlessBoardForCapture(List<(int, string, int)> top, (int, int)? me) { endlessTop = top; endlessMe = me; endlessFetched = Time.unscaledTime + 9999f; }
+
+        void EndlessBoard(Transform parent)
+        {
+            var box = Ui.Rect(parent, "EndlessBoard").Sized(150);
+            Caps(box, "無盡排行榜").rectTransform.Place(new Vector2(0, 1), Vector2.zero, new Vector2(200, 18), new Vector2(0, 1));
+            Ui.Label(box, app.Profile.EndlessBest > 0 ? $"我的最佳  第 {app.Profile.EndlessBest} 波" : "尚無紀錄", 13, Palette.Hex("ff6a8a"), TextAnchor.UpperRight).rectTransform
+                .Place(new Vector2(1, 1), Vector2.zero, new Vector2(220, 18), new Vector2(1, 1));
+            if (Time.unscaledTime - endlessFetched > 30f && app.Net.Welcomed)
+            {
+                endlessFetched = Time.unscaledTime;
+                app.Api.Post("/api/endless/leaderboard", new Dictionary<string, object>(), result =>
+                {
+                    if (!result.Bool("ok")) return;
+                    endlessTop = new List<(int, string, int)>();
+                    foreach (var o in result.Arr("top") ?? new List<object>())
+                        if (o is Dictionary<string, object> e) endlessTop.Add((e.Int("rank"), e.Str("username"), e.Int("wave")));
+                    var me = result.Obj("me");
+                    endlessMe = me != null ? (me.Int("rank"), me.Int("wave")) : ((int, int)?)null;
+                    if (Mode == "home") app.ShowHome();
+                });
+            }
+            if (endlessTop == null) { Ui.Label(box, "載入中…", 14, Palette.Muted).rectTransform.Place(new Vector2(0, 1), new Vector2(0, -28), new Vector2(300, 20), new Vector2(0, 1)); return; }
+            if (endlessTop.Count == 0) { Ui.Label(box, "還沒有人挑戰過無盡模式，成為第一個上榜的人！", 14, Palette.Muted).rectTransform.Place(new Vector2(0, 1), new Vector2(0, -28), new Vector2(456, 20), new Vector2(0, 1)); return; }
+            for (int i = 0; i < Mathf.Min(5, endlessTop.Count); i++)
+            {
+                var (rank, name, wave) = endlessTop[i];
+                bool mine = name == app.Profile.Username;
+                Color c = rank == 1 ? Palette.Amber : mine ? Palette.Hex("ff6a8a") : Palette.Bone;
+                float y = -26 - i * 22;
+                Ui.Label(box, rank.ToString(), 14, c, TextAnchor.UpperLeft, rank <= 3).rectTransform.Place(new Vector2(0, 1), new Vector2(0, y), new Vector2(30, 20), new Vector2(0, 1));
+                Ui.Label(box, name, 14, c, TextAnchor.UpperLeft, mine).rectTransform.Place(new Vector2(0, 1), new Vector2(34, y), new Vector2(300, 20), new Vector2(0, 1));
+                Ui.Label(box, $"第 {wave} 波", 14, c, TextAnchor.UpperRight).rectTransform.Place(new Vector2(1, 1), new Vector2(0, y), new Vector2(120, 20), new Vector2(1, 1));
+            }
+            if (endlessMe.HasValue && endlessMe.Value.rank > 5)
+                Ui.Label(box, $"你的排名  第 {endlessMe.Value.rank} 名 · 第 {endlessMe.Value.wave} 波", 13, Palette.Hex("ff6a8a")).rectTransform
+                    .Place(new Vector2(0, 1), new Vector2(0, -26 - 5 * 22), new Vector2(456, 18), new Vector2(0, 1));
         }
 
         // ------------------------------------------------------------ armory

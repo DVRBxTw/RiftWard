@@ -30,9 +30,13 @@ namespace RiftWard.Sim
         public float Elapsed;
         public int Kills;
         public bool EnemyVariety = true;
+        /// 無盡模式: waves never stop; enemies keep scaling past wave 20 and a boss comes every 10 waves.
+        public bool Endless;
 
         public int Level = 1, Xp, XpNeed = Defs.XpForLevel(1), PendingLevels;
         public bool BuffPending;
+        /// Super chest picks still queued, and which pick of the current chest is on screen (0 = a normal level-up).
+        public int SuperRounds, SuperPick;
         public float BuffWait;
         /// Rolled buff codes per player awaiting a choice.
         public readonly Dictionary<int, int[]> BuffOffers = new Dictionary<int, int[]>();
@@ -95,7 +99,7 @@ namespace RiftWard.Sim
             Difficulty = Mathf.Clamp(difficulty, 0, Defs.Difficulties.Length - 1);
             Enemies.Clear(); Bullets.Clear(); Pickups.Clear(); Inputs.Clear(); BuffOffers.Clear();
             Wave = 0; WaveDelay = 1.8f; Elapsed = 0; Kills = 0;
-            Level = 1; Xp = 0; XpNeed = Defs.XpForLevel(1); PendingLevels = 0; BuffPending = false;
+            Level = 1; Xp = 0; XpNeed = Defs.XpForLevel(1); PendingLevels = 0; BuffPending = false; SuperRounds = 0; SuperPick = 0;
             WaveGrades.Clear(); waveScores.Clear(); waveGraded = true; waveDamage = 0;
             foreach (var a in Actors.Values) ResetActor(a);
             State = MissionState.Playing;
@@ -295,6 +299,14 @@ namespace RiftWard.Sim
             if (PendingLevels > 0)
             {
                 PendingLevels--;
+                SuperPick = 0;
+                BeginBuffs();
+                return;
+            }
+            if (SuperRounds > 0)
+            {
+                SuperPick = Defs.SuperChestPicks - SuperRounds + 1;
+                SuperRounds--;
                 BeginBuffs();
                 return;
             }
@@ -351,7 +363,7 @@ namespace RiftWard.Sim
                 WaveDelay -= dt;
                 if (WaveDelay <= 0)
                 {
-                    if (Wave >= Defs.WavesPerMission)
+                    if (Wave >= Defs.WavesPerMission && !Endless)
                     {
                         State = MissionState.Victory;
                         return;
@@ -529,20 +541,23 @@ namespace RiftWard.Sim
             if (Wave >= 3) pool.Add(Defs.KindBomber);
             if (Wave >= 4) pool.Add(Defs.KindSniper);
             if (Wave >= 5) pool.Add(Defs.KindShield);
+            if (Wave >= 6) pool.Add(Defs.KindSplitter);
+            if (Wave >= 7 && Enemies.Values.Count(x => x.Kind == Defs.KindMedic) < 2) pool.Add(Defs.KindMedic);
             if (Region >= Defs.RegionsPerChapter && Wave >= 4) pool.Add(Defs.KindGuard);   // chapter 2: imperial guards
             bool hasBoss = false;
             var gates = PickGates(count > 10 ? 2 : 1);
             for (int i = 0; i < count; i++)
             {
-                bool boss = (Wave == 10 || Wave == 20) && i == 0;
+                bool boss = (Endless ? Wave % 10 == 0 : Wave == 10 || Wave == 20) && i == 0;
                 // The boss and the first half come through the farthest gate, the rest through the second (if any).
                 var gate = gates[boss || i < (count + 1) / 2 ? 0 : gates.Count - 1];
                 var e = new Enemy { Id = nextEnemy++, Position = SpawnNear(gate, boss ? 0.5f : 3.2f), Boss = boss, ShotCooldown = Rand(1.5f, 3.5f) };
                 if (boss)
                 {
                     hasBoss = true;
-                    bool emperor = Wave >= 20 && Region == Defs.Regions.Length - 1;
+                    bool emperor = Wave % 20 == 0 && Region == Defs.Regions.Length - 1;
                     float baseHealth = Wave == 10 ? 3000f : emperor ? 9000f : 7000f;
+                    if (Wave > 20) baseHealth *= 1f + 0.4f * (Wave / 10 - 2);   // endless: every later boss is tougher
                     e.Hp = baseHealth * (1f + 0.18f * region) * partyScale * LevelScale;
                     e.Damage = (20f + 3f * region) * (1f + 0.03f * elapsedWaves) * levelDamage;
                     e.Speed = 1.6f * (1f + 0.1f * region) * (1f + Mathf.Min(0.2f, 0.01f * elapsedWaves));
@@ -560,8 +575,8 @@ namespace RiftWard.Sim
                     if (EnemyVariety && pool.Count > 0 && Rand01() < 0.55f) kind = pool[rng.Next(pool.Count)];
                     ApplyKind(e, kind);
                 }
-                e.Hp *= tier.Hp;
-                e.Damage *= tier.Damage;
+                e.Hp *= tier.Hp * Defs.EndlessHp(Wave);
+                e.Damage *= tier.Damage * Defs.EndlessDamage(Wave);
                 e.MaxHp = e.Hp;
                 e.Wave = Wave;
                 Enemies[e.Id] = e;
@@ -586,7 +601,7 @@ namespace RiftWard.Sim
             waveDamage = 0;
             waveGraded = false;
             bool finalBoss = hasBoss && Enemies.Values.Any(x => x.Kind == Defs.KindEmperor);
-            Announcements.Add(finalBoss ? "赫利奧皇帝 降臨" : hasBoss ? "BOSS 來襲" : $"第 {Wave} 波");
+            Announcements.Add(finalBoss ? "赫利奧皇帝 降臨" : hasBoss ? "BOSS 來襲" : Endless && Wave > Defs.WavesPerMission && Wave % 5 == 0 ? $"第 {Wave} 波 · 敵人持續強化" : $"第 {Wave} 波");
         }
 
         public void ApplyKind(Enemy e, int kind)
@@ -598,6 +613,9 @@ namespace RiftWard.Sim
             {
                 case Defs.KindCharger: e.Hp *= 0.7f; e.Speed *= 1.7f; e.Shoots = false; e.Xp = baseXp + 2; break;
                 case Defs.KindSniper: e.Hp *= 0.8f; e.Speed *= 0.9f; e.Keep = 13f; e.RangedOnly = true; e.ShotCooldown = Rand(2.5f, 4f); e.Xp = baseXp + 10; break;
+                case Defs.KindSplitter: e.Hp *= 1.3f; e.Speed *= 0.85f; e.Xp = baseXp + 6; break;
+                case Defs.KindSplitling: e.Hp *= 0.3f; e.Speed *= 1.45f; e.Shoots = false; e.Damage *= 0.6f; e.Xp = 6; break;
+                case Defs.KindMedic: e.Hp *= 0.9f; e.Keep = 8f; e.Shoots = false; e.RingCooldown = Defs.MedicEvery; e.Xp = baseXp + 12; break;
                 case Defs.KindBomber: e.Hp *= 0.45f; e.Speed *= 1.9f; e.Shoots = false; e.RangedOnly = true; e.Xp = baseXp; break;
                 case Defs.KindShield: e.Hp *= 1.6f; e.Speed *= 0.85f; e.Xp = baseXp + 12; break;
                 case Defs.KindGuard: e.Hp *= 2.2f; e.Speed *= 0.95f; e.Shoots = false; e.Xp = baseXp + 18; e.ChargeCooldown = Rand(2f, 4f); break;
@@ -667,6 +685,13 @@ namespace RiftWard.Sim
             if (a.StatHits > hitsBefore) a.StatHits = hitsBefore + 1;
         }
 
+        /// Sideways offset for a leg joint, across the enemy's facing (it faces its movement / target).
+        static Vector3 LegOffset(Enemy e, float side)
+        {
+            var f = new Vector3(Mathf.Sin(e.Yaw), 0, Mathf.Cos(e.Yaw));
+            return new Vector3(f.z, 0, -f.x) * side;
+        }
+
         void FireRay(Actor a, Vector3 origin, Vector3 dir, float damage)
         {
             Enemy best = null;
@@ -680,8 +705,14 @@ namespace RiftWard.Sim
                 float headRadius = Defs.HeadRadius * s * (e.Boss ? 1.07f : 1f);
                 var bodyCenter = e.Position + Vector3.up * s * (e.Boss ? 0.93f : 1f);
                 float bodyRadius = e.Boss ? 0.64f * s : 0.75f * s;
-                TestSphere(headCenter, headRadius, true);
+                int weak = e.Boss ? Defs.WeakPoint(e.Kind) : Defs.WeakHead;
+                // A boss whose weak point is elsewhere takes plain damage on the head.
+                TestSphere(headCenter, headRadius, weak == Defs.WeakHead);
                 TestSphere(bodyCenter, bodyRadius, false);
+                // Leg joints sit below the body sphere: their own target, and the weak point on the 指揮官.
+                if (e.Boss)
+                    foreach (float side in new[] { -0.19f, 0.19f })
+                        TestSphere(e.Position + Vector3.up * 0.46f * s + LegOffset(e, side * s), 0.2f * s, weak == Defs.WeakLegs);
 
                 void TestSphere(Vector3 center, float radius, bool isHead)
                 {
@@ -691,6 +722,22 @@ namespace RiftWard.Sim
                         best = e; nearest = along; head = isHead;
                     }
                 }
+            }
+            // Chest core (重裝兵): a hit through the middle of the body, where the glowing core sits, is critical.
+            // Leg joints (指揮官) likewise: the crude body sphere overlaps them, so a ray passing through a joint counts.
+            if (best != null && !head && best.Boss)
+            {
+                bool Through(Vector3 point, float radius)
+                {
+                    float along = Vector3.Dot(point - origin, dir);
+                    return along > 0 && Vector3.Distance(point, origin + dir * along) < radius;
+                }
+                float bs = best.Scale;
+                int weak = Defs.WeakPoint(best.Kind);
+                if (weak == Defs.WeakChest) head = Through(best.Position + Vector3.up * 1.28f * bs, 0.24f * bs);
+                else if (weak == Defs.WeakLegs)
+                    head = Through(best.Position + Vector3.up * 0.46f * bs + LegOffset(best, -0.19f * bs), 0.2f * bs)
+                        || Through(best.Position + Vector3.up * 0.46f * bs + LegOffset(best, 0.19f * bs), 0.2f * bs);
             }
             Vector3 end = origin + dir * nearest;
             float dealt = 0;
@@ -778,6 +825,22 @@ namespace RiftWard.Sim
                 Pickups[crystal.Id] = crystal;
             }
             if (e.Elite) SpawnPickup(e.Position + new Vector3(0.8f, 0, 0), PickupKind.Chest);
+            if (e.Boss && (Endless || e.Wave < Defs.WavesPerMission))
+            {
+                SpawnPickup(e.Position + new Vector3(-1f, 0, 0.6f), PickupKind.SuperChest);
+                Pickups[nextPickup - 1].Life = 90f;
+                Announcements.Add("BOSS 掉落超級寶箱！");
+            }
+            if (e.Kind == Defs.KindSplitter)
+                for (int i = 0; i < 2 && Enemies.Count < Defs.MaxEnemies; i++)
+                {
+                    var spawn = NewEnemy(PushOutOfCover(e.Position + new Vector3(i == 0 ? -0.7f : 0.7f, 0, 0), 0.4f));
+                    spawn.Hp *= 1f + 0.08f * Mathf.Max(0, Wave - 1);
+                    ApplyKind(spawn, Defs.KindSplitling);
+                    spawn.MaxHp = spawn.Hp;
+                    spawn.Wave = e.Wave;
+                    Enemies[spawn.Id] = spawn;
+                }
             // Bosses and elites are team victories: everyone in the mission gets the record.
             if (e.Boss || e.Elite)
                 foreach (var member in Actors.Values) { if (e.Boss) member.StatBossKills++; else member.StatEliteKills++; }
@@ -1020,6 +1083,16 @@ namespace RiftWard.Sim
             foreach (var b in Bullets.Values.ToList())
             {
                 if (b.Kind == BulletKind.Grenade || b.Kind == BulletKind.Mine || b.Kind == BulletKind.Missile) continue;
+                if (b.Kind == BulletKind.Slam)
+                {
+                    b.Life -= dt;
+                    if (b.Life > 0) continue;
+                    Bullets.Remove(b.Id);
+                    foreach (var a in alive)
+                        if (new Vector2(a.Position.x - b.Position.x, a.Position.z - b.Position.z).magnitude < Defs.SlamRadius) a.Hp = Mathf.Max(0, a.Hp - b.Damage);
+                    Explosions.Add(new ExplosionEvent { Position = b.Position + Vector3.up * 0.3f, Radius = Defs.SlamRadius, Color = new Color32(0xff, 0x4b, 0x3a, 255) });
+                    continue;
+                }
                 b.Position += b.Velocity * dt;
                 b.Life -= dt;
                 bool hit = false;
@@ -1073,6 +1146,8 @@ namespace RiftWard.Sim
                         continue;
                     }
                 }
+                if (e.Kind == Defs.KindMedic) { UpdateMedic(e, dt); continue; }
+                if (e.Boss) UpdateSlam(e, alive, dt);
                 if (e.Kind == Defs.KindGuard) { UpdateGuard(e, alive, dt); continue; }
                 if (e.Kind == Defs.KindEmperor) { UpdateEmperor(e, alive, dt); continue; }
                 if (!e.Boss) continue;
@@ -1104,6 +1179,40 @@ namespace RiftWard.Sim
                         }
                     }
                 }
+            }
+        }
+
+        /// 醫療兵: every few seconds a pulse heals wounded allies in range (State 1 flashes for the pulse).
+        void UpdateMedic(Enemy e, float dt)
+        {
+            e.RingCooldown -= dt;
+            e.State = e.RingCooldown < 0.5f ? 1 : 0;
+            if (e.RingCooldown > 0) return;
+            e.RingCooldown = Defs.MedicEvery;
+            bool healed = false;
+            foreach (var o in Enemies.Values)
+            {
+                if (o == e || o.Hp >= o.MaxHp || Vector3.Distance(o.Position, e.Position) > Defs.MedicRange) continue;
+                o.Hp = Mathf.Min(o.MaxHp, o.Hp + o.MaxHp * Defs.MedicHeal * (o.Boss ? 0.15f : 1f));
+                healed = true;
+            }
+            if (healed) Explosions.Add(new ExplosionEvent { Position = e.Position + Vector3.up * 0.2f, Radius = Defs.MedicRange, Color = Defs.Kinds[Defs.KindMedic].Color, Heal = true });
+        }
+
+        /// Boss ground slam: marks a circle under up to two players (everyone once enraged) that bursts after
+        /// the wind-up; stepping out of the circle avoids it.
+        void UpdateSlam(Enemy e, List<Actor> alive, float dt)
+        {
+            e.SlamCooldown -= dt;
+            if (e.SlamCooldown > 0 || alive.Count == 0) return;
+            bool enraged = e.Phase >= 2 || e.Hp < e.MaxHp * 0.5f;
+            e.SlamCooldown = enraged ? Rand(3.6f, 4.6f) : Rand(5.5f, 7f);
+            int marks = enraged ? alive.Count : Mathf.Min(2, alive.Count);
+            foreach (var a in alive.OrderBy(_ => rng.Next()).Take(marks))
+            {
+                if (Bullets.Count >= Defs.MaxBullets) break;
+                var b = SpawnBullet(new Vector3(a.Position.x, 0.05f, a.Position.z), Vector3.zero, e.Damage * 1.5f, BulletKind.Slam);
+                b.Life = Defs.SlamWindup;
             }
         }
 
@@ -1300,6 +1409,13 @@ namespace RiftWard.Sim
                     {
                         OpenChest(a);
                     }
+                    else if (p.Kind == PickupKind.SuperChest)
+                    {
+                        // Shared: everyone still standing gets the picks, so it never matters who touches it.
+                        SuperRounds += Defs.SuperChestPicks;
+                        string who = string.IsNullOrEmpty(a.Name) ? "" : a.Name + " ";
+                        Announcements.Add($"{who}開啟超級寶箱：全隊獲得 {Defs.SuperChestPicks} 次強化");
+                    }
                     else if (p.Kind == PickupKind.Health)
                     {
                         if (a.Hp >= a.MaxHp) continue;
@@ -1356,7 +1472,8 @@ namespace RiftWard.Sim
             for (int i = 0; i < pool.Length; i++)
             {
                 float roll = Rand01();
-                int tier = roll < 0.06f ? 2 : roll < 0.32f ? 1 : 0;
+                // Super chest picks are 稀有 or better, with a much better shot at 史詩.
+                int tier = SuperPick > 0 ? (roll < 0.3f ? 2 : 1) : roll < 0.06f ? 2 : roll < 0.32f ? 1 : 0;
                 pool[i] += 100 * tier;
             }
             return pool;
@@ -1430,6 +1547,7 @@ namespace RiftWard.Sim
         public void ResolveBuffs()
         {
             BuffPending = false;
+            SuperPick = 0;
             BuffOffers.Clear();
             WaveDelay = Mathf.Min(WaveDelay, 1f);
         }
@@ -1440,6 +1558,7 @@ namespace RiftWard.Sim
         public const int MaxMissionGold = 12000;
 
         public int MissionGold() =>
-            Mathf.Clamp(Mathf.RoundToInt((Kills * 3 + Wave * 12 + (Level - 1) * 15 + (State == MissionState.Victory ? 200 + 150 * Region : 0)) * Defs.Difficulty(Difficulty).Gold), 0, MaxMissionGold);
+            Mathf.Clamp(Mathf.RoundToInt((Kills * 3 + Wave * 12 + (Level - 1) * 15 + (State == MissionState.Victory ? 200 + 150 * Region : 0)
+                + (Endless ? (Wave / 10) * (150 + 100 * Region) : 0)) * Defs.Difficulty(Difficulty).Gold), 0, MaxMissionGold);
     }
 }

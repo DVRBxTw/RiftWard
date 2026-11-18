@@ -39,6 +39,17 @@ namespace RiftWard.Sim
         public static DifficultyDef Difficulty(int tier) => Difficulties[Mathf.Clamp(tier, 0, Difficulties.Length - 1)];
 
         /// cleared[region] is the highest tier cleared there (-1 = none).
+        /// 無盡模式 rides on the difficulty value sent through lobby / deploy messages as a flag bit.
+        public const int EndlessFlag = 0x100;
+        public static int PackTier(int tier, bool endless) => tier | (endless ? EndlessFlag : 0);
+        public static int TierOf(int packed) => packed & 0xff;
+        public static bool IsEndless(int packed) => (packed & EndlessFlag) != 0;
+        /// Endless opens in a region once it has been cleared on any difficulty.
+        public static bool EndlessOpen(IReadOnlyList<int> cleared, int region) => region >= 0 && region < cleared.Count && cleared[region] >= 0;
+        /// Endless scaling past the last regular wave: enemy health and damage keep climbing.
+        public static float EndlessHp(int wave) => 1f + 0.07f * Mathf.Max(0, wave - WavesPerMission);
+        public static float EndlessDamage(int wave) => 1f + 0.035f * Mathf.Max(0, wave - WavesPerMission);
+
         public static bool DifficultyOpen(IReadOnlyList<int> cleared, int region, int tier) =>
             tier <= 0 || (cleared != null && region >= 0 && region < cleared.Count && cleared[region] >= tier - 1);
         /// XP needed to go from this account level to the next; mirrors level_for() in server/service.py.
@@ -160,12 +171,27 @@ namespace RiftWard.Sim
             new KindDef("帝國指揮官", new Color32(0xff, 0xb3, 0x47, 255), 2.6f),
             new KindDef("帝國近衛兵", new Color32(0xff, 0xcf, 0x5a, 255), 1.15f),
             new KindDef("赫利奧皇帝", new Color32(0xff, 0xd3, 0x6b, 255), 3.0f),
+            new KindDef("分裂體", new Color32(0x7d, 0xff, 0x6a, 255), 1.15f),
+            new KindDef("分裂幼體", new Color32(0xb8, 0xff, 0x6a, 255), 0.6f),
+            new KindDef("醫療兵", new Color32(0x5c, 0xf0, 0xd8, 255), 1.0f),
         };
 
         public const int KindGrunt = 0, KindCharger = 1, KindSniper = 2, KindBomber = 3, KindShield = 4, KindHeavyBoss = 5, KindCommander = 6,
-            KindGuard = 7, KindEmperor = 8;
+            KindGuard = 7, KindEmperor = 8, KindSplitter = 9, KindSplitling = 10, KindMedic = 11;
+
+        /// Boss ground slam: a marked circle under a player that bursts after the wind-up.
+        public const float SlamWindup = 1.4f, SlamRadius = 2.4f;
+        /// 醫療兵: heals wounded allies around it every few seconds (bosses get a smaller share).
+        public const float MedicRange = 6.5f, MedicEvery = 3.2f, MedicHeal = 0.12f;
+        /// Boss loot: the super chest gives the whole team this many upgrade picks, all 稀有 or better.
+        public const int SuperChestPicks = 3;
 
         public static bool IsBossKind(int kind) => kind == KindHeavyBoss || kind == KindCommander || kind == KindEmperor;
+
+        /// Where a boss takes critical (headshot-multiplied) damage: 0 head, 1 chest core, 2 leg joints.
+        public const int WeakHead = 0, WeakChest = 1, WeakLegs = 2;
+        public static int WeakPoint(int kind) => kind == KindHeavyBoss ? WeakChest : kind == KindCommander ? WeakLegs : WeakHead;
+        public static string WeakPointName(int kind) => WeakPoint(kind) == WeakChest ? "胸口核心" : WeakPoint(kind) == WeakLegs ? "腿部關節" : "頭部";
 
         /// Imperial Guard charge: a glowing wind-up, then a fast rush that hits once on contact.
         public const float GuardWindup = 0.55f, GuardCharge = 0.7f, GuardChargeSpeed = 3.4f;

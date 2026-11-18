@@ -131,6 +131,33 @@ namespace RiftWard.Client
                     Build.Sphere(torso, new Vector3(0, 0.65f, -0.35f), 0.4f, Palette.Hex("fff1a0"), 6f, false).AddComponent<Spinner>().Blink = 5f;
                     foreach (float y in new[] { 0.48f, 0.82f }) Build.Cube(torso, new Vector3(0, y, -0.35f), new Vector3(0.68f, 0.05f, 0.68f), Palette.Hex("1b1d20"), 0f, false);
                     break;
+                case Defs.KindSplitter:
+                case Defs.KindSplitling:
+                    // Swollen, segmented bio-mass on the back that bursts into smaller copies.
+                    for (int i = 0; i < 3; i++)
+                        Build.Sphere(torso, new Vector3((i - 1) * 0.22f, 0.55f + (i % 2) * 0.14f, -0.32f), 0.3f, color, 1.4f);
+                    Build.Cube(torso, new Vector3(0, 0.6f, -0.02f), new Vector3(0.72f, 0.05f, 0.72f), Palette.Hex("2a3a1e"), 0f, false);
+                    Build.Cube(head, new Vector3(0, 0.12f, 0.39f), new Vector3(0.42f, 0.09f, 0.04f), Palette.Hex("e9ff9a"), 3f, false);
+                    break;
+                case Defs.KindMedic:
+                {
+                    // White cross on the chest and a backpack emitter with a turning ring.
+                    Color white = Palette.Hex("eef7f5");
+                    Build.Cube(torso, new Vector3(0, 0.6f, 0.37f), new Vector3(0.26f, 0.08f, 0.02f), white, 1.5f, false);
+                    Build.Cube(torso, new Vector3(0, 0.6f, 0.37f), new Vector3(0.08f, 0.26f, 0.02f), white, 1.5f, false);
+                    Build.Cube(torso, new Vector3(0, 0.62f, -0.42f), new Vector3(0.36f, 0.42f, 0.18f), Palette.Hex("1d2f2c"));
+                    var emitter = new GameObject("Emitter").transform;
+                    emitter.SetParent(torso, false);
+                    emitter.localPosition = new Vector3(0, 1.15f, -0.4f);
+                    Build.Sphere(emitter, Vector3.zero, 0.12f, color, 5f, false);
+                    for (int i = 0; i < 6; i++)
+                    {
+                        float a = i * Mathf.PI / 3f;
+                        Build.Cube(emitter, new Vector3(Mathf.Cos(a) * 0.25f, 0, Mathf.Sin(a) * 0.25f), new Vector3(0.07f, 0.03f, 0.07f), color, 3f, false);
+                    }
+                    { var spin = emitter.gameObject.AddComponent<Spinner>(); spin.Speed = 120f; spin.Axis = Vector3.up; }
+                    break;
+                }
                 case Defs.KindShield:
                     var plate = Build.Cube(elbowL, new Vector3(0.1f, -0.1f, 0.4f), new Vector3(1.05f, 1.35f, 0.1f), color, 0.6f);
                     plate.GetComponent<MeshRenderer>().sharedMaterial = Build.Mat(color, 0.6f, 0.55f);
@@ -273,12 +300,28 @@ namespace RiftWard.Client
                 Build.Cube(knee, new Vector3(0, -0.02f, 0.16f), new Vector3(0.2f, 0.18f, 0.04f), plate);
                 Build.Cube(knee, new Vector3(0, -0.2f, 0), new Vector3(0.24f, 0.4f, 0.28f), armor);
                 Build.Cube(knee, new Vector3(0, -0.38f, 0.05f), new Vector3(0.3f, 0.16f, 0.42f), black);
+                if (commander)
+                {
+                    // Weak point: exposed knee actuators that glow and pulse.
+                    var joint = Build.Sphere(knee, new Vector3(0, 0, 0.1f), 0.26f, Palette.Hex("ff5a3c"), 7f, false);
+                    joint.AddComponent<Spinner>().Pulse = 0.25f;
+                    foreach (float y in new[] { 0.1f, -0.1f }) Build.Cube(knee, new Vector3(0, y, 0.1f), new Vector3(0.22f, 0.025f, 0.04f), black, 0f, false);
+                }
             }
             var torso = Joint(hips, "Torso", Vector3.zero);
             Build.Cube(torso, new Vector3(0, 0.04f, 0), new Vector3(0.62f, 0.2f, 0.34f), black);
             Build.Cube(torso, new Vector3(0, 0.39f, 0), new Vector3(0.78f, 0.62f, 0.44f), armor);
             Build.Cube(torso, new Vector3(0, 0.42f, 0.23f), new Vector3(0.6f, 0.46f, 0.04f), plate);
             Build.Cube(torso, new Vector3(0, 0.44f, 0.255f), new Vector3(0.36f, 0.05f, 0.02f), glow, 2.5f);
+            if (!commander)
+            {
+                // Weak point: a reactor core set into the chest plate, ringed by vents.
+                Build.Cube(torso, new Vector3(0, 0.42f, 0.25f), new Vector3(0.3f, 0.3f, 0.03f), black, 0f, false);
+                var reactor = Build.Sphere(torso, new Vector3(0, 0.42f, 0.25f), 0.2f, Palette.Hex("ff6a2a"), 6f, false);
+                reactor.AddComponent<Spinner>().Pulse = 0.3f;
+                foreach (float a in new[] { 0f, 90f })
+                    Build.Cube(torso, new Vector3(0, 0.42f, 0.275f), new Vector3(0.3f, 0.03f, 0.02f), black, 0f, false).transform.localRotation = Quaternion.Euler(0, 0, a + 45f);
+            }
             Build.Cube(torso, new Vector3(0, 0.74f, 0), new Vector3(0.22f, 0.12f, 0.22f), black);
             foreach (float x in new[] { -0.56f, 0.56f }) Build.Cube(torso, new Vector3(x, 0.69f, 0), new Vector3(0.36f, 0.22f, 0.5f), plate);
             var head = Joint(torso, "Head", new Vector3(0, 0.8f, 0));
@@ -963,6 +1006,22 @@ namespace RiftWard.Client
                 root.localScale = Vector3.one * 0.9f;
                 return root.gameObject;
             }
+            if (kind == PickupKind.SuperChest)
+            {
+                // Super chest: a larger reinforced crate in boss red and gold, a glowing seam and a tall beacon.
+                Color red = Palette.Hex("ff3b5c"), gold = Palette.Hex("ffcf4a");
+                Build.Cube(root, Vector3.zero, new Vector3(1.15f, 0.7f, 0.8f), Palette.Hex("3a1622"));
+                Build.Cube(root, new Vector3(0, 0.38f, 0), new Vector3(1.2f, 0.14f, 0.85f), red, 2.5f);
+                Build.Cube(root, new Vector3(0, 0.28f, 0), new Vector3(1.17f, 0.04f, 0.82f), Palette.Hex("fff1c0"), 5f, false);
+                foreach (float x in new[] { -0.45f, 0f, 0.45f }) Build.Cube(root, new Vector3(x, 0, 0), new Vector3(0.07f, 0.72f, 0.82f), gold, 1.2f);
+                Build.Cube(root, new Vector3(0, 0.08f, 0.41f), new Vector3(0.2f, 0.24f, 0.04f), gold, 3f, false);
+                var star = Build.Cube(root, new Vector3(0, 0.95f, 0), Vector3.one * 0.22f, gold, 5f, false);
+                star.transform.localRotation = Quaternion.Euler(45, 0, 45);
+                { var spin = star.AddComponent<Spinner>(); spin.Speed = 90f; spin.Axis = Vector3.up; }
+                Art.Beacon(root, red, true);
+                Art.Beacon(root, gold, false);
+                return root.gameObject;
+            }
             if (kind == PickupKind.Chest)
             {
                 Build.Cube(root, Vector3.zero, new Vector3(0.8f, 0.5f, 0.55f), Palette.Hex("7a4f22"));
@@ -986,6 +1045,25 @@ namespace RiftWard.Client
 
         public static GameObject Projectile(BulletKind kind)
         {
+            if (kind == BulletKind.Slam)
+            {
+                // Boss slam warning: a red disc on the ground that fills in until it bursts.
+                var mark = new GameObject("SlamWarning").transform;
+                // Faint area plus a bright rim made of short segments, so the circle reads without hiding the ground.
+                var area = Build.Cylinder(mark, Vector3.zero, Defs.SlamRadius * 2f, 0.01f, Palette.Hex("ff3b2e"));
+                area.GetComponent<MeshRenderer>().sharedMaterial = Build.Mat(Palette.Hex("ff3b2e"), 0.2f, 0.08f);
+                for (int i = 0; i < 28; i++)
+                {
+                    float a = i * Mathf.PI * 2f / 28f;
+                    var seg = Build.Cube(mark, new Vector3(Mathf.Cos(a) * Defs.SlamRadius, 0.02f, Mathf.Sin(a) * Defs.SlamRadius), new Vector3(0.5f, 0.02f, 0.07f), Palette.Hex("ff4a3a"), 4f, false);
+                    seg.transform.localRotation = Quaternion.Euler(0, -a * Mathf.Rad2Deg + 90f, 0);
+                }
+                var fill = Build.Cylinder(mark, new Vector3(0, 0.015f, 0), Defs.SlamRadius * 2f, 0.01f, Palette.Hex("ff6a3a"));
+                fill.GetComponent<MeshRenderer>().sharedMaterial = Build.Mat(Palette.Hex("ff5a3a"), 0.5f, 0.16f);
+                fill.AddComponent<GrowIn>().Duration = Defs.SlamWindup;
+                foreach (var c in mark.GetComponentsInChildren<Collider>()) Object.Destroy(c);
+                return mark.gameObject;
+            }
             if (kind == BulletKind.Mine)
             {
                 // Proximity mine: armoured disc, hazard ring, sensor prongs and a blinking arm light.
@@ -1035,6 +1113,21 @@ namespace RiftWard.Client
                 return missile.gameObject;
             }
             return Art.Projectile(kind);
+        }
+    }
+
+    /// Scales a ground marker from a dot to full size over Duration (the slam wind-up).
+    public sealed class GrowIn : MonoBehaviour
+    {
+        public float Duration = 1f;
+        float age;
+        Vector3 full;
+        void Awake() { full = transform.localScale; transform.localScale = new Vector3(0.05f * full.x, full.y, 0.05f * full.z); }
+        void Update()
+        {
+            age += Time.deltaTime;
+            float t = Mathf.Clamp01(age / Mathf.Max(0.01f, Duration));
+            transform.localScale = new Vector3(full.x * t, full.y, full.z * t);
         }
     }
 }

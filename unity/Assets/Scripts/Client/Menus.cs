@@ -49,7 +49,7 @@ namespace RiftWard.Client
 
         // ------------------------------------------------------------ buffs
 
-        public void ShowBuffs(int[] offer, int level)
+        public void ShowBuffs(int[] offer, int level, int superPick = 0)
         {
             if (buffs != null && shownOffer == offer) return;
             HideBuffs();
@@ -57,8 +57,9 @@ namespace RiftWard.Client
             GameClient.LockCursor(false);
             var root = Scrim(canvas.transform, 0.86f);
             buffs = root.gameObject;
-            Ui.Label(root, "LEVEL UP", 13, Palette.Amber, TextAnchor.MiddleCenter).rectTransform.Place(new Vector2(0.5f, 0.5f), new Vector2(0, 250), new Vector2(600, 20));
-            Ui.Label(root, $"等級 {level}", 44, Palette.Bone, TextAnchor.MiddleCenter, true).rectTransform.Place(new Vector2(0.5f, 0.5f), new Vector2(0, 205), new Vector2(600, 56));
+            bool chest = superPick > 0;
+            Ui.Label(root, chest ? "SUPER CHEST" : "LEVEL UP", 13, chest ? Palette.Hex("ff3b5c") : Palette.Amber, TextAnchor.MiddleCenter).rectTransform.Place(new Vector2(0.5f, 0.5f), new Vector2(0, 250), new Vector2(600, 20));
+            Ui.Label(root, chest ? $"超級寶箱  {superPick} / {Defs.SuperChestPicks}" : $"等級 {level}", 44, Palette.Bone, TextAnchor.MiddleCenter, true).rectTransform.Place(new Vector2(0.5f, 0.5f), new Vector2(0, 205), new Vector2(600, 56));
             Ui.Label(root, "選擇一項加成 · 可疊加 · 敵人也會隨等級變強 · 30 秒後自動選擇", 14, Palette.Muted, TextAnchor.MiddleCenter)
                 .rectTransform.Place(new Vector2(0.5f, 0.5f), new Vector2(0, 160), new Vector2(900, 22));
             var row = Ui.HStack(root, 20);

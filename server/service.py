@@ -46,9 +46,13 @@ REGION_COUNT = 6   # two chapters of three regions; mirrors Defs.Regions
 DIFFICULTY_GOLD = [1.0, 1.6, 2.4, 3.5]
 
 
-def mission_gold(team_kills, wave, level, victory, region, tier) -> int:
-    """Gold a mission pays; mirrors GameSim.MissionGold (the anti-cheat check compares the report against it)."""
-    base = team_kills * 3 + wave * 12 + (level - 1) * 15 + (200 + 150 * region if victory else 0)
+ENDLESS_MAX_WAVE = 500
+
+
+def mission_gold(team_kills, wave, level, victory, region, tier, endless=False) -> int:
+    """Gold a mission pays; mirrors GameSim.MissionGold (the anti-cheat check compares the report against it).
+    無盡模式 never ends in victory; every 10 waves survived pays a milestone instead."""
+    base = team_kills * 3 + wave * 12 + (level - 1) * 15 + (200 + 150 * region if victory else 0) + ((wave // 10) * (150 + 100 * region) if endless else 0)
     return max(0, min(MAX_REWARD, int(round(base * DIFFICULTY_GOLD[tier]))))
 
 
@@ -940,7 +944,7 @@ class Store:
         with self.connect() as db:
             db.execute("UPDATE progress SET xp=xp+? WHERE account_id=?", (max(0, min(5000, xp)), account_id))
 
-    STAT_KEYS = ("kills", "headshots", "shots", "hits", "missions", "victories", "best_wave",
+    STAT_KEYS = ("kills", "headshots", "shots", "hits", "missions", "victories", "best_wave", "endless_best", "endless_runs",
                  "boss_kills", "elite_kills", "revives", "flawless", "s_grades", "hard_victories", "draws", "daily_claimed")
 
     @classmethod
@@ -959,7 +963,9 @@ class Store:
         if not isinstance(stats, dict):
             raise ValueError("戰績格式錯誤")
         values = {}
-        for key, limit in (("kills", 5000), ("headshots", 5000), ("shots", 100000), ("hits", 100000), ("wave", 20)):
+        endless = stats.get("endless") is True
+        for key, limit in (("kills", 50000 if endless else 5000), ("headshots", 50000 if endless else 5000), ("shots", 1000000 if endless else 100000),
+                           ("hits", 1000000 if endless else 100000), ("wave", ENDLESS_MAX_WAVE if endless else 20)):
             value = stats.get(key, 0)
             if not isinstance(value, int) or not 0 <= value <= limit:
                 raise ValueError("戰績數值不合法")
@@ -967,7 +973,7 @@ class Store:
         if values["hits"] > values["shots"] or values["headshots"] > values["hits"] * 7:
             raise ValueError("戰績數值不合法")
         # Achievement records (optional: older game servers do not send them).
-        for key, limit in (("downs", 1000), ("revives", 1000), ("boss_kills", 2), ("elite_kills", 20)):
+        for key, limit in (("downs", 1000), ("revives", 1000), ("boss_kills", ENDLESS_MAX_WAVE // 10 if endless else 2), ("elite_kills", 200 if endless else 20)):
             value = stats.get(key, 0)
             if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= limit:
                 raise ValueError("戰績數值不合法")
@@ -975,7 +981,7 @@ class Store:
         grade = stats.get("grade", "")
         if grade not in ("", "S", "A", "B", "C"):
             raise ValueError("戰績數值不合法")
-        victory = stats.get("victory") is True
+        victory = stats.get("victory") is True and not endless
         tier = stats.get("difficulty", 0)
         if isinstance(tier, bool) or not isinstance(tier, int) or not 0 <= tier < len(DIFFICULTY_NAMES):
             raise ValueError("難度不合法")
@@ -987,7 +993,11 @@ class Store:
             total[key] += values[key]
         total["missions"] += 1
         total["victories"] += 1 if victory else 0
-        total["best_wave"] = max(total["best_wave"], values["wave"])
+        if endless:
+            total["endless_best"] = max(total["endless_best"], values["wave"])
+            total["endless_runs"] += 1
+        else:
+            total["best_wave"] = max(total["best_wave"], values["wave"])
         for key in ("boss_kills", "elite_kills", "revives"):
             total[key] += values[key]
         total["flawless"] += 1 if victory and values["downs"] == 0 and "downs" in stats else 0
@@ -998,6 +1008,23 @@ class Store:
         self._advance_daily(account_id, profile["cleared"], {
             "kills": values["kills"], "headshots": values["headshots"], "missions": 1, "waves": values["wave"], "wave": values["wave"],
             "victories": 1 if victory else 0, "hard": 1 if victory and tier >= 1 else 0})
+
+    def endless_leaderboard(self, account_id=None, limit=20):
+        """Best endless wave per player, highest first; banned accounts are left out."""
+        with self.connect() as db:
+            rows = db.execute("SELECT a.id,a.username,p.stats FROM accounts a JOIN progress p ON p.account_id=a.id").fetchall()
+        banned = self._banned_ids() if hasattr(self, "_banned_ids") else set()
+        board = []
+        for row in rows:
+            best = self._parse_stats(row["stats"])["endless_best"]
+            if best > 0 and row["id"] not in banned:
+                board.append({"id": row["id"], "username": row["username"], "wave": best})
+        board.sort(key=lambda x: (-x["wave"], x["username"]))
+        for i, entry in enumerate(board):
+            entry["rank"] = i + 1
+        mine = next((e for e in board if e["id"] == account_id), None)
+        return {"top": [{k: e[k] for k in ("rank", "username", "wave")} for e in board[:limit]],
+                "me": {k: mine[k] for k in ("rank", "username", "wave")} if mine else None}
 
     # ---- anti-cheat
 
@@ -1020,9 +1047,10 @@ class Store:
             if isinstance(value, bool) or not isinstance(value, (int, float) if kind is float else int) or not low <= value <= high:
                 raise ValueError("戰績數值不合法")
             return value
-        wave = number("wave", 0, 20, 0)
-        kills = number("kills", 0, 5000, 0)
-        team = number("team_kills", 0, 5000)
+        endless = stats.get("endless") is True
+        wave = number("wave", 0, ENDLESS_MAX_WAVE if endless else 20, 0)
+        kills = number("kills", 0, 50000 if endless else 5000, 0)
+        team = number("team_kills", 0, 50000 if endless else 5000)
         level = number("level", 1, 300)
         elapsed = number("elapsed", 0, 86400, None, float)
         region = number("region", 0, REGION_COUNT - 1)
@@ -1030,6 +1058,8 @@ class Store:
         aim = number("aim_flags", 0, 1_000_000, 0)
         victory = stats.get("victory") is True
         problems = []
+        if victory and endless:
+            problems.append("無盡模式不會勝利結算")
         if victory and wave != 20:
             problems.append("勝利但未完成 20 波")
         if team is not None and kills > team:
@@ -1039,14 +1069,14 @@ class Store:
         if elapsed is not None and elapsed < max(0, wave - 1) * self.min_wave_seconds:
             problems.append(f"作戰時間過短（{elapsed:.0f} 秒到達第 {wave} 波）")
         if None not in (team, level, region):
-            expected = mission_gold(team, wave, level, victory, region, tier)
+            expected = mission_gold(team, wave, level, victory, region, tier, endless)
             if gold > expected + 1:
                 problems.append(f"金幣 {gold} 超過可得上限 {expected}")
         now = time.monotonic()
         last = self.last_reward.get(account_id)
         if last is not None and self.min_wave_seconds > 0 and now - last < max(1.0, max(0, wave - 1) * self.min_wave_seconds * 0.5):
             problems.append("結算過於頻繁")
-        detail = {k: stats.get(k) for k in ("kills", "team_kills", "wave", "elapsed", "level", "region", "difficulty", "victory", "shots", "hits", "headshots", "aim_flags")}
+        detail = {k: stats.get(k) for k in ("kills", "team_kills", "wave", "elapsed", "level", "region", "difficulty", "victory", "endless", "shots", "hits", "headshots", "aim_flags")}
         detail["gold"] = gold
         if problems:
             self.audit(account_id, "；".join(problems), detail, rejected=True)
@@ -1801,6 +1831,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(400, {"ok": False, "error": str(exc)})
                 return
             self._json(200, {"ok": True, "profile": store.profile(pid), **extra})
+        elif self.path == "/api/endless/leaderboard":
+            self._json(200, {"ok": True, **store.endless_leaderboard(profile["id"])})
         elif self.path == "/api/gacha/history":
             try:
                 self._json(200, {"ok": True, **store.gacha_history(profile["id"], data.get("pool"), data.get("limit", 200))})

@@ -182,6 +182,113 @@ namespace RiftWard.Tests
         }
 
         [Test]
+        public void BossWeakPointsAreChestAndLegs()
+        {
+            var sim = NewMission();
+            // 重裝兵: the head is plain damage, the chest reactor is critical.
+            var heavy = PlaceEnemy(sim, new Vector3(0, 0, 10), 50000f, Defs.KindHeavyBoss, Mathf.PI);
+            heavy.Boss = true;
+            sim.Fire(1, heavy.Position + Vector3.up * Defs.HeadHeight * heavy.Scale);
+            Assert.IsFalse(sim.Shots.Last().Head, "heavy boss head is not its weak point");
+            sim.Fire(1, heavy.Position + Vector3.up * 1.28f * heavy.Scale);
+            Assert.IsTrue(sim.Shots.Last().Head, "chest core");
+            sim.Enemies.Clear();
+            // 指揮官: the knee joints.
+            var commander = PlaceEnemy(sim, new Vector3(0, 0, 10), 50000f, Defs.KindCommander, Mathf.PI);
+            commander.Boss = true;
+            sim.Fire(1, commander.Position + Vector3.up * Defs.HeadHeight * commander.Scale);
+            Assert.IsFalse(sim.Shots.Last().Head, "commander head is not its weak point");
+            sim.Fire(1, commander.Position + new Vector3(0.19f * commander.Scale, 0.46f * commander.Scale, 0));
+            Assert.IsTrue(sim.Shots.Last().Head, "knee joint");
+            Assert.AreEqual("胸口核心", Defs.WeakPointName(Defs.KindHeavyBoss));
+            Assert.AreEqual(Defs.WeakHead, Defs.WeakPoint(Defs.KindEmperor));
+        }
+
+        [Test]
+        public void BossDropsSuperChestWithThreeTeamPicks()
+        {
+            var sim = NewMission();
+            var boss = PlaceEnemy(sim, new Vector3(0, 0, 8), 1f, Defs.KindHeavyBoss);
+            boss.Boss = true; boss.Wave = 10;
+            sim.Fire(1, boss.Position + Vector3.up * 1.28f * boss.Scale);
+            Assert.IsFalse(sim.Enemies.ContainsKey(boss.Id));
+            var chest = sim.Pickups.Values.Single(p => p.Kind == PickupKind.SuperChest);
+            sim.Actors[1].Position = chest.Position;
+            int picks = 0;
+            for (int i = 0; i < 300 && picks < Defs.SuperChestPicks; i++)
+            {
+                sim.Tick(0.02f);   // the boss XP level-ups come first; the chest is opened once play resumes
+                if (!sim.BuffPending) continue;
+                var offer = sim.BuffOffers[1];
+                if (sim.SuperPick > 0)
+                {
+                    picks++;
+                    Assert.AreEqual(picks, sim.SuperPick);
+                    Assert.IsTrue(offer.All(code => Defs.BuffTier(code) >= 1), "super picks are 稀有 or better");
+                }
+                sim.ChooseBuff(1, offer[0]);
+            }
+            Assert.AreEqual(Defs.SuperChestPicks, picks);
+            Assert.IsFalse(sim.Pickups.Values.Any(p => p.Kind == PickupKind.SuperChest));
+            // The last boss of a regular mission ends it: no chest there.
+            var sim2 = NewMission();
+            var last = PlaceEnemy(sim2, new Vector3(0, 0, 8), 1f, Defs.KindCommander);
+            last.Boss = true; last.Wave = Defs.WavesPerMission;
+            sim2.Fire(1, last.Position + new Vector3(0, 1.2f, 0));
+            Assert.IsFalse(sim2.Pickups.Values.Any(p => p.Kind == PickupKind.SuperChest));
+        }
+
+        [Test]
+        public void SlamSplitterAndMedic()
+        {
+            var sim = NewMission();
+            var a = sim.Actors[1];
+            // A slam mark bursts after the wind-up and only hurts inside its circle.
+            var mark = sim.SpawnBullet(new Vector3(a.Position.x, 0.05f, a.Position.z), Vector3.zero, 30f, BulletKind.Slam);
+            mark.Life = Defs.SlamWindup;
+            float hp = a.Hp;
+            sim.Tick(Defs.SlamWindup * 0.5f);
+            Assert.AreEqual(hp, a.Hp, 0.01f);
+            for (int i = 0; i < 60 && sim.Bullets.ContainsKey(mark.Id); i++) sim.Tick(0.05f);
+            Assert.Less(a.Hp, hp);
+            // A splitter bursts into two splitlings.
+            var splitter = PlaceEnemy(sim, new Vector3(0, 0, 9), 1f, Defs.KindSplitter);
+            sim.Fire(1, splitter.Position + Vector3.up);
+            Assert.AreEqual(2, sim.Enemies.Values.Count(e => e.Kind == Defs.KindSplitling));
+            sim.Enemies.Clear();
+            // A medic heals a wounded neighbour on its pulse.
+            var medic = PlaceEnemy(sim, new Vector3(5, 0, 12), 500f, Defs.KindMedic);
+            var hurt = PlaceEnemy(sim, new Vector3(6, 0, 12), 1000f);
+            hurt.Hp = 100f;
+            medic.RingCooldown = 0.01f;
+            sim.Tick(0.05f);
+            Assert.Greater(hurt.Hp, 100f);
+        }
+
+        [Test]
+        public void EndlessKeepsGoingAndScales()
+        {
+            var sim = NewMission();
+            sim.Endless = true;
+            sim.Wave = Defs.WavesPerMission;
+            sim.Enemies.Clear();
+            sim.WaveDelay = 0f;
+            sim.Tick(0.05f);
+            Assert.AreEqual(MissionState.Playing, sim.State);
+            Assert.AreEqual(Defs.WavesPerMission + 1, sim.Wave);
+            Assert.Greater(Defs.EndlessHp(40), 2f);
+            Assert.AreEqual(1f, Defs.EndlessHp(20), 1e-5f);
+            Assert.AreEqual(0x103, Defs.PackTier(3, true));
+            Assert.AreEqual(3, Defs.TierOf(0x103));
+            Assert.IsTrue(Defs.IsEndless(0x103) && !Defs.IsEndless(3));
+            Assert.IsFalse(Defs.EndlessOpen(new[] { -1 }, 0));
+            Assert.IsTrue(Defs.EndlessOpen(new[] { 0 }, 0));
+            // Wave 30 brings a boss in endless.
+            sim.Enemies.Clear(); sim.Wave = 30; sim.SpawnWave();
+            Assert.IsTrue(sim.Enemies.Values.Any(e => e.Boss));
+        }
+
+        [Test]
         public void HeadshotsDoubleBodyShotsNormal()
         {
             var sim = NewMission();

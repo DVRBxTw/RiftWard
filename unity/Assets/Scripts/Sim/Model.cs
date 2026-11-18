@@ -147,6 +147,7 @@ namespace RiftWard.Sim
         public float RingCooldown = 2f;
         /// Imperial Guard: time to the next charge and the time left in the current wind-up / rush.
         public float ChargeCooldown = 3f, ChargeTime;
+        public float SlamCooldown = 4f;
         /// Emperor: blink and summon timers and the rotating angle of his spiral barrage.
         public float BlinkCooldown = 6f, SummonCooldown = 9f, SpiralAngle, SpiralCooldown;
 
@@ -154,7 +155,7 @@ namespace RiftWard.Sim
         public Vector3 Facing => new Vector3(Mathf.Sin(Yaw), 0f, Mathf.Cos(Yaw));
     }
 
-    public enum BulletKind { Enemy = 0, Sniper = 1, Grenade = 2, Mine = 3, Missile = 4 }
+    public enum BulletKind { Enemy = 0, Sniper = 1, Grenade = 2, Mine = 3, Missile = 4, Slam = 5 }
 
     public sealed class Bullet
     {
@@ -166,7 +167,7 @@ namespace RiftWard.Sim
         public int Target = -1;
     }
 
-    public enum PickupKind { Health = 0, Ammo = 1, Xp = 2, Chest = 3 }
+    public enum PickupKind { Health = 0, Ammo = 1, Xp = 2, Chest = 3, SuperChest = 4 }
 
     public sealed class Pickup
     {
@@ -191,5 +192,7 @@ namespace RiftWard.Sim
         public Vector3 Position;
         public float Radius;
         public Color32 Color;
+        /// A heal pulse (醫療兵): drawn as an expanding ring, not a blast.
+        public bool Heal;
     }
 }

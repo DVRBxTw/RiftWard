@@ -469,7 +469,7 @@ namespace RiftWard.Client
             Sim.Shots.Clear();
             Sim.Explosions.Clear();
             Sim.Announcements.Clear();
-            if (Sim.BuffPending && Sim.BuffOffers.TryGetValue(LocalId, out var offer) && offer != null) Menus.ShowBuffs(offer, Sim.Level);
+            if (Sim.BuffPending && Sim.BuffOffers.TryGetValue(LocalId, out var offer) && offer != null) Menus.ShowBuffs(offer, Sim.Level, Sim.SuperPick);
             else if (!Sim.BuffPending) Menus.HideBuffs();
         }
 
@@ -821,6 +821,13 @@ namespace RiftWard.Client
         {
             Color color = ex.Color;
             float r = ex.Radius;
+            if (ex.Heal)
+            {
+                // 醫療兵 pulse: a soft expanding ring and a rising glow, no blast.
+                Burst.Ring(new Vector3(ex.Position.x, 0.08f, ex.Position.z), color, r * 2f, 0.6f);
+                Burst.Sphere(ex.Position + Vector3.up * 0.8f, color, 0.35f, 3f, 0.3f, 1.4f, 0.4f, Vector3.up * 1.5f);
+                return;
+            }
             Burst.Sphere(ex.Position, Color.white, 0.95f, 5f, r * 0.2f, r * 0.9f, 0.09f).GetComponent<Burst>().AddLight(color, 8f, r * 4f);
             Burst.Sphere(ex.Position, color, 0.7f, 3.5f, r * 0.4f, r * 1.5f, 0.3f);
             Burst.Sphere(ex.Position, Color.Lerp(color, Color.white, 0.4f), 0.5f, 4f, r * 0.2f, r * 1.2f, 0.18f);

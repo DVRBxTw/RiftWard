@@ -216,6 +216,29 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(self.call("/api/admin/grant",{"username":"nobody_here","gold":10},auth)[0],400)
         self.assertEqual(self.call("/api/admin/grant",{"username":"Beta_Test","gold":-5},auth)[0],400)
 
+    def test_endless_reports_and_leaderboard(self):
+        account = self.register()
+        auth = {"Authorization": "Bearer " + account["token"]}
+        aid = account["profile"]["id"]
+        self.store.min_wave_seconds = 0
+        # Endless pays a milestone every 10 waves and may go past wave 20; it never counts as a victory.
+        self.assertEqual(service.mission_gold(100, 35, 10, False, 1, 0, True), 100 * 3 + 35 * 12 + 9 * 15 + 3 * 250)
+        stats = {"kills": 300, "team_kills": 300, "wave": 35, "level": 10, "region": 1, "difficulty": 0, "endless": True, "elapsed": 2000.0,
+                 "shots": 900, "hits": 500, "headshots": 100, "boss_kills": 3}
+        gold = service.mission_gold(300, 35, 10, False, 1, 0, True)
+        self.store.verify_reward(aid, gold, stats)
+        self.store.record_stats(aid, stats)
+        with self.assertRaises(ValueError):
+            self.store.verify_reward(aid, gold, dict(stats, endless=False))   # wave 35 outside endless
+        with self.assertRaises(ValueError):
+            self.store.verify_reward(aid, gold + 500, stats)
+        p = self.store.profile(aid)
+        self.assertEqual((p["stats"]["endless_best"], p["stats"]["endless_runs"], p["stats"]["best_wave"], p["stats"]["victories"]), (35, 1, 0, 0))
+        code, board = self.call("/api/endless/leaderboard", {}, auth)
+        self.assertEqual(code, 200)
+        self.assertEqual(board["top"][0]["wave"], 35)
+        self.assertEqual(board["me"]["rank"], 1)
+
     def test_per_copy_enhancement_overload_and_shards(self):
         account = self.register()
         auth = {"Authorization": "Bearer " + account["token"]}

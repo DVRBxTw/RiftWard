@@ -301,11 +301,12 @@ namespace RiftWard.Client
         }
 
         /// The requested tier, lowered until it is open for this player in the region.
-        static int OpenTier(Profile profile, int region, int tier)
+        /// Keeps the 無盡 flag only where this player has cleared the region.
+        static int OpenTier(Profile profile, int region, int packed)
         {
-            tier = Mathf.Clamp(tier, 0, Defs.Difficulties.Length - 1);
+            int tier = Mathf.Clamp(Defs.TierOf(packed), 0, Defs.Difficulties.Length - 1);
             while (tier > 0 && !profile.DifficultyOpen(region, tier)) tier--;
-            return tier;
+            return Defs.PackTier(tier, Defs.IsEndless(packed) && Defs.EndlessOpen(profile.Cleared, region));
         }
 
         // ------------------------------------------------------------ messages
@@ -638,24 +639,31 @@ namespace RiftWard.Client
                 Notice(players[room.Leader], "隊友尚未解鎖此區域，請先完成前一區域");
                 return;
             }
-            difficulty = Mathf.Clamp(difficulty, 0, Defs.Difficulties.Length - 1);
+            bool endless = Defs.IsEndless(difficulty);
+            difficulty = Mathf.Clamp(Defs.TierOf(difficulty), 0, Defs.Difficulties.Length - 1);
+            if (endless && ready.Any(kv => !Defs.EndlessOpen(kv.Value.Profile.Cleared, region)))
+            {
+                Notice(players[room.Leader], ready.Count > 1 ? "有隊員尚未通關此區域，無法進行無盡模式" : "通關此區域後開放無盡模式");
+                return;
+            }
             if (ready.Any(kv => !kv.Value.Profile.DifficultyOpen(region, difficulty)))
             {
                 Notice(players[room.Leader], ready.Count > 1 ? $"有隊員尚未解鎖{Defs.Difficulty(difficulty).Name}難度，請先在此區域通關前一難度" : $"{Defs.Difficulty(difficulty).Name}難度尚未解鎖");
                 return;
             }
             room.Selected = region;
-            room.Difficulty = difficulty;
+            room.Difficulty = Defs.PackTier(difficulty, endless);
             var sim = room.Sim = new GameSim();
             foreach (var kv in ready) AddToSim(sim, kv.Key, kv.Value);
             sim.StartMission(region, difficulty);
+            sim.Endless = endless;
             foreach (var kv in ready) sim.SetAdmin(kv.Key, kv.Value.Admin);
             room.Mode = "playing";
             room.Finishing = false;
             room.ForceFull = true;
             room.SnapshotCount = 0;
             room.FastWave = -1;
-            Broadcast(room, Protocol.Frame(Msg.Deploy, w => { w.Write(region); w.Write(difficulty); }));
+            Broadcast(room, Protocol.Frame(Msg.Deploy, w => { w.Write(region); w.Write(Defs.PackTier(difficulty, endless)); }));
             SendLobby(room);
             Debug.Log($"MISSION_START room={room.Code} region={region} difficulty={difficulty} players={ready.Count}");
         }
@@ -678,7 +686,7 @@ namespace RiftWard.Client
             AddToSim(sim, id, players[id]);
             sim.SetAdmin(id, players[id].Admin);
             room.ForceFull = true;   // the newcomer needs everyone's names and weapons now
-            players[id].Conn.Send(Protocol.Frame(Msg.Deploy, w => { w.Write(sim.Region); w.Write(sim.Difficulty); }));
+            players[id].Conn.Send(Protocol.Frame(Msg.Deploy, w => { w.Write(sim.Region); w.Write(Defs.PackTier(sim.Difficulty, sim.Endless)); }));
         }
 
         void EndToLobby(Room room)
@@ -723,7 +731,8 @@ namespace RiftWard.Client
                     reward["stats"] = new Dictionary<string, object>
                     {
                         ["kills"] = rec[0], ["headshots"] = rec[1], ["shots"] = rec[2], ["hits"] = rec[3], ["wave"] = wave, ["victory"] = success, ["difficulty"] = difficulty,
-                        ["downs"] = feat[0], ["revives"] = feat[1], ["boss_kills"] = Mathf.Min(2, feat[2]), ["elite_kills"] = Mathf.Min(20, feat[3]), ["grade"] = grade,
+                        ["endless"] = sim.Endless,
+                        ["downs"] = feat[0], ["revives"] = feat[1], ["boss_kills"] = Mathf.Min(sim.Endless ? 99 : 2, feat[2]), ["elite_kills"] = Mathf.Min(20, feat[3]), ["grade"] = grade,
                         // Mission summary for the account service's anti-cheat cross-check.
                         ["team_kills"] = kills, ["level"] = sim.Level, ["region"] = region, ["elapsed"] = (double)elapsed, ["aim_flags"] = feat[4],
                     };

@@ -541,7 +541,7 @@ namespace RiftWard.Client
                 outline.effectColor = tier.Accent; outline.effectDistance = new Vector2(1, -1);
                 tierBox.anchoredPosition = new Vector2(40 + region.preferredWidth + 10, -29);
             }
-            if (Changed(wave, sim.Wave)) wave.text = $"第 {sim.Wave} 波  / {Defs.WavesPerMission}";
+            if (Changed(wave, sim.Wave)) wave.text = sim.Endless ? $"無盡 · 第 {sim.Wave} 波" : $"第 {sim.Wave} 波  / {Defs.WavesPerMission}";
             if (Changed(stats, ((long)sim.Enemies.Count << 42) | ((long)sim.Kills << 21) | (long)(int)sim.Elapsed))
                 stats.text = $"剩餘 {sim.Enemies.Count:00}    擊破 {sim.Kills:00}    {(int)sim.Elapsed / 60:00}:{(int)sim.Elapsed % 60:00}";
             if (Changed(level, sim.Level)) level.text = $"LV {sim.Level:00}";
@@ -555,7 +555,7 @@ namespace RiftWard.Client
             if (boss != null)
             {
                 if (Changed(bossName, ((long)boss.Kind << 50) | ((long)Mathf.CeilToInt(boss.Hp) << 25) | (long)Mathf.CeilToInt(boss.MaxHp)))
-                    bossName.text = $"{Defs.Kinds[boss.Kind].Name}   {Mathf.CeilToInt(boss.Hp)} / {Mathf.CeilToInt(boss.MaxHp)}";
+                    bossName.text = $"{Defs.Kinds[boss.Kind].Name}   {Mathf.CeilToInt(boss.Hp)} / {Mathf.CeilToInt(boss.MaxHp)}   ·   弱點：{Defs.WeakPointName(boss.Kind)}";
                 bossBar.Value = boss.Hp / Mathf.Max(1, boss.MaxHp);
                 bossEnrage.gameObject.SetActive(boss.State == 2);
                 if (boss.State == 2) bossEnrage.color = Color.Lerp(Palette.Danger, Palette.Amber, 0.5f + 0.5f * Mathf.Sin(Time.time * 8f));
@@ -716,7 +716,7 @@ namespace RiftWard.Client
                 d.rectTransform.Place(new Vector2(0.5f, 0.5f), p, Vector2.one * size);
             }
             foreach (var p in sim.Pickups.Values)
-                Dot(p.Position, p.Kind == PickupKind.Chest ? Palette.Hex("ffcf4a") : p.Kind == PickupKind.Health ? Palette.Hex("5dff8f") : p.Kind == PickupKind.Xp ? new Color(0.37f, 0.9f, 1f, 0.6f) : Palette.Hex("ffd166"), p.Kind == PickupKind.Xp ? 3f : 6f, false);
+                Dot(p.Position, p.Kind == PickupKind.SuperChest ? Palette.Hex("ff3b5c") : p.Kind == PickupKind.Chest ? Palette.Hex("ffcf4a") : p.Kind == PickupKind.Health ? Palette.Hex("5dff8f") : p.Kind == PickupKind.Xp ? new Color(0.37f, 0.9f, 1f, 0.6f) : Palette.Hex("ffd166"), p.Kind == PickupKind.Xp ? 3f : 6f, false);
             foreach (var e in sim.Enemies.Values)
                 Dot(e.Position, e.Boss ? Palette.Danger : e.Elite ? Palette.Hex("ffcf4a") : Palette.Hex("ff6a5c"), e.Boss ? 13f : e.Elite ? 9f : 6f, e.Boss || e.Elite);
             foreach (var a in sim.Actors.Values)

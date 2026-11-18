@@ -19,6 +19,10 @@ namespace RiftWard.Client
         public int SelectedRegion { get; private set; }
         /// Difficulty tier for the next deployment (the room leader's choice when in a room).
         public int SelectedDifficulty { get; private set; }
+        /// 無盡模式 picked on the home screen (open once the region is cleared).
+        public bool SelectedEndless { get; private set; }
+        public bool EndlessOpen(int region) => Profile != null && Defs.EndlessOpen(Profile.Cleared, region);
+        public void SetEndless(bool on) { SelectedEndless = on && EndlessOpen(SelectedRegion); SelectMission(SelectedRegion, SelectedDifficulty); }
         public bool CanDeploy => Profile != null && (!Net.Welcomed || leaderId == Net.LocalId);
         public NetClient Net { get; } = new NetClient();
         /// Room code shown to the party; empty when playing alone.
@@ -185,14 +189,14 @@ namespace RiftWard.Client
                     partySize = r.ReadInt32();
                     lobbyMode = r.ReadString();
                     RoomCode = r.ReadString();
-                    SelectedDifficulty = r.ReadInt32();
+                    { int packed = r.ReadInt32(); SelectedDifficulty = Defs.TierOf(packed); SelectedEndless = Defs.IsEndless(packed); }
                     homeStatus = !InRoom ? "已連線 · 單人任務（建立或加入房間即可組隊）"
                         : leaderId == Net.LocalId ? $"房號 {RoomCode} · 隊長 · {partySize} / 4" : $"房號 {RoomCode} · 等待隊長部署 · {partySize} / 4";
                     if (Screens.Mode == "home" || Screens.Mode == "connecting") ShowHome();
                     if (netTest && leaderId == Net.LocalId && partySize >= 2 && lobbyMode == "lobby" && !inNetMission && !testDone) Net.Send(Msg.RequestDeploy, w => { w.Write(0); w.Write(0); });
                     break;
                 case Msg.Deploy:
-                    int region = r.ReadInt32(), difficulty = r.ReadInt32();
+                    int region = r.ReadInt32(), packedTier = r.ReadInt32(), difficulty = Defs.TierOf(packedTier);
                     clearedAtDeploy = Profile != null && region >= 0 && region < Profile.Cleared.Count ? Profile.Cleared[region] : -1;
                     Screens.Clear();
                     Client.Menus.HideAll();
@@ -200,6 +204,7 @@ namespace RiftWard.Client
                     training = false;
                     inNetMission = true;
                     Client.StartNetworked(region, difficulty, Net.LocalId, Net);
+                    Client.Sim.Endless = Defs.IsEndless(packedTier);
                     Chat.Show(true);
                     Overlay.HideInvite();
                     PushAdmin();
@@ -415,12 +420,14 @@ namespace RiftWard.Client
             tier = OpenTier(region, tier);
             if (Net.Welcomed)
             {
-                if (leaderId == Net.LocalId) Net.Send(Msg.SelectRegion, w => { w.Write(region); w.Write(tier); });
-                if (!InRoom) { SelectedRegion = region; SelectedDifficulty = tier; ShowHome(); }
+                int packed = Defs.PackTier(tier, SelectedEndless && EndlessOpen(region));
+                if (leaderId == Net.LocalId) Net.Send(Msg.SelectRegion, w => { w.Write(region); w.Write(packed); });
+                if (!InRoom) { SelectedRegion = region; SelectedDifficulty = tier; SelectedEndless = Defs.IsEndless(packed); ShowHome(); }
                 return;
             }
             SelectedRegion = region;
             SelectedDifficulty = tier;
+            SelectedEndless &= EndlessOpen(region);
             ShowHome();
         }
 
@@ -429,7 +436,7 @@ namespace RiftWard.Client
             if (Net.Welcomed)
             {
                 Client.Menus.HideAll();
-                if (leaderId == Net.LocalId) Net.Send(Msg.RequestDeploy, w => { w.Write(SelectedRegion); w.Write(SelectedDifficulty); });
+                if (leaderId == Net.LocalId) Net.Send(Msg.RequestDeploy, w => { w.Write(SelectedRegion); w.Write(Defs.PackTier(SelectedDifficulty, SelectedEndless && EndlessOpen(SelectedRegion))); });
                 else if (inNetMission) { LeaveNetMission(); ShowHome(); }
                 return;
             }
@@ -439,6 +446,7 @@ namespace RiftWard.Client
             Client.Objective = "";
             int offlineRegion = Mathf.Clamp(SelectedRegion, 0, Profile.Unlocked);
             Client.StartOffline(offlineRegion, Profile.Loadout, Profile.Admin, AdminSettings, OpenTier(offlineRegion, SelectedDifficulty));
+            if (Client.Sim != null) Client.Sim.Endless = SelectedEndless && EndlessOpen(offlineRegion);
             Client.Sim?.ApplyProfileBonus(Client.LocalId, Profile.BonusOf("hp"), Profile.BonusOf("damage"), Profile.BonusOf("speed"), Profile.BonusOf("reload"), Profile.BonusOf("crit"));
         }
 
@@ -805,6 +813,17 @@ namespace RiftWard.Client
             SelectDifficulty(1);
             yield return Settle(0.6f);
             yield return Shot(folder, "unity-home-difficulty");
+            {
+                // 無盡模式 on a cleared region, with the leaderboard on the briefing sheet.
+                int cleared0 = Profile.Cleared[0];
+                Profile.Cleared[0] = 1;
+                Screens.SetEndlessBoardForCapture(new List<(int, string, int)> { (1, "LunaFrost", 58), (2, "Kairo_77", 47), (3, "Sean", 41), (4, "NightOwl", 36), (5, "Mira.K", 33) }, (9, 27));
+                SetEndless(true);
+                yield return Settle(0.6f);
+                yield return Shot(folder, "unity-home-endless");
+                SetEndless(false);
+                Profile.Cleared[0] = cleared0;
+            }
             SelectDifficulty(0);
             // Chapter 2 open: 霜冕要塞 cleared, 天穹船塢 selected.
             Profile.Unlocked = 4;
@@ -979,6 +998,50 @@ namespace RiftWard.Client
             Client.SetThirdPerson(false);
             me.Loadout.Equipped[1] = "sniper"; kit.Equipped[1] = "sniper";
             Client.Sim.RefreshWeapon(me);
+            {
+                // Boss fight: the 重裝兵 with its chest reactor, slam warnings, the new enemies and a super chest.
+                sim.Enemies.Clear();
+                Client.SelectSlot(0);
+                var heavy = new Enemy { Id = 7001, Position = me.Position + new Vector3(0.5f, 0, 11f), Boss = true, Yaw = Mathf.PI, Phase = 1 };
+                sim.ApplyKind(heavy, Defs.KindHeavyBoss);
+                heavy.Boss = true; heavy.Hp = 6200; heavy.MaxHp = 9000; heavy.Wave = 10;
+                var extras = new[] { (Defs.KindSplitter, new Vector3(-4.5f, 0, 8f)), (Defs.KindSplitling, new Vector3(-3f, 0, 6.5f)), (Defs.KindSplitling, new Vector3(-5.6f, 0, 6.2f)), (Defs.KindMedic, new Vector3(4.6f, 0, 9f)) };
+                var demoEnemies = new List<Enemy> { heavy };
+                int n = 0;
+                foreach (var (kind, at) in extras)
+                {
+                    var x = new Enemy { Id = 7100 + n++, Position = me.Position + at, Yaw = Mathf.PI, Hp = 300, MaxHp = 400 };
+                    sim.ApplyKind(x, kind);
+                    demoEnemies.Add(x);
+                }
+                foreach (var x in demoEnemies) { x.Speed = 0; x.MeleeCooldown = 99f; x.ShotCooldown = 99f; x.SlamCooldown = 99f; x.RingCooldown = 99f; sim.Enemies[x.Id] = x; }
+                foreach (var at in new[] { new Vector3(2.2f, 0, 7.5f), new Vector3(-3.5f, 0, 5.5f) })
+                    sim.SpawnBullet(me.Position + at + Vector3.up * 0.05f, Vector3.zero, 1f, BulletKind.Slam).Life = 99f;
+                sim.SpawnPickup(me.Position + new Vector3(2.8f, 0, 6f), PickupKind.SuperChest);
+                Client.SetView(0, -0.08f);
+                yield return Settle(0.9f);
+                yield return Shot(folder, "unity-boss-weak");
+                // A commander: the knee joints glow as its weak point.
+                sim.Enemies.Remove(7001);
+                var cmd = new Enemy { Id = 7002, Position = me.Position + new Vector3(0.5f, 0, 9.5f), Boss = true, Yaw = Mathf.PI, Phase = 1 };
+                sim.ApplyKind(cmd, Defs.KindCommander);
+                cmd.Boss = true; cmd.Hp = 11000; cmd.MaxHp = 14000; cmd.Speed = 0; cmd.MeleeCooldown = 99f; cmd.ShotCooldown = 99f; cmd.SlamCooldown = 99f;
+                sim.Enemies[cmd.Id] = cmd;
+                yield return Settle(0.5f);
+                yield return Shot(folder, "unity-boss-commander");
+                sim.Enemies.Clear();
+                sim.Bullets.Clear();
+                sim.Pickups.Clear();
+                Client.SetView(0, 0);
+                // The super chest's three picks: all 稀有+.
+                sim.SuperRounds = Defs.SuperChestPicks;
+                yield return Settle(0.4f);
+                yield return Shot(folder, "unity-super-chest");
+                sim.SuperRounds = 0;
+                if (sim.BuffOffers.TryGetValue(Client.LocalId, out var pickOffer)) sim.ChooseBuff(Client.LocalId, pickOffer[0]);
+                Client.Menus.HideBuffs();
+                yield return Settle(0.3f);
+            }
             yield return Settle(0.3f);
             Client.Menus.OpenPause();
             float pausedAt = sim.Elapsed;

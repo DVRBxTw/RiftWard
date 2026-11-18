@@ -19,7 +19,7 @@ namespace RiftWard.Client
         public int Unlocked, Gold;
         public bool TutorialComplete, Admin;
         public Loadout Loadout = new Loadout();
-        public int Kills, Headshots, Shots, Hits, Missions, Victories, BestWave;
+        public int Kills, Headshots, Shots, Hits, Missions, Victories, BestWave, EndlessBest;
 
         public float Accuracy => Shots > 0 ? (float)Hits / Shots : 0f;
         public int Level = 1, LevelXp, LevelNeed = 150, Keys, WeaponKeys, TalentPoints, Shards;
@@ -99,7 +99,7 @@ namespace RiftWard.Client
             if (record != null)
             {
                 p.Kills = record.Int("kills"); p.Headshots = record.Int("headshots"); p.Shots = record.Int("shots"); p.Hits = record.Int("hits");
-                p.Missions = record.Int("missions"); p.Victories = record.Int("victories"); p.BestWave = record.Int("best_wave");
+                p.Missions = record.Int("missions"); p.Victories = record.Int("victories"); p.BestWave = record.Int("best_wave"); p.EndlessBest = record.Int("endless_best");
             }
             p.Level = Mathf.Max(1, d.Int("level", 1)); p.LevelXp = d.Int("level_xp"); p.LevelNeed = Mathf.Max(1, d.Int("level_need", 150));
             p.Keys = d.Int("keys"); p.WeaponKeys = d.Int("weapon_keys"); p.Shards = d.Int("shards"); p.TalentPoints = d.Int("talent_points");

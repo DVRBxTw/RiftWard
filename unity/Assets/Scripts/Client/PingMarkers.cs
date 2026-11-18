@@ -180,7 +180,7 @@ namespace RiftWard.Client
                 float limit = Mathf.Max(4f, Mathf.Rad2Deg * Mathf.Atan2(1.2f, dist));
                 if (angle > limit) continue;
                 float score = angle + (p.Kind == PickupKind.Xp ? 2f : 0f);   // crystals are everywhere; prefer real supplies
-                if (score < best) { best = score; position = p.Position; kind = (byte)(p.Kind + 1); }
+                if (score < best) { best = score; position = p.Position; kind = (byte)(Mathf.Min((int)p.Kind, (int)PickupKind.Chest) + 1); }   // the super chest pings as a chest
             }
             if (kind != Ground) return true;
             if (wall < 150f) { position = wallHit.point; return true; }
