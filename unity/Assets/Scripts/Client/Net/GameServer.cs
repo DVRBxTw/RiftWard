@@ -20,7 +20,8 @@ namespace RiftWard.Client
             public Profile Profile;
             public bool Pending;
             public int[] OfferSent;
-            public float LastInput, LastPing = -9f;
+            public float LastInput, LastPing = -9f, PingWindow;
+            public int PingCount;
             public AdminSettings Admin = new AdminSettings();
             public Room Room;
             /// Region and difficulty picked while playing alone (no room).
@@ -211,6 +212,8 @@ namespace RiftWard.Client
             if (!players.TryGetValue(id, out var p)) return;
             LeaveRoom(p, false);
             players.Remove(id);
+            // Record when this account was last online (shown as "離線 · 3 小時前" in friends' lists).
+            if (p.Profile != null) api.Post("/api/server/seen", new Dictionary<string, object> { ["account_id"] = p.AccountId }, _ => { });
             Debug.Log("PEER_LEFT " + id);
         }
 
@@ -398,10 +401,15 @@ namespace RiftWard.Client
                     case Msg.Ping:
                         var pingAt = r.ReadVector3();
                         byte pingKind = r.ReadByte();
-                        if (mode != "playing" || sim == null || pingKind > 4 || clock - p.LastPing < 0.35f) break;
+                        int pingTarget = r.ReadInt32();
+                        // 0.12 s apart at most (a double tap is two pings), and no more than 6 in any 3 seconds.
+                        if (mode != "playing" || sim == null || pingKind > PingMarkers.MaxKind || clock - p.LastPing < 0.12f) break;
                         if (float.IsNaN(pingAt.x + pingAt.y + pingAt.z) || pingAt.sqrMagnitude > 1e6f) break;
+                        if (clock - p.PingWindow > 3f) { p.PingWindow = clock; p.PingCount = 0; }
+                        if (++p.PingCount > 6) break;
+                        if (pingKind != PingMarkers.Enemy) pingTarget = 0;
                         p.LastPing = clock;
-                        Broadcast(room, Protocol.Frame(Msg.PingMark, w => { w.Write(id); w.Write(p.ChatName); w.Write(pingAt); w.Write(pingKind); }));
+                        Broadcast(room, Protocol.Frame(Msg.PingMark, w => { w.Write(id); w.Write(p.ChatName); w.Write(pingAt); w.Write(pingKind); w.Write(pingTarget); }));
                         break;
                     case Msg.InviteFriend:
                         int invitee = r.ReadInt32();
@@ -500,6 +508,7 @@ namespace RiftWard.Client
                     w.Write(fid); w.Write(state);
                     // Only rooms anyone can join show their code; private ones are reached by invitation.
                     w.Write(f?.Room != null && !f.Room.Private ? f.Room.Code : "");
+                    w.Write(f?.ChatName ?? "");
                 }
             }));
         }
@@ -561,6 +570,19 @@ namespace RiftWard.Client
             if (p.ChatTimes.Count >= ChatBurst) { SystemLine(p, "發言太頻繁，請稍候再試"); return; }
             p.ChatTimes.Enqueue(clock);
             string title = p.Profile.Title ?? "";
+            if (channel == ChatChannel.Whisper)
+            {
+                // "收件人 訊息": delivered only to that player (online), with a copy back to the sender.
+                int space = text.IndexOf(' ');
+                string to = space > 0 ? text.Substring(0, space) : text, body = space > 0 ? text.Substring(space + 1).Trim() : "";
+                if (body.Length == 0) { SystemLine(p, "私訊格式：/w 帳號 訊息"); return; }
+                var target = players.Values.FirstOrDefault(o => o.Profile != null && string.Equals(o.ChatName, to, StringComparison.OrdinalIgnoreCase));
+                if (target == null) { SystemLine(p, $"{to} 目前不在線上，私訊未送出"); return; }
+                if (target == p) { SystemLine(p, "不能私訊自己"); return; }
+                target.Conn.Send(Protocol.Frame(Msg.ChatLine, w => WriteLine(w, ChatChannel.Whisper, p.AccountId, p.ChatName, title, body, p.Profile.Admin)));
+                p.Conn.Send(Protocol.Frame(Msg.ChatLine, w => WriteLine(w, ChatChannel.WhisperSent, target.AccountId, target.ChatName, "", body, false)));
+                return;
+            }
             if (channel == ChatChannel.Room)
             {
                 if (p.Room == null) { SystemLine(p, "你不在房間中，訊息未送出（可改用全頻）"); return; }

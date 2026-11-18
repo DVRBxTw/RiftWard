@@ -25,12 +25,16 @@ namespace RiftWard.Client
         public static void Add(Line line)
         {
             line.Time = UnityEngine.Time.realtimeSinceStartup;
+            if (line.Channel == ChatChannel.Whisper && !string.IsNullOrEmpty(line.Name)) LastWhisperFrom = line.Name;
             Lines.Add(line);
             if (Lines.Count > Capacity) Lines.RemoveAt(0);
             Added?.Invoke(line);
         }
 
         public static void Notice(string text) => Add(new Line { Channel = ChatChannel.System, Text = text });
+
+        /// Who last sent you a private message (for /r).
+        public static string LastWhisperFrom = "";
 
         public static Line Read(System.IO.BinaryReader r) => new Line
         {
@@ -44,6 +48,11 @@ namespace RiftWard.Client
         public static string Format(Line l)
         {
             if (l.Channel == ChatChannel.System) return $"<color=#f0b24a>[系統]</color> <color=#d6d1c6>{Safe(l.Text)}</color>";
+            if (l.Channel == ChatChannel.Whisper || l.Channel == ChatChannel.WhisperSent)
+            {
+                string dir = l.Channel == ChatChannel.Whisper ? "來自" : "給";
+                return $"<color=#ff8fd0>[私訊] {dir} <b>{Safe(l.Name)}</b>：</color><color=#f3d6e8>{Safe(l.Text)}</color>";
+            }
             string tag = l.Channel == ChatChannel.Room ? "<color=#82aaff>[房間]</color>" : "<color=#8c8f93>[全頻]</color>";
             string title = string.IsNullOrEmpty(l.Title) ? "" : $"<color=#f0b24a>〔{Safe(l.Title)}〕</color>";
             string name = l.Admin ? $"<color=#e5534b>{Safe(l.Name)}</color>" : $"<color=#ebe6db>{Safe(l.Name)}</color>";
@@ -56,28 +65,60 @@ namespace RiftWard.Client
     {
         public static readonly Dictionary<int, (byte state, string room)> States = new Dictionary<int, (byte, string)>();
         public static event Action Updated;
+        /// A friend went from offline to online (not raised for the first report after connecting). Gives the name.
+        public static event Action<string> CameOnline;
+        /// Unix seconds each friend was last seen, from the account service's friend list (0 = unknown).
+        public static readonly Dictionary<int, long> LastSeen = new Dictionary<int, long>();
+        static bool primed;
 
         public static void Read(System.IO.BinaryReader r)
         {
+            var before = new Dictionary<int, (byte state, string room)>(States);
             States.Clear();
             int n = r.ReadInt32();
-            for (int i = 0; i < n; i++) { int id = r.ReadInt32(); byte state = r.ReadByte(); States[id] = (state, r.ReadString()); }
+            var names = new Dictionary<int, string>();
+            for (int i = 0; i < n; i++)
+            {
+                int id = r.ReadInt32(); byte state = r.ReadByte(); States[id] = (state, r.ReadString()); names[id] = r.ReadString();
+            }
+            if (primed)
+                foreach (var kv in States)
+                {
+                    bool wasOn = before.TryGetValue(kv.Key, out var b) && b.state != PresenceState.Offline;
+                    if (kv.Value.state != PresenceState.Offline && !wasOn && !string.IsNullOrEmpty(names[kv.Key])) CameOnline?.Invoke(names[kv.Key]);
+                    // Just went offline: they were seen now.
+                    if (kv.Value.state == PresenceState.Offline && wasOn) LastSeen[kv.Key] = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+                }
+            primed = true;
             Updated?.Invoke();
         }
 
-        public static void Clear() { States.Clear(); Updated?.Invoke(); }
+        public static void Clear() { States.Clear(); primed = false; Updated?.Invoke(); }
+
+        /// "3 分鐘前", "2 小時前", "5 天前".
+        public static string Ago(long unix)
+        {
+            if (unix <= 0) return "";
+            long s = Math.Max(0, DateTimeOffset.UtcNow.ToUnixTimeSeconds() - unix);
+            if (s < 60) return "剛剛";
+            if (s < 3600) return $"{s / 60} 分鐘前";
+            if (s < 86400) return $"{s / 3600} 小時前";
+            if (s < 86400 * 30) return $"{s / 86400} 天前";
+            return "很久以前";
+        }
 
         public static byte StateOf(int id) => States.TryGetValue(id, out var s) ? s.state : PresenceState.Offline;
 
         public static string Describe(int id)
         {
-            if (!States.TryGetValue(id, out var s)) return "離線";
+            string offline = LastSeen.TryGetValue(id, out long seen) && seen > 0 ? $"離線 · {Ago(seen)}" : "離線";
+            if (!States.TryGetValue(id, out var s)) return offline;
             switch (s.state)
             {
                 case PresenceState.Lobby: return "在基地";
                 case PresenceState.InRoom: return string.IsNullOrEmpty(s.room) ? "在房間中" : $"在房間 {s.room}";
                 case PresenceState.InMission: return "任務中";
-                default: return "離線";
+                default: return offline;
             }
         }
 
@@ -219,7 +260,7 @@ namespace RiftWard.Client
             outline.effectColor = Palette.Amber; outline.effectDistance = new Vector2(1, -1);
             channelTag = Ui.Label(inputRow, "", 13, Palette.Teammate, TextAnchor.MiddleCenter, true);
             channelTag.rectTransform.Place(new Vector2(0, 0.5f), Vector2.zero, new Vector2(64, 36), new Vector2(0, 0.5f));
-            input = Widgets.Input(inputRow, "輸入訊息，Enter 送出 · Tab 切換頻道 · Esc 取消", false, ChatChannel.MaxLength);
+            input = Widgets.Input(inputRow, "輸入訊息，Enter 送出 · Tab 切換頻道 · /w 帳號 私訊 · Esc 取消", false, ChatChannel.MaxLength + 24);
             var rt = input.GetComponent<RectTransform>();
             rt.anchorMin = Vector2.zero; rt.anchorMax = Vector2.one; rt.offsetMin = new Vector2(64, 0); rt.offsetMax = Vector2.zero;
             input.GetComponent<Image>().color = new Color(0, 0, 0, 0);

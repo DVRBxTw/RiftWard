@@ -43,7 +43,7 @@ namespace RiftWard.Sim
         /// XP needed to go from this account level to the next; mirrors level_for() in server/service.py.
         public static int AccountLevelNeed(int level) => 100 + 50 * level;
 
-        public const string Version = "0.7.13-unity.1";
+        public const string Version = "0.7.14-unity.1";
 
         // Player movement
         public const float EyeHeight = 1.65f;
@@ -115,6 +115,8 @@ namespace RiftWard.Sim
         public static readonly string[] WeaponOrder = { "pistol", "rifle", "shotgun", "sniper", "saber" };
 
         // Melee (光劍): left click swings through a frontal arc, right click blocks bullets from the front.
+        /// Aiming down sights: spread multiplier (shotguns use AimSpreadPellets) and walk speed multiplier.
+        public const float AimSpread = 0.3f, AimSpreadPellets = 0.65f, AimSpeed = 0.62f;
         public const float MeleeHalfArc = 55f, BlockFactor = 0.3f, BlockSpeed = 0.55f, BlockHalfArc = 70f;
         public const int MeleeCleave = 3;
 

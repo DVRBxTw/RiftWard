@@ -10,6 +10,8 @@ namespace RiftWard.Client
         public static bool Fullscreen = true;
         public static int Resolution = -1, Quality = 2, FrameCap = 3;
         public static float Master = 0.9f, Music = 0.7f, Effects = 0.9f, Sensitivity = 1f;
+        /// Extra multiplier on top of the field-of-view scaling while aimed down sights.
+        public static float AdsSensitivity = 1f;
 
         public static readonly (int w, int h, string label)[] Resolutions =
         {
@@ -34,6 +36,7 @@ namespace RiftWard.Client
             Music = Mathf.Clamp01(F("rw.music", 0.7f));
             Effects = Mathf.Clamp01(F("rw.effects", 0.9f));
             Sensitivity = Mathf.Clamp(F("rw.sensitivity", 1f), 0.2f, 3f);
+            AdsSensitivity = Mathf.Clamp(F("rw.adssensitivity", 1f), 0.3f, 2f);
         }
 
         public static void Save()
@@ -48,6 +51,7 @@ namespace RiftWard.Client
                 PlayerPrefs.SetFloat("rw.music", Music);
                 PlayerPrefs.SetFloat("rw.effects", Effects);
                 PlayerPrefs.SetFloat("rw.sensitivity", Sensitivity);
+                PlayerPrefs.SetFloat("rw.adssensitivity", AdsSensitivity);
                 PlayerPrefs.Save();
             }
             catch { }
@@ -141,6 +145,7 @@ namespace RiftWard.Client
             Slide("戰鬥音效", 0, 1, () => Effects, v => Effects = v, v => $"{v * 100:0}%");
             Widgets.Section(stack, "操作").Sized(26);
             Slide("滑鼠靈敏度", 0.2f, 3f, () => Sensitivity, v => Sensitivity = v, v => $"{v:0.00}×");
+            Slide("開鏡靈敏度", 0.3f, 2f, () => AdsSensitivity, v => AdsSensitivity = v, v => $"{v:0.00}×");
             Widgets.Section(stack, "按鍵").Sized(26);
             Bindings.BuildRows(stack);
         }

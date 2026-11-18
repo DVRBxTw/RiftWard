@@ -179,6 +179,7 @@ namespace RiftWard.Sim
             a.FireCooldown = Mathf.Max(0, a.FireCooldown - dt);
             a.DashCooldown = Mathf.Max(0, a.DashCooldown - dt);
             if (!a.Alive) return;
+            if (input.Block && !a.Melee) speed *= Defs.AimSpeed;   // aiming down sights: a steady walk
             Vector2 mv = Vector2.ClampMagnitude(input.Move, 1f);
             float yaw = float.IsFinite(input.Yaw) ? input.Yaw : 0f;
             var forward = new Vector3(Mathf.Sin(yaw), 0, Mathf.Cos(yaw));
@@ -297,10 +298,11 @@ namespace RiftWard.Sim
                 a.PerkHaste = Mathf.Max(0, a.PerkHaste - dt);
                 MoveActor(a, input, dt);
                 a.Ack = input.Seq;
-                if (!a.Alive) { a.Blocking = false; continue; }
+                if (!a.Alive) { a.Blocking = false; a.Aiming = false; continue; }
                 if (a.Melee)
                 {
                     a.Blocking = input.Block && !input.Fire;
+                    a.Aiming = false;
                     a.Reload = 0; a.Ammo = a.Mag;
                     if (input.Fire && a.FireCooldown <= 0)
                     {
@@ -311,6 +313,7 @@ namespace RiftWard.Sim
                 }
                 a.Blocking = false;
                 UpdateAmmo(a, input, dt);
+                a.Aiming = input.Block && a.Reload <= 0;
                 if (input.Fire && a.FireCooldown <= 0 && a.Reload <= 0)
                 {
                     if (a.Ammo > 0)
@@ -645,8 +648,9 @@ namespace RiftWard.Sim
             for (int i = 0; i < a.Pellets; i++)
             {
                 Vector3 dir = aim;
-                if (a.Spread > 0 && !(a.IsAdmin && a.Admin.AutoAim))
-                    dir = (aim + new Vector3(Rand(-a.Spread, a.Spread), Rand(-a.Spread, a.Spread) * 0.7f, Rand(-a.Spread, a.Spread))).normalized;
+                float spread = a.Spread * (a.Aiming ? (a.Pellets > 1 ? Defs.AimSpreadPellets : Defs.AimSpread) : 1f);
+                if (spread > 0 && !(a.IsAdmin && a.Admin.AutoAim))
+                    dir = (aim + new Vector3(Rand(-spread, spread), Rand(-spread, spread) * 0.7f, Rand(-spread, spread))).normalized;
                 FireRay(a, origin, dir, damage);
             }
             if (a.StatHits > hitsBefore) a.StatHits = hitsBefore + 1;

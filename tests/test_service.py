@@ -698,6 +698,40 @@ class ServiceTests(unittest.TestCase):
         # The full profile agrees with the brief.
         self.assertEqual(self.store.profile(oid)["title"]["text"],"")
 
+    def test_gacha_history_is_per_account(self):
+        me = self.register()
+        other = self.second_account()
+        mid, oid = me["profile"]["id"], other["profile"]["id"]
+        with self.store.connect() as db:
+            db.execute("UPDATE progress SET keys=20, weapon_keys=20 WHERE account_id IN (?,?)", (mid, oid))
+        items, _ = self.store.draw(mid, 10)
+        weapons, _ = self.store.draw_weapons(mid, 1)
+        self.store.draw_weapons(oid, 10)
+        mine = self.store.gacha_history(mid)
+        self.assertEqual(mine["totals"], {"gear": 10, "weapon": 1})
+        self.assertEqual(len(mine["history"]), 11)
+        # Newest first, matching what was drawn.
+        self.assertEqual((mine["history"][0]["pool"], mine["history"][0]["item"], mine["history"][0]["rarity"]), ("weapon", weapons[0]["weapon"], weapons[0]["rarity"]))
+        self.assertEqual(sorted(h["rarity"] for h in mine["history"] if h["pool"] == "gear"), sorted(i["rarity"] for i in items))
+        self.assertEqual(len(self.store.gacha_history(mid, "gear")["history"]), 10)
+        self.assertEqual(self.store.gacha_history(oid)["totals"], {"gear": 0, "weapon": 10})
+        # Over HTTP the account comes from the session: asking for someone else's id still returns your own.
+        code, body = self.call("/api/gacha/history", {"account_id": oid, "pool": "weapon"}, {"Authorization": "Bearer " + me["token"]})
+        self.assertEqual(code, 200)
+        self.assertEqual(len(body["history"]), 1)
+        with self.assertRaises(ValueError):
+            self.store.gacha_history(mid, "nope")
+
+    def test_last_seen_in_friend_list(self):
+        me = self.register()
+        other = self.second_account()
+        oid = other["profile"]["id"]
+        self.store.request_friend(oid, "Beta_Test")
+        self.store.respond_friend(me["profile"]["id"], "Second_Test", True)
+        self.assertEqual(self.store.friends(me["profile"]["id"])["friends"][0]["last_seen"], 0)
+        self.store.seen(oid)
+        self.assertGreater(self.store.friends(me["profile"]["id"])["friends"][0]["last_seen"], 0)
+
     def test_manifest_and_path_restriction(self):
         code, manifest = self.call("/api/version")
         self.assertEqual(code,200)

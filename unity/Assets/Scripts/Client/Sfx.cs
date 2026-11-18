@@ -142,6 +142,14 @@ namespace RiftWard.Client
                 case "vent": return Hiss(name, 0.75f);
                 // Blade connecting: a hot sizzle with a low thump.
                 case "saber_hit": return Events(name, new[] { (0f, 0.06f, 160f, 0.15f, 0.6f), (0.01f, 0.1f, 1200f, 0.35f, 0.3f) });
+                // Shouldering the gun: cloth shift and a soft stock tap; lowering it is the shift alone, quieter.
+                case "ads_in": return Events(name, new[] { (0f, 0.06f, 260f, 0.92f, 0.22f), (0.05f, 0.03f, 700f, 0.55f, 0.3f) });
+                case "ads_out": return Events(name, new[] { (0f, 0.06f, 220f, 0.95f, 0.16f) });
+                // Running out of held breath: a short exhale.
+                case "breath_out": return Hiss(name, 0.35f);
+                // Map pings: a bright two-note chime; danger is lower and doubled.
+                case "ping": return Events(name, new[] { (0f, 0.06f, 1480f, 0.02f, 0.35f), (0.07f, 0.09f, 1970f, 0.02f, 0.3f) });
+                case "ping_danger": return Events(name, new[] { (0f, 0.07f, 740f, 0.05f, 0.45f), (0.1f, 0.07f, 740f, 0.05f, 0.45f) });
                 case "heartbeat": return Events(name, new[] { (0f, 0.09f, 55f, 0.1f, 0.9f), (0.22f, 0.08f, 50f, 0.1f, 0.7f) });
                 default: return Tone(name, 440, 0.05f, 0.1f, 0f);
             }

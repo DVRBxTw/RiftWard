@@ -72,6 +72,13 @@ namespace RiftWard.Client
         float cycle = 99f, kick, heat, lastAmmo = -1;
         /// 0 = hip, 1 = aimed down sights (eased toward the right-mouse state).
         float ads;
+        bool adsWanted;
+        /// Sniper breath: 1 = full lungs. Holding Shift while scoped steadies the reticle until it runs out.
+        float breath = 1f, swayClock, swayYaw, swayPitch;
+        bool breathSpent, holdingBreath;
+        /// Shots in the current burst (drives the recoil pattern) and a small camera roll kick.
+        int burstShots;
+        float lastShotAt = -9f, camRoll;
         static bool reloadIdle(Actor me) => !(me.Reload > 0);
         bool hotVented;
         AudioReverbFilter reverb;
@@ -131,6 +138,7 @@ namespace RiftWard.Client
             Hud.Show(false);
             Sfx = new Sfx(gameObject);
             Pings = new PingMarkers(Sfx);
+            Hud.PingSource = Pings.Radar;
             Menus = new Menus(this);
         }
 
@@ -266,13 +274,14 @@ namespace RiftWard.Client
             LockCursor(false);
         }
 
-        /// Middle mouse: mark the resource under the crosshair (or the spot on the ground) for the whole room.
+        /// Middle mouse (tap, double tap or hold for the wheel): a ping for the whole room.
         void Ping()
         {
-            if (Time.time - lastPing < 0.4f || !PingMarkers.Target(Camera, Sim, out var position, out byte kind)) return;
+            if (!Pings.Poll(Camera, Sim, out var position, out byte kind, out int target)) return;
+            if (Time.time - lastPing < 0.12f) return;
             lastPing = Time.time;
-            if (net != null) net.Send(Msg.Ping, w => { w.Write(position); w.Write(kind); });
-            else Pings.Add(LocalId, "", position, kind);
+            if (net != null) net.Send(Msg.Ping, w => { w.Write(position); w.Write(kind); w.Write(target); });
+            else Pings.Add(LocalId, "", position, kind, target);
         }
 
         void ClearViews()
@@ -356,10 +365,13 @@ namespace RiftWard.Client
             if (!Input.GetMouseButton(0)) releaseFireToResume = false;
             if (Active)
             {
-                yaw = Mathf.Repeat(yaw + Input.GetAxisRaw("Mouse X") * LookSensitivity * 10f * GameSettings.Sensitivity + Mathf.PI, Mathf.PI * 2f) - Mathf.PI;
-                pitch = Mathf.Clamp(pitch + Input.GetAxisRaw("Mouse Y") * LookSensitivity * 10f * GameSettings.Sensitivity, -Defs.LookLimit, Defs.LookLimit);
+                // Zoomed in, the same hand movement turns less: scale by the field of view, then the player's ADS setting.
+                float sens = GameSettings.Sensitivity * (zoomFov / BaseFov) * Mathf.Lerp(1f, GameSettings.AdsSensitivity, ads);
+                if (Pings.WheelOpen) sens = 0f;   // the mouse picks a wheel slot instead of turning
+                yaw = Mathf.Repeat(yaw + Input.GetAxisRaw("Mouse X") * LookSensitivity * 10f * sens + Mathf.PI, Mathf.PI * 2f) - Mathf.PI;
+                pitch = Mathf.Clamp(pitch + Input.GetAxisRaw("Mouse Y") * LookSensitivity * 10f * sens, -Defs.LookLimit, Defs.LookLimit);
                 if (TestAimbot && Input.GetMouseButton(1)) LockOnNearest(Time.deltaTime);
-                if (Input.GetMouseButtonDown(2)) Ping();
+                Ping();
                 if (Bindings.Pressed(Bindings.Action.View)) thirdPerson = !thirdPerson;
                 if (Bindings.Pressed(Bindings.Action.Slot1)) desiredSlot = 0;
                 if (Bindings.Pressed(Bindings.Action.Slot2)) desiredSlot = 1;
@@ -367,6 +379,7 @@ namespace RiftWard.Client
                 if (Mathf.Abs(wheel) > 0.01f && Sim.Actors.TryGetValue(LocalId, out var me))
                     desiredSlot = (desiredSlot + 1) % Mathf.Max(1, me.Loadout.Equipped.Count);
             }
+            else Pings.CancelInput();
             Render(Time.deltaTime);
         }
 
@@ -412,13 +425,14 @@ namespace RiftWard.Client
                 Yaw = yaw, Pitch = pitch,
                 Aim = origin + GameSim.LookDirection(yaw, pitch) * Defs.ShotRange,
                 Fire = BenchFire || (active && Input.GetMouseButton(0) && !releaseFireToResume),
-                Dash = active && Bindings.Held(Bindings.Action.Dash),
+                Dash = active && Bindings.Held(Bindings.Action.Dash) && !(me != null && me.WeaponId == "sniper" && ads > 0.5f),   // scoped: Shift holds breath
                 Jump = active && Bindings.Held(Bindings.Action.Jump),
                 Descend = active && Bindings.Held(Bindings.Action.Descend),
                 Reload = active && Bindings.Held(Bindings.Action.Reload),
                 Skill = active && Bindings.Held(Bindings.Action.Skill),
                 Interact = active && Bindings.Held(Bindings.Action.Interact),
-                Block = active && me != null && me.Melee && Input.GetMouseButton(1),
+                // Right mouse: guard with a blade, aim down sights with a gun (the sim tightens spread and slows the walk).
+                Block = me != null && (active && Input.GetMouseButton(1) || AimForCapture && !me.Melee),
                 Slot = desiredSlot,
             };
             SubmitInput(input);
@@ -777,9 +791,17 @@ namespace RiftWard.Client
             if (Time.time - lastRecoil < 0.03f || !Sim.Actors.TryGetValue(LocalId, out var me)) return;
             lastRecoil = Time.time;
             var w = Defs.Weapons[me.WeaponId];
-            float kick = w.Recoil * UnityEngine.Random.Range(0.85f, 1.15f);
+            // Learnable pattern: the first shots climb straight up, then the muzzle weaves left and right.
+            if (Time.time - lastShotAt > 0.32f) burstShots = 0;
+            burstShots++;
+            lastShotAt = Time.time;
+            float steady = ads > 0.5f ? 0.72f : 1f;
+            float kick = w.Recoil * (burstShots <= 6 ? 1f : 0.75f) * UnityEngine.Random.Range(0.92f, 1.08f) * steady;
+            float weave = Mathf.Sin(burstShots * 0.55f + 0.6f) * (burstShots > 4 ? 1f : 0.3f);
             pitch = Mathf.Clamp(pitch + kick, -Defs.LookLimit, Defs.LookLimit);
-            yaw += UnityEngine.Random.Range(-1f, 1f) * w.Sway;
+            yaw += (weave * 2.2f + UnityEngine.Random.Range(-0.35f, 0.35f)) * w.Sway * steady;
+            camRoll += (weave >= 0 ? 1f : -1f) * kick * Mathf.Rad2Deg * 0.9f;
+            if (!me.Melee) Hud.ScopeKick(kick);
             recoilPending += kick * 0.65f;
             shake = 0.02f + kick * 0.9f;
             cycle = 0f;
@@ -962,7 +984,8 @@ namespace RiftWard.Client
                 pitch = Mathf.Clamp(pitch - back, -Defs.LookLimit, Defs.LookLimit);
                 recoilPending -= back;
             }
-            var rotation = Quaternion.Euler(-pitch * Mathf.Rad2Deg, yaw * Mathf.Rad2Deg, 0);
+            camRoll = Mathf.Lerp(camRoll, 0f, 1f - Mathf.Exp(-10f * dt));
+            var rotation = Quaternion.Euler(-pitch * Mathf.Rad2Deg, yaw * Mathf.Rad2Deg, camRoll);
             Vector3 eye = actorViews.TryGetValue(LocalId, out var view) ? view.transform.position + Vector3.up * Defs.EyeHeight : me.Position + Vector3.up * Defs.EyeHeight;
             if (!me.Alive) eye = me.Position + Vector3.up * 0.5f;
             Camera.transform.rotation = rotation;
@@ -997,9 +1020,14 @@ namespace RiftWard.Client
             bool zooming = (Input.GetMouseButton(1) && Active || AimForCapture) && showWeapon;
             zoomFov = Mathf.Lerp(zoomFov, BaseFov * (zooming ? me.Zoom : 1f), 1f - Mathf.Exp(-14f * dt));
             Camera.fieldOfView = zoomFov + 7f * dash;
-            // Aim down sights: bring the gun up to the centre of the view while right mouse is held.
-            ads = Mathf.Lerp(ads, zooming && !me.Melee && reloadIdle(me) ? 1f : 0f, 1f - Mathf.Exp(-16f * dt));
-            Hud.SetAds(ads, me.WeaponId == "sniper");
+            // Aim down sights: bring the gun's sight onto the view axis while right mouse is held.
+            bool wantAds = zooming && !me.Melee && reloadIdle(me);
+            if (wantAds != adsWanted && showWeapon && !AimForCapture) Sfx.Play(wantAds ? "ads_in" : "ads_out", 0.45f);
+            adsWanted = wantAds;
+            ads = Mathf.Lerp(ads, wantAds ? 1f : 0f, 1f - Mathf.Exp(-16f * dt));
+            bool sniper = me.WeaponId == "sniper";
+            Hud.SetAds(ads, sniper);
+            UpdateSway(sniper && ads > 0.6f, dt);
             // Sniper: once the scope fills the screen, hide the gun model so it doesn't poke into the glass.
             if (weaponHolder != null) weaponHolder.gameObject.SetActive(showWeapon && !(me.WeaponId == "sniper" && ads > 0.8f));
             shake = Mathf.Max(0, shake - dt);
@@ -1021,11 +1049,38 @@ namespace RiftWard.Client
             }
             float seat = reload > 0.8f && reload < 0.92f ? Mathf.Sin(Mathf.PI * (reload - 0.8f) / 0.12f) : 0f;
             AnimateWeapon(me, dt);
-            weaponHolder.localPosition = WeaponRest + new Vector3(0.02f, -0.045f, -0.1f) * dash + new Vector3(0, 0, -shake)
-                + new Vector3(-0.03f, -0.07f, -0.04f) * tilt + new Vector3(0, 0.012f, 0) * seat + new Vector3(0, 0.006f, -0.035f) * kick + meleeOffset
-                + new Vector3(-WeaponRest.x, 0.02f, 0.1f) * ads;
-            weaponHolder.localRotation = Quaternion.Euler(new Vector3(-1.5f, 0, 0) * ads + new Vector3(6f, 2f, -6f) * dash + new Vector3(-14f, 18f, 32f) * tilt + new Vector3(-4f, 0, 0) * seat
+            var hipPos = WeaponRest + new Vector3(0.02f, -0.045f, -0.1f) * dash + new Vector3(0, 0, -shake)
+                + new Vector3(-0.03f, -0.07f, -0.04f) * tilt + new Vector3(0, 0.012f, 0) * seat + new Vector3(0, 0.006f, -0.035f) * kick + meleeOffset;
+            var hipRot = Quaternion.Euler(new Vector3(6f, 2f, -6f) * dash + new Vector3(-14f, 18f, 32f) * tilt + new Vector3(-4f, 0, 0) * seat
                 + new Vector3(-5f, 0, 0) * kick + meleeEuler);
+            // Aimed: the sight sits dead centre; shots push the gun straight back and tip the muzzle up a touch.
+            var adsPos = Models.AdsPose(me.WeaponId) + new Vector3(0, 0.003f, -0.03f) * kick + new Vector3(0, 0, -shake * 0.4f);
+            var adsRot = Quaternion.Euler(-2.2f * kick, 0, 0);
+            float aimed = Mathf.SmoothStep(0, 1, ads);
+            weaponHolder.localPosition = Vector3.Lerp(hipPos, adsPos, aimed);
+            weaponHolder.localRotation = Quaternion.Slerp(hipRot, adsRot, aimed);
+        }
+
+        /// Aim sway: a slow figure-eight while aimed (wide on the sniper scope). Holding Shift while scoped steadies it
+        /// for up to four seconds; run out and the sway doubles until the lungs refill halfway.
+        void UpdateSway(bool scoped, float dt)
+        {
+            bool wantHold = scoped && Active && Bindings.Held(Bindings.Action.Dash);
+            holdingBreath = wantHold && !breathSpent && breath > 0f;
+            breath = Mathf.Clamp01(breath + (holdingBreath ? -dt / 4f : dt / 3f));
+            if (holdingBreath && breath <= 0f) { breathSpent = true; holdingBreath = false; Sfx.Play("breath_out", 0.5f); }
+            if (breathSpent && breath >= 0.5f) breathSpent = false;
+            float amp = scoped ? (holdingBreath ? 0.0003f : breathSpent ? 0.009f : 0.0045f) : ads > 0.5f ? 0.0009f : 0f;
+            if (AimForCapture) amp = 0f;
+            swayClock += dt * (breathSpent ? 1.6f : 1f);
+            float sx = Mathf.Sin(swayClock * 0.9f) * amp, sy = Mathf.Sin(swayClock * 1.8f) * amp * 0.6f;
+            // Move the view by the change in offset, so the player's own aim is never pulled away.
+            float k = 1f - Mathf.Exp(-6f * dt);
+            float nx = Mathf.Lerp(swayYaw, sx, k), ny = Mathf.Lerp(swayPitch, sy, k);
+            yaw += nx - swayYaw;
+            pitch = Mathf.Clamp(pitch + ny - swayPitch, -Defs.LookLimit, Defs.LookLimit);
+            swayYaw = nx; swayPitch = ny;
+            Hud.SetBreath(scoped, breath, holdingBreath, breathSpent);
         }
 
         /// For the automated screenshots: pose the weapon at a given heat and time since the last shot.

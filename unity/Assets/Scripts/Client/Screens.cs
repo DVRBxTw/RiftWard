@@ -1097,7 +1097,8 @@ namespace RiftWard.Client
 
         Dictionary<string, object> friendData;
         readonly Dictionary<int, (Text status, Image dot, Button invite, RectTransform row, string name)> friendRows = new Dictionary<int, (Text, Image, Button, RectTransform, string)>();
-        Text friendCount; int friendTotal;
+        Text friendCount, friendHint; int friendTotal;
+        static string FriendHint(bool online) => online ? "按「邀請」會把好友拉進你的房間；你還沒有房間時會自動建立一個。" : "目前未連線到遊戲伺服器，無法顯示上線狀態或邀請好友。";
 
         public void ShowFriends(bool fetch = true)
         {
@@ -1115,7 +1116,9 @@ namespace RiftWard.Client
             friendTotal = friends.Count;
             friendCount = Ui.Label(head, $"線上 {online} · 共 {friends.Count} / 100", 13, Palette.Muted, TextAnchor.MiddleRight);
             friendCount.rectTransform.Fill();
-            Ui.Label(left, app.Net.Welcomed ? "按「邀請」會把好友拉進你的房間；你還沒有房間時會自動建立一個。" : "目前未連線到遊戲伺服器，無法顯示上線狀態或邀請好友。", 13, Palette.Muted).Sized(20);
+            friendHint = Ui.Label(left, FriendHint(app.Net.Welcomed), 13, Palette.Muted);
+            friendHint.Sized(20);
+            foreach (var f in friends) { long seen = f.Int("last_seen"); if (seen > 0 && !FriendPresence.LastSeen.ContainsKey(f.Int("id"))) FriendPresence.LastSeen[f.Int("id")] = seen; }
             var list = Widgets.ScrollList(left, out _);
             list.parent.gameObject.AddComponent<LayoutElement>().flexibleHeight = 1;
             if (friendData == null) Ui.Label(list, "載入中…", 14, Palette.Muted).Sized(40);
@@ -1211,6 +1214,8 @@ namespace RiftWard.Client
             var invite = Ui.Button(rt, "邀請", () => { app.InviteFriend(id); SocialStatus($"已向 {who} 送出組隊邀請"); }, 14, Palette.Teammate, new Color(0, 0, 0, 0), Palette.Teammate);
             invite.GetComponent<RectTransform>().Place(new Vector2(1, 0.5f), new Vector2(-104, 0), new Vector2(76, 32), new Vector2(1, 0.5f));
             PaintInvite(invite, app.Net.Welcomed && FriendPresence.StateOf(id) != PresenceState.Offline);
+            var whisper = Ui.Button(rt, "私訊", () => ShowWhisper(who), 14, Palette.Hex("ff8fd0"), new Color(0, 0, 0, 0), Palette.Line);
+            whisper.GetComponent<RectTransform>().Place(new Vector2(1, 0.5f), new Vector2(-188, 0), new Vector2(68, 32), new Vector2(1, 0.5f));
             friendRows[id] = (status, dot, invite, rt, who ?? "");
         }
 
@@ -1236,6 +1241,7 @@ namespace RiftWard.Client
             // The count and the online-first order were drawn before presence arrived: keep them in step too.
             int online = friendRows.Keys.Count(id => FriendPresence.StateOf(id) != PresenceState.Offline);
             if (friendCount != null) friendCount.text = $"線上 {online} · 共 {friendTotal} / 100";
+            if (friendHint != null) friendHint.text = FriendHint(app.Net.Welcomed);
             int index = 0;
             foreach (var kv in friendRows.OrderBy(kv => FriendPresence.StateOf(kv.Key) == PresenceState.Offline ? 1 : 0).ThenBy(kv => kv.Value.name, StringComparer.OrdinalIgnoreCase))
                 if (kv.Value.row != null) kv.Value.row.SetSiblingIndex(index++);
@@ -1376,6 +1382,11 @@ namespace RiftWard.Client
         ScrollRect chatScroll;
         byte chatChannel = ChatChannel.World;
 
+        string chatPrefill;
+
+        /// Opens the chat page with "/w 帳號 " ready in the input.
+        public void ShowWhisper(string username) { chatPrefill = $"/w {username} "; ShowChat(); }
+
         public void ShowChat()
         {
             SocialPage("chat", 2, out var pad);
@@ -1400,7 +1411,8 @@ namespace RiftWard.Client
             channelButton = Ui.Button(send, "", () => { chatChannel = chatChannel == ChatChannel.Room ? ChatChannel.World : ChatChannel.Room; PaintChannel(); }, 15);
             channelButton.gameObject.AddComponent<LayoutElement>().preferredWidth = 76;
             PaintChannel();
-            var input = Widgets.Input(send, app.Net.Welcomed ? "輸入訊息，按 Enter 送出" : "未連線，無法發言", false, ChatChannel.MaxLength);
+            var input = Widgets.Input(send, app.Net.Welcomed ? "輸入訊息，按 Enter 送出 · /w 帳號 訊息 可私訊" : "未連線，無法發言", false, ChatChannel.MaxLength + 24);
+            if (!string.IsNullOrEmpty(chatPrefill)) { input.text = chatPrefill; chatPrefill = null; input.ActivateInputField(); input.caretPosition = input.text.Length; }
             input.gameObject.AddComponent<LayoutElement>().flexibleWidth = 1;
             input.interactable = app.Net.Welcomed;
             void Submit()
@@ -1419,7 +1431,7 @@ namespace RiftWard.Client
 
             var right = Panel(pad, 0.7f, 1, Palette.Line, "Rules");
             Ui.Label(right, "頻道說明", 18, Palette.Bone, TextAnchor.UpperLeft, true).Sized(26);
-            Ui.Label(right, "全頻：所有線上玩家都看得到。\n房間：只有同房間的隊友看得到。\n\n戰鬥中按 Enter 開啟聊天，Tab 切換頻道。", 13, Palette.Hex("c9c5bb")).Sized(100);
+            Ui.Label(right, "全頻：所有線上玩家都看得到。\n房間：只有同房間的隊友看得到。\n私訊：輸入 /w 帳號 訊息，只有對方看得到；/r 訊息 回覆最後一位私訊你的人。\n\n戰鬥中按 Enter 開啟聊天，Tab 切換頻道。", 13, Palette.Hex("c9c5bb")).Sized(140);
             Widgets.Section(right, "聊天規範").Sized(22);
             Ui.Label(right, "每 10 秒最多 5 則訊息，每則最多 100 字。不當字詞會自動遮蔽，違規者可能被禁言。", 13, Palette.Muted).Sized(60);
             if (app.Profile.Admin)
@@ -1629,7 +1641,103 @@ namespace RiftWard.Client
             characterStatus.rectTransform.Place(new Vector2(1, 1), new Vector2(0, -10), new Vector2(520, 20), new Vector2(1, 1));
             SupplyPanel(pad, 0f, 0.5f, "gear");
             SupplyPanel(pad, 0.5f, 1f, "weapon");
+            var log = Ui.Button(pad, "抽卡紀錄", () => ShowGachaHistory(""), 15, Palette.Bone, new Color(0, 0, 0, 0), Palette.Line);
+            log.GetComponent<RectTransform>().Place(new Vector2(1, 1), new Vector2(0, -40), new Vector2(132, 34), new Vector2(1, 1));
         }
+
+        // ---- gacha history (each account sees only its own draws; the server keeps the latest 500)
+
+        List<Dictionary<string, object>> gachaHistory;
+        Dictionary<string, object> gachaTotals;
+        string gachaFilter = "";
+
+        public void ShowGachaHistory(string filter, bool fetch = true)
+        {
+            gachaFilter = filter;
+            var r = Begin("gachalog");
+            var pad = Page(r, "shop");
+            pad.offsetMin = new Vector2(48, 36); pad.offsetMax = new Vector2(-48, -NavHeight - 28);
+            SubTabs(pad, new[] { "全部", "裝備補給", "武器補給" }, new Action[] { () => ShowGachaHistory(""), () => ShowGachaHistory("gear"), () => ShowGachaHistory("weapon") },
+                filter == "gear" ? 1 : filter == "weapon" ? 2 : 0);
+            var back = Ui.Button(pad, "返回補給站", ShowShop, 15, Palette.Bone, new Color(0, 0, 0, 0), Palette.Line);
+            back.GetComponent<RectTransform>().Place(new Vector2(1, 1), Vector2.zero, new Vector2(132, 40), new Vector2(1, 1));
+            var status = Ui.Label(pad, "", 14, Palette.Amber, TextAnchor.MiddleRight);
+            status.rectTransform.Place(new Vector2(1, 1), new Vector2(-150, 0), new Vector2(400, 40), new Vector2(1, 1));
+
+            var rows = (gachaHistory ?? new List<Dictionary<string, object>>()).Where(h => filter == "" || h.Str("pool") == filter).ToList();
+            Color accent = filter == "weapon" ? Palette.Danger : filter == "gear" ? Palette.Hex("b07cff") : Palette.Amber;
+
+            // Left: summary — totals, rarity breakdown, draws since the last 傳奇+.
+            var left = Panel(pad, 0, 0.32f, accent, "Summary");
+            Caps(left, "GACHA HISTORY", accent).Sized(16);
+            Ui.Label(left, "抽卡紀錄", 26, Palette.Bone, TextAnchor.UpperLeft, true).Sized(36);
+            int total = gachaTotals == null ? 0 : filter == "" ? gachaTotals.Int("gear") + gachaTotals.Int("weapon") : gachaTotals.Int(filter);
+            var big = Ui.Rect(left, "Total").Sized(56);
+            Ui.Label(big, "累計抽數", 12, Palette.Muted).rectTransform.Place(new Vector2(0, 1), Vector2.zero, new Vector2(200, 18), new Vector2(0, 1));
+            Ui.Label(big, gachaHistory == null ? "—" : total.ToString(), 32, accent, TextAnchor.UpperLeft, true).rectTransform.Place(new Vector2(0, 1), new Vector2(0, -18), new Vector2(200, 40), new Vector2(0, 1));
+            int since = 0;
+            foreach (var h in rows) { if (h.Int("rarity") >= 3) break; since++; }
+            bool anyLegend = rows.Any(h => h.Int("rarity") >= 3);
+            Ui.Label(left, rows.Count == 0 ? "" : anyLegend ? $"距上次傳奇以上：{since} 抽" : $"最近 {rows.Count} 抽尚未出現傳奇以上", 14, Gear.RarityColors[3]).Sized(22);
+            Caps(left, $"稀有度分布（最近 {rows.Count} 筆）").Sized(20);
+            for (int i = Gear.RarityNames.Length - 1; i >= 0; i--)
+            {
+                int n = rows.Count(h => h.Int("rarity") == i);
+                var line = Ui.Rect(left, "Rarity").Sized(24);
+                Ui.Label(line, Gear.RarityNames[i], 14, Gear.RarityColors[i], TextAnchor.MiddleLeft, i >= 3).rectTransform.Place(new Vector2(0, 0.5f), Vector2.zero, new Vector2(60, 24), new Vector2(0, 0.5f));
+                var track = Ui.Box(line, new Color(1, 1, 1, 0.06f), "Track").rectTransform;
+                track.anchorMin = new Vector2(0, 0.5f); track.anchorMax = new Vector2(1, 0.5f); track.pivot = new Vector2(0, 0.5f);
+                track.offsetMin = new Vector2(64, -3); track.offsetMax = new Vector2(-92, 3);
+                var fill = Ui.Box(track, Gear.RarityColors[i], "Fill").rectTransform;
+                fill.anchorMin = Vector2.zero; fill.anchorMax = new Vector2(rows.Count == 0 ? 0 : (float)n / rows.Count, 1); fill.offsetMin = fill.offsetMax = Vector2.zero;
+                Ui.Label(line, rows.Count == 0 ? "0" : $"{n}  ·  {100f * n / rows.Count:0.#}%", 13, Palette.Muted, TextAnchor.MiddleRight).rectTransform.Fill();
+            }
+            Ui.Label(left, "紀錄只有你自己看得到，伺服器保留最近 500 筆。", 12, Palette.Muted).Sized(36);
+
+            // Right: every draw, newest first.
+            var right = Panel(pad, 0.32f, 1f, accent, "Log");
+            var head = Ui.Rect(right, "Head").Sized(22);
+            foreach (var (text, x, w) in new[] { ("時間", 0f, 120f), ("補給", 128f, 80f), ("獲得", 216f, 360f) })
+                Ui.Label(head, text, 12, Palette.Muted, TextAnchor.MiddleLeft).rectTransform.Place(new Vector2(0, 0.5f), new Vector2(x, 0), new Vector2(w, 20), new Vector2(0, 0.5f));
+            Ui.Label(head, "結果", 12, Palette.Muted, TextAnchor.MiddleRight).rectTransform.Fill();
+            var list = Widgets.ScrollList(right, out _);
+            list.parent.gameObject.AddComponent<LayoutElement>().flexibleHeight = 1;
+            if (gachaHistory == null) Ui.Label(list, "載入中…", 14, Palette.Muted).Sized(40);
+            else if (rows.Count == 0) Ui.Label(list, "還沒有抽卡紀錄。", 14, Palette.Muted).Sized(40);
+            int index = 0;
+            foreach (var h in rows)
+            {
+                int rarity = Mathf.Clamp(h.Int("rarity"), 0, Gear.RarityNames.Length - 1);
+                bool weapon = h.Str("pool") == "weapon";
+                var row = Ui.Box(list, new Color(1, 1, 1, index++ % 2 == 0 ? 0.025f : 0f), "Draw").Sized(34);
+                var rt = row.rectTransform;
+                if (rarity >= 3) Ui.Box(rt, Gear.RarityColors[rarity], "Mark").rectTransform.Place(new Vector2(0, 0.5f), Vector2.zero, new Vector2(3, 34), new Vector2(0, 0.5f));
+                var when = DateTimeOffset.FromUnixTimeSeconds(h.Int("time")).ToLocalTime();
+                Ui.Label(rt, when.ToString("MM/dd HH:mm"), 13, Palette.Muted, TextAnchor.MiddleLeft).rectTransform.Place(new Vector2(0, 0.5f), new Vector2(10, 0), new Vector2(116, 30), new Vector2(0, 0.5f));
+                Ui.Label(rt, weapon ? "武器" : "裝備", 13, weapon ? Palette.Danger : Palette.Hex("b07cff"), TextAnchor.MiddleLeft).rectTransform.Place(new Vector2(0, 0.5f), new Vector2(128, 0), new Vector2(80, 30), new Vector2(0, 0.5f));
+                string item = h.Str("item");
+                string name = weapon ? Gear.WeaponName(item, rarity) : $"{Gear.RarityNames[rarity]} {(Gear.SlotNames.TryGetValue(item, out var slot) ? slot : item)}";
+                Ui.Label(rt, name, 15, Gear.RarityColors[rarity], TextAnchor.MiddleLeft, rarity >= 3).rectTransform.Place(new Vector2(0, 0.5f), new Vector2(216, 0), new Vector2(360, 30), new Vector2(0, 0.5f));
+                string outcome = h.Str("outcome");
+                string result = !weapon ? "存入背包" : outcome == "new" ? "新武器" : outcome == "copy" ? "存入武器庫" : outcome == "full" ? "轉為金幣" : "";
+                var res = Ui.Label(rt, result, 13, outcome == "new" ? Palette.Amber : Palette.Muted, TextAnchor.MiddleRight);
+                res.rectTransform.Fill(); res.rectTransform.offsetMax = new Vector2(-12, 0);
+            }
+
+            if (!fetch) return;
+            status.text = "讀取中…";
+            app.Api.Post("/api/gacha/history", new Dictionary<string, object> { ["limit"] = 500 }, result =>
+            {
+                if (Mode != "gachalog") return;
+                if (!result.Bool("ok")) { status.color = Palette.Danger; status.text = result.Str("error", "讀取失敗"); return; }
+                gachaHistory = (result.Arr("history") ?? new List<object>()).OfType<Dictionary<string, object>>().ToList();
+                gachaTotals = result.Obj("totals") ?? new Dictionary<string, object>();
+                ShowGachaHistory(gachaFilter, false);
+            });
+        }
+
+        /// For the automated screenshots.
+        public void DemoGachaHistory(List<Dictionary<string, object>> rows, Dictionary<string, object> totals) { gachaHistory = rows; gachaTotals = totals; ShowGachaHistory("", false); }
 
         void SupplyPanel(RectTransform pad, float x0, float x1, string pool)
         {

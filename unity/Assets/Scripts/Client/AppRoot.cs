@@ -35,6 +35,22 @@ namespace RiftWard.Client
         public void SendChat(byte channel, string text)
         {
             if (!Net.Welcomed) { ChatLog.Notice("離線模式無法聊天，請連線到遊戲伺服器"); return; }
+            // Private messages: /w 帳號 訊息 (or /m, /私訊), and /r 訊息 to answer the last one received.
+            string lower = text.ToLowerInvariant();
+            if (lower.StartsWith("/r ") || lower == "/r")
+            {
+                if (string.IsNullOrEmpty(ChatLog.LastWhisperFrom)) { ChatLog.Notice("還沒有人私訊你"); return; }
+                text = "/w " + ChatLog.LastWhisperFrom + " " + (text.Length > 2 ? text.Substring(3) : "");
+                lower = text.ToLowerInvariant();
+            }
+            foreach (var cmd in new[] { "/w ", "/m ", "/私訊 " })
+                if (lower.StartsWith(cmd))
+                {
+                    string rest = text.Substring(cmd.Length).Trim();
+                    if (rest.IndexOf(' ') <= 0) { ChatLog.Notice("私訊格式：/w 帳號 訊息"); return; }
+                    Net.Send(Msg.Chat, w => { w.Write(ChatChannel.Whisper); w.Write(rest); });
+                    return;
+                }
             Net.Send(Msg.Chat, w => { w.Write(channel); w.Write(text); });
         }
 
@@ -88,6 +104,7 @@ namespace RiftWard.Client
             Api = new AccountApi(this);
             Screens = new Screens(this);
             Overlay = new SocialOverlay { Join = AcceptInvite, Decline = DeclineInvite };
+            FriendPresence.CameOnline += name => Overlay.Toast($"好友 {name} 上線了");
             Chat = new ChatHud { Send = SendChat };
             Net.Message += OnNetMessage;
             Net.Disconnected += OnNetDisconnected;
@@ -235,7 +252,8 @@ namespace RiftWard.Client
                     string pingName = r.ReadString();
                     var pingAt = r.ReadVector3();
                     byte pingKind = r.ReadByte();
-                    if (inNetMission) Client.Pings.Add(pingOwner, pingOwner == Net.LocalId ? "" : pingName, pingAt, pingKind);
+                    int pingTarget = r.ReadInt32();
+                    if (inNetMission) Client.Pings.Add(pingOwner, pingOwner == Net.LocalId ? "" : pingName, pingAt, pingKind, pingTarget);
                     break;
                 case Msg.Invite:
                     int from = r.ReadInt32();
@@ -653,6 +671,18 @@ namespace RiftWard.Client
             Screens.ShowShop();
             yield return Settle(0.4f);
             yield return Shot(folder, "unity-shop");
+            {
+                var rows = new List<Dictionary<string, object>>();
+                var gachaDemo = new (string pool, string item, int rarity, string outcome)[] {
+                    ("weapon", "sniper", 3, "copy"), ("weapon", "rifle", 1, "copy"), ("gear", "armor", 2, ""), ("gear", "chip", 0, ""), ("weapon", "saber", 4, "new"),
+                    ("gear", "boots", 1, ""), ("gear", "module", 0, ""), ("weapon", "shotgun", 2, "new"), ("weapon", "pistol", 0, "full"), ("gear", "armor", 1, "") };
+                long gachaNow = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+                for (int g = 0; g < gachaDemo.Length; g++)
+                    rows.Add(new Dictionary<string, object> { ["time"] = (double)(gachaNow - g * 1900), ["pool"] = gachaDemo[g].pool, ["item"] = gachaDemo[g].item, ["rarity"] = (double)gachaDemo[g].rarity, ["outcome"] = gachaDemo[g].outcome });
+                Screens.DemoGachaHistory(rows, new Dictionary<string, object> { ["gear"] = 5.0, ["weapon"] = 5.0 });
+                yield return Settle(0.4f);
+                yield return Shot(folder, "unity-gacha-history");
+            }
             Screens.ShowDaily();
             yield return Settle(0.4f);
             yield return Shot(folder, "unity-daily");
@@ -701,7 +731,9 @@ namespace RiftWard.Client
             ChatLog.Add(new ChatLog.Line { Channel = ChatChannel.Room, AccountId = 12, Name = "Kairo_77", Text = "第 10 波 Boss 記得先打護盾兵" });
             ChatLog.Add(new ChatLog.Line { Channel = ChatChannel.World, AccountId = 1, Name = "DVRBXTW", Title = "神射手", Text = "伺服器今晚 23:00 維護 30 分鐘", Admin = true });
             ChatLog.Add(new ChatLog.Line { Channel = ChatChannel.World, AccountId = 14, Name = "IronMoss", Text = "<size=80>測試</size> 標籤不會生效" });
-            Screens.ShowChat();
+            ChatLog.Add(new ChatLog.Line { Channel = ChatChannel.Whisper, AccountId = 13, Name = "LunaFrost", Text = "等等私下組隊？我開密房" });
+            ChatLog.Add(new ChatLog.Line { Channel = ChatChannel.WhisperSent, AccountId = 13, Name = "LunaFrost", Text = "好，房號傳我" });
+            Screens.ShowWhisper("LunaFrost");
             yield return Settle(0.4f);
             yield return Shot(folder, "unity-chat");
             Overlay.ShowInvite(11, "NightOwl", "K7QM");
@@ -813,8 +845,14 @@ namespace RiftWard.Client
             // Middle-mouse pings: a teammate's mark on the med kit plus your own spot on the ground.
             Client.Pings.Add(2, "Sean", me.Position + new Vector3(1.5f, 0, 4), 1);
             Client.Pings.Add(Client.LocalId, "", me.Position + new Vector3(-4f, 0, 14), 0);
+            var marked = sim.Enemies.Values.OrderByDescending(e => e.Hp).First();   // the toughest one, so it survives the shot
+            Client.Pings.Add(3, "Kairo_77", marked.Position, PingMarkers.Enemy, marked.Id);
+            Client.Pings.Add(4, "LunaFrost", me.Position + new Vector3(0, 0, -12), PingMarkers.Danger);   // behind you: edge arrow
             yield return Settle(0.5f);
             yield return Shot(folder, "unity-pings");
+            Client.Pings.ShowWheelForCapture(1);
+            yield return Settle(0.1f);
+            yield return Shot(folder, "unity-ping-wheel");
             Client.Pings.Clear();
             Chat.Show(true);
             Chat.OpenForCapture();

@@ -278,6 +278,11 @@ class Store:
                     status TEXT NOT NULL, created INTEGER NOT NULL, PRIMARY KEY (requester, addressee)
                 );
                 CREATE INDEX IF NOT EXISTS friendship_addressee ON friendships(addressee);
+                CREATE TABLE IF NOT EXISTS gacha_log (
+                    id INTEGER PRIMARY KEY, account_id INTEGER NOT NULL, created INTEGER NOT NULL,
+                    pool TEXT NOT NULL, item TEXT NOT NULL, rarity INTEGER NOT NULL, outcome TEXT NOT NULL DEFAULT ''
+                );
+                CREATE INDEX IF NOT EXISTS gacha_log_account ON gacha_log(account_id, id);
                 CREATE TABLE IF NOT EXISTS audit (
                     id INTEGER PRIMARY KEY, account_id INTEGER NOT NULL, created INTEGER NOT NULL,
                     reason TEXT NOT NULL, detail TEXT NOT NULL, rejected INTEGER NOT NULL DEFAULT 0
@@ -293,7 +298,7 @@ class Store:
             for column, ddl in (("xp", "INTEGER NOT NULL DEFAULT 0"), ("keys", "INTEGER NOT NULL DEFAULT 0"), ("weapon_keys", "INTEGER NOT NULL DEFAULT 0"),
                                 ("talents", "TEXT NOT NULL DEFAULT '{}'"), ("gear", "TEXT NOT NULL DEFAULT '{}'"), ("pity", "TEXT NOT NULL DEFAULT '{}'"),
                                 ("cleared", "TEXT NOT NULL DEFAULT '[]'"), ("daily", "TEXT NOT NULL DEFAULT '{}'"),
-                                ("achievements", "TEXT NOT NULL DEFAULT '{}'")):
+                                ("achievements", "TEXT NOT NULL DEFAULT '{}'"), ("last_seen", "INTEGER NOT NULL DEFAULT 0")):
                 if column not in columns:
                     db.execute(f"ALTER TABLE progress ADD COLUMN {column} {ddl}")
 
@@ -665,6 +670,40 @@ class Store:
             db.execute("UPDATE progress SET talents='{}' WHERE account_id=?", (account_id,))
         return self.profile(account_id)
 
+    GACHA_LOG_KEEP = 500
+
+    def _log_draws(self, account_id, pool, entries):
+        """Appends draws to this account's own history (oldest pruned past GACHA_LOG_KEEP)."""
+        now = int(time.time())
+        with self.connect() as db:
+            db.executemany("INSERT INTO gacha_log(account_id, created, pool, item, rarity, outcome) VALUES(?,?,?,?,?,?)",
+                           [(account_id, now, pool, item, rarity, outcome) for item, rarity, outcome in entries])
+            db.execute("DELETE FROM gacha_log WHERE account_id=? AND id NOT IN (SELECT id FROM gacha_log WHERE account_id=? ORDER BY id DESC LIMIT ?)",
+                       (account_id, account_id, self.GACHA_LOG_KEEP))
+
+    def gacha_history(self, account_id, pool=None, limit=200):
+        """This account's draws, newest first. Only ever the caller's own rows."""
+        if pool not in (None, "", "gear", "weapon"):
+            raise ValueError("未知的補給類型")
+        limit = limit if isinstance(limit, int) and not isinstance(limit, bool) and 1 <= limit <= self.GACHA_LOG_KEEP else 200
+        with self.connect() as db:
+            if pool:
+                rows = db.execute("SELECT created, pool, item, rarity, outcome FROM gacha_log WHERE account_id=? AND pool=? ORDER BY id DESC LIMIT ?",
+                                  (account_id, pool, limit)).fetchall()
+            else:
+                rows = db.execute("SELECT created, pool, item, rarity, outcome FROM gacha_log WHERE account_id=? ORDER BY id DESC LIMIT ?",
+                                  (account_id, limit)).fetchall()
+            totals = {r[0]: r[1] for r in db.execute("SELECT pool, COUNT(*) FROM gacha_log WHERE account_id=? GROUP BY pool", (account_id,))}
+        return {"history": [{"time": r["created"], "pool": r["pool"], "item": r["item"], "rarity": r["rarity"], "outcome": r["outcome"]} for r in rows],
+                "totals": {"gear": totals.get("gear", 0), "weapon": totals.get("weapon", 0)}}
+
+    @_locked
+    def seen(self, account_id):
+        if isinstance(account_id, bool) or not isinstance(account_id, int):
+            raise ValueError("找不到帳號")
+        with self.connect() as db:
+            db.execute("UPDATE progress SET last_seen=? WHERE account_id=?", (int(time.time()), account_id))
+
     @_locked
     def draw(self, account_id: int, count):
         if count not in (1, 10):
@@ -686,6 +725,7 @@ class Store:
         self._save_gear(account_id, gear)
         self._save_pity(account_id, pity)
         self._bump_stats(account_id, draws=count)
+        self._log_draws(account_id, "gear", [(item["slot"], item["rarity"], "") for item in items])
         return items, self.profile(account_id)
 
     @_locked
@@ -722,6 +762,7 @@ class Store:
         with self.connect() as db:
             db.execute("UPDATE progress SET loadout=?, gold=gold+?, pity=? WHERE account_id=?", (json.dumps(loadout), gold, json.dumps(pity), account_id))
         self._bump_stats(account_id, draws=count)
+        self._log_draws(account_id, "weapon", [(w["weapon"], w["rarity"], w["outcome"]) for w in results])
         return results, self.profile(account_id)
 
     def _weapon_copy(self, account_id, weapon, index, rarity=None):
@@ -1102,7 +1143,7 @@ class Store:
         if not ids:
             return {}
         with self.connect() as db:
-            rows = db.execute("SELECT a.id, a.username, p.xp, p.achievements FROM accounts a JOIN progress p ON p.account_id=a.id "
+            rows = db.execute("SELECT a.id, a.username, p.xp, p.achievements, p.last_seen FROM accounts a JOIN progress p ON p.account_id=a.id "
                               "WHERE a.id IN (%s)" % ",".join("?" * len(ids)), list(ids)).fetchall()
         out = {}
         for row in rows:
@@ -1114,7 +1155,8 @@ class Store:
             title = ach.get("title") if isinstance(ach.get("title"), str) else ""
             claimed = ach.get("claimed") if isinstance(ach.get("claimed"), dict) else {}
             earned = title in TITLES and isinstance(claimed.get(title), int) and claimed[title] >= 3
-            out[row["id"]] = {"id": row["id"], "username": row["username"], "level": level_for(row["xp"])[0], "title": TITLES[title] if earned else ""}
+            out[row["id"]] = {"id": row["id"], "username": row["username"], "level": level_for(row["xp"])[0], "title": TITLES[title] if earned else "",
+                              "last_seen": row["last_seen"] or 0}
         return out
 
     def friends(self, account_id):
@@ -1576,7 +1618,17 @@ class Handler(BaseHTTPRequestHandler):
                     self._json(409, {"ok": False, "error": "請重新開啟更新器以取得最新版本"})
                     return
                 profile = store.authenticate(data.get("token"))
+                if profile:
+                    store.seen(profile["id"])
                 self._json(200 if profile else 401, {"ok": profile is not None, "profile": profile})
+                return
+            if self.path == "/api/server/seen":
+                try:
+                    store.seen(data.get("account_id"))
+                except ValueError as exc:
+                    self._json(400, {"ok": False, "error": str(exc)})
+                    return
+                self._json(200, {"ok": True})
                 return
             if self.path == "/api/server/progress":
                 try:
@@ -1656,6 +1708,11 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(400, {"ok": False, "error": str(exc)})
                 return
             self._json(200, {"ok": True, "profile": store.profile(pid), **extra})
+        elif self.path == "/api/gacha/history":
+            try:
+                self._json(200, {"ok": True, **store.gacha_history(profile["id"], data.get("pool"), data.get("limit", 200))})
+            except ValueError as exc:
+                self._json(400, {"ok": False, "error": str(exc)})
         elif self.path in ("/api/achievement/claim", "/api/achievement/title"):
             try:
                 if self.path.endswith("claim"):

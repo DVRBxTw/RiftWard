@@ -81,6 +81,8 @@ namespace RiftWard.Sim
         /// Melee reach of the current weapon (0 for guns) and whether the player is guarding with it.
         public float Range;
         public bool Blocking;
+        /// Aiming down sights (right mouse with a gun): tighter spread, slower walk.
+        public bool Aiming;
         public bool Melee => Defs.Weapons.TryGetValue(WeaponId, out var w) && w.Melee;
         public int Pellets = 1;
         public Dictionary<string, int> AmmoByWeapon = new Dictionary<string, int>();

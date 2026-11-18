@@ -283,6 +283,18 @@ namespace RiftWard.Client
 
         /// First-person weapon models, parented to the camera. Returns the muzzle transform.
         /// Each model names its magazine "Mag" so the reload animation can pull it out.
+        /// Where the first-person gun sits (camera space) when aimed down sights: its sight on the view axis.
+        public static Vector3 AdsPose(string weapon)
+        {
+            switch (weapon)
+            {
+                case "rifle": return new Vector3(0, -0.095f, 0.3f);      // through the holo window, dot centred
+                case "shotgun": return new Vector3(0, -0.057f, 0.17f);   // along the vent rib to the bead
+                case "sniper": return new Vector3(0, -0.1f, 0.1f);       // eye to the scope (the overlay takes over)
+                default: return new Vector3(0, -0.058f, 0.3f);           // pistol: front post between the rear dots
+            }
+        }
+
         public static Transform Viewmodel(string weapon, Transform holder, int rarity = 1, bool firstPerson = false)
         {
             // Detach the old gun before destroying it: Destroy only happens at the end of the frame, and lookups by
@@ -602,9 +614,13 @@ namespace RiftWard.Client
             P(h, new Vector3(0, 0.03f, 0.29f), new Vector3(0.012f, 0.03f, 0.012f), GunInk);                 // front post
             // Holo sight
             P(h, new Vector3(0, 0.062f, -0.02f), new Vector3(0.05f, 0.022f, 0.08f), GunInk);
-            P(h, new Vector3(0, 0.095f, 0.0f), new Vector3(0.054f, 0.05f, 0.008f), GunInk);
-            P(h, new Vector3(0, 0.095f, 0.002f), new Vector3(0.036f, 0.032f, 0.004f), Palette.Hex("6fd3ff"), 0.4f);
-            P(h, new Vector3(0, 0.095f, 0.004f), new Vector3(0.004f, 0.004f, 0.002f), Palette.Hex("ff3b3b"), 4f);
+            // Open window frame (you look through it when aiming), a cyan lens edge and the floating red dot.
+            foreach (var (at, size) in new[] { (new Vector3(0, 0.1165f, 0), new Vector3(0.054f, 0.007f, 0.01f)), (new Vector3(0, 0.0735f, 0), new Vector3(0.054f, 0.007f, 0.01f)),
+                                               (new Vector3(-0.0235f, 0.095f, 0), new Vector3(0.007f, 0.05f, 0.01f)), (new Vector3(0.0235f, 0.095f, 0), new Vector3(0.007f, 0.05f, 0.01f)) })
+                P(h, at, size, GunInk);
+            foreach (var (at, size) in new[] { (new Vector3(0, 0.1125f, 0.004f), new Vector3(0.04f, 0.0015f, 0.002f)), (new Vector3(0, 0.0775f, 0.004f), new Vector3(0.04f, 0.0015f, 0.002f)) })
+                P(h, at, size, Palette.Hex("6fd3ff"), 1.2f);
+            P(h, new Vector3(0, 0.095f, 0.006f), new Vector3(0.0042f, 0.0042f, 0.001f), Palette.Hex("ff3b3b"), 6f);
             // Grip, trigger guard and stock
             var grip = P(h, new Vector3(0, -0.11f, -0.1f), new Vector3(0.05f, 0.11f, 0.055f), GunPolymer);
             grip.transform.localRotation = Quaternion.Euler(-16, 0, 0);
