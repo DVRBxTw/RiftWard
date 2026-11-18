@@ -52,10 +52,33 @@ namespace RiftWard.EditorTools
             so.ApplyModifiedProperties();
         }
 
+        /// The app icon (rendered from tools/icon/riftward.svg by tools/make_icon.py) for the player exe and window.
+        static void ApplyIcon()
+        {
+            const string path = "Assets/Icon/icon.png";
+            AssetDatabase.ImportAsset(path);
+            if (AssetImporter.GetAtPath(path) is TextureImporter importer && (importer.textureType != TextureImporterType.Default || !importer.alphaIsTransparency || importer.mipmapEnabled))
+            {
+                importer.textureType = TextureImporterType.Default;
+                importer.alphaIsTransparency = true;
+                importer.mipmapEnabled = false;
+                importer.textureCompression = TextureImporterCompression.Uncompressed;
+                importer.SaveAndReimport();
+            }
+            var icon = AssetDatabase.LoadAssetAtPath<Texture2D>(path);
+            if (icon == null) { Debug.LogWarning("RIFTWARD_ICON missing " + path); return; }
+            PlayerSettings.SetIcons(UnityEditor.Build.NamedBuildTarget.Unknown, new[] { icon }, IconKind.Any);
+            var sizes = PlayerSettings.GetIconSizes(UnityEditor.Build.NamedBuildTarget.Standalone, IconKind.Any);
+            var list = new Texture2D[sizes.Length];
+            for (int i = 0; i < list.Length; i++) list[i] = icon;
+            PlayerSettings.SetIcons(UnityEditor.Build.NamedBuildTarget.Standalone, list, IconKind.Any);
+        }
+
         [MenuItem("RiftWard/Build Windows")]
         public static void BuildWindows()
         {
             Setup();
+            ApplyIcon();
             string output = System.Environment.GetEnvironmentVariable("RIFTWARD_BUILD_DIR");
             if (string.IsNullOrEmpty(output)) output = "Build/Windows";
             var report = BuildPipeline.BuildPlayer(new BuildPlayerOptions

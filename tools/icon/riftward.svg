@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <!-- RiftWard app icon: a guardian shield split by a glowing rift. Source for unity/Assets/Resources/icon.ico (tools/make_icon.py). -->
+  <defs>
+    <linearGradient id="plate" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2b2f36"/>
+      <stop offset="1" stop-color="#111317"/>
+    </linearGradient>
+    <linearGradient id="rim" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#ffd27a"/>
+      <stop offset="0.55" stop-color="#f0a83a"/>
+      <stop offset="1" stop-color="#b8661c"/>
+    </linearGradient>
+    <linearGradient id="rift" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#fff6d8"/>
+      <stop offset="0.5" stop-color="#7ff0ff"/>
+      <stop offset="1" stop-color="#3aa8ff"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#7ff0ff" stop-opacity="0.75"/>
+      <stop offset="1" stop-color="#7ff0ff" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <!-- rounded dark tile -->
+  <rect x="8" y="8" width="240" height="240" rx="52" fill="#0d0f12"/>
+  <rect x="8" y="8" width="240" height="240" rx="52" fill="none" stroke="#2a2e35" stroke-width="4"/>
+  <!-- shield: amber rim, dark plate -->
+  <path d="M128 28 L212 58 L208 132 C204 182 170 214 128 232 C86 214 52 182 48 132 L44 58 Z" fill="url(#rim)"/>
+  <path d="M128 46 L196 70 L193 132 C190 172 163 198 128 214 C93 198 66 172 63 132 L60 70 Z" fill="url(#plate)"/>
+  <!-- rift glow and the jagged crack through the middle -->
+  <ellipse cx="128" cy="130" rx="46" ry="78" fill="url(#glow)"/>
+  <path d="M138 52 L116 104 L136 112 L112 162 L130 168 L114 212 L150 150 L130 144 L152 100 L132 94 Z" fill="url(#rift)"/>
+  <path d="M138 52 L116 104 L136 112 L112 162 L130 168 L114 212" fill="none" stroke="#ffffff" stroke-width="3" stroke-linejoin="round" opacity="0.8"/>
+  <!-- small chevron marks on the plate -->
+  <path d="M78 84 L96 78 L94 90 Z M178 84 L160 78 L162 90 Z" fill="#f0a83a" opacity="0.85"/>
+</svg>
