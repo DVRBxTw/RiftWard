@@ -649,6 +649,11 @@ namespace RiftWard.Client
             });
             yield return Settle(0.3f);
             yield return Shot(folder, "unity-admin-console");
+            GameClient.TestAimbot = true;
+            Screens.ShowAbilitiesForCapture();
+            yield return Settle(0.3f);
+            yield return Shot(folder, "unity-abilities");
+            GameClient.TestAimbot = false;
             SelectRegion(0);
             SelectDifficulty(1);
             yield return Settle(0.6f);
@@ -726,6 +731,11 @@ namespace RiftWard.Client
             for (int f = 0; f < 10; f++) { Chat.Update(true, false); yield return null; }
             yield return Shot(folder, "unity-chat-hud");
             Chat.Show(false);
+            // Test aimbot: the view turns from straight ahead onto the nearest enemy's head.
+            Client.SetView(0.6f, 0.1f);
+            for (int f = 0; f < 30; f++) { Client.AimbotStepForCapture(1f / 60f); yield return null; }
+            yield return Shot(folder, "unity-aimbot");
+            Client.SetView(0, 0);
             Client.Hud.ResetTransient();
             yield return Settle(0.4f);
             yield return Shot(folder, "unity-rifle");

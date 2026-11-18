@@ -127,7 +127,7 @@ namespace RiftWard.Client
                 Ui.Button(stack, "管理員能力", () =>
                 {
                     var overlay = Scrim(pause.transform, 0.6f);
-                    var panel = Sheet(overlay, Palette.Danger, new Vector2(480, 470));
+                    var panel = Sheet(overlay, Palette.Danger, new Vector2(520, 600));
                     var ps = Ui.VStack(panel, 10);
                     ps.Fill();
                     ps.GetComponent<VerticalLayoutGroup>().padding = new RectOffset(26, 26, 22, 22);

@@ -1471,6 +1471,7 @@ namespace RiftWard.Client
         }
 
         public void ShowTitlePickerForCapture() => ShowTitlePicker();
+        public void ShowAbilitiesForCapture() => ShowAbilityOverlay();
 
         // Sample data for the automated screenshots (no account service in capture mode).
         public void DemoFriends(Dictionary<string, object> data) { friendData = data; ShowFriends(false); }
@@ -2001,7 +2002,7 @@ namespace RiftWard.Client
         {
             var scrim = Ui.Box(root, new Color(0.03f, 0.031f, 0.034f, 0.82f), "Abilities").rectTransform;
             scrim.Fill();
-            var sheet = Ui.Box(scrim, Palette.Sheet, "Sheet").rectTransform.Place(new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(500, 520));
+            var sheet = Ui.Box(scrim, Palette.Sheet, "Sheet").rectTransform.Place(new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(520, 650));
             TopRule(sheet, Palette.Danger);
             var ss = Ui.VStack(sheet, 12);
             ss.Fill();
@@ -2022,6 +2023,9 @@ namespace RiftWard.Client
             Widgets.Toggle(parent, "無限彈藥（不需換彈）", s.InfiniteAmmo, on => { s.InfiniteAmmo = on; app.PushAdmin(); }).Sized(46);
             Widgets.Toggle(parent, "飛行（Space 上升 · Ctrl 下降）", s.Fly, on => { s.Fly = on; app.PushAdmin(); }).Sized(46);
             Widgets.Toggle(parent, "自動瞄準（鎖定準星附近 30° 內可見敵人的頭部）", s.AutoAim, on => { s.AutoAim = on; app.PushAdmin(); }).Sized(46);
+            Widgets.Section(parent, "測試外掛（本機）").Sized(22);
+            Widgets.Toggle(parent, "鎖定自瞄（按住右鍵，視角轉向 45° 內最近的敵人頭部）", GameClient.TestAimbot, on => GameClient.TestAimbot = on).Sized(46);
+            SliderRow(parent, "鎖定平滑度", 0, 1, GameClient.TestAimbotSmooth, v => GameClient.TestAimbotSmooth = v);
         }
 
         static void SliderRow(Transform parent, string label, float min, float max, float value, Action<float> changed)

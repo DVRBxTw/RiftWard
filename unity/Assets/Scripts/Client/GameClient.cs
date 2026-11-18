@@ -31,6 +31,13 @@ namespace RiftWard.Client
         float heartbeat;
         bool releaseFireToResume;
         public bool Paused;
+
+        /// Test aimbot (admin ability panel, client only): while aiming, the view turns onto the nearest visible
+        /// enemy's head, as a view-locking cheat would. The server only sees an ordinary view direction.
+        public static bool TestAimbot;
+        /// 0 = snap instantly, 1 = slow glide.
+        public static float TestAimbotSmooth = 0.3f;
+        public const float TestAimbotFov = 45f;
         Transform weaponHolder, muzzle, magazine;
         Vector3 magazineRest;
 
@@ -280,6 +287,7 @@ namespace RiftWard.Client
             {
                 yaw = Mathf.Repeat(yaw + Input.GetAxisRaw("Mouse X") * LookSensitivity * 10f * GameSettings.Sensitivity + Mathf.PI, Mathf.PI * 2f) - Mathf.PI;
                 pitch = Mathf.Clamp(pitch + Input.GetAxisRaw("Mouse Y") * LookSensitivity * 10f * GameSettings.Sensitivity, -Defs.LookLimit, Defs.LookLimit);
+                if (TestAimbot && Input.GetMouseButton(1)) LockOnNearest(Time.deltaTime);
                 if (Bindings.Pressed(Bindings.Action.View)) thirdPerson = !thirdPerson;
                 if (Bindings.Pressed(Bindings.Action.Slot1)) desiredSlot = 0;
                 if (Bindings.Pressed(Bindings.Action.Slot2)) desiredSlot = 1;
@@ -288,6 +296,36 @@ namespace RiftWard.Client
                     desiredSlot = (desiredSlot + 1) % Mathf.Max(1, me.Loadout.Equipped.Count);
             }
             Render(Time.deltaTime);
+        }
+
+        /// For the automated screenshots: one aimbot step as if the aim button were held.
+        public void AimbotStepForCapture(float dt) => LockOnNearest(dt);
+
+        void LockOnNearest(float dt)
+        {
+            if (!Sim.Actors.TryGetValue(LocalId, out var me) || !me.Alive) return;
+            Vector3 eye = me.Position + Vector3.up * Defs.EyeHeight;
+            Vector3 view = GameSim.LookDirection(yaw, pitch);
+            Vector3? best = null;
+            float bestAngle = TestAimbotFov;
+            foreach (var e in Sim.Enemies.Values)
+            {
+                if (e.Hp <= 0) continue;
+                var head = e.Position + Vector3.up * Defs.HeadHeight * e.Scale;
+                var to = head - eye;
+                float distance = to.magnitude;
+                if (distance < 0.5f || distance > Defs.ShotRange) continue;
+                float angle = Vector3.Angle(view, to);
+                if (angle >= bestAngle || GameSim.RayBlock(eye, to / distance, distance) < distance - 0.05f) continue;
+                bestAngle = angle; best = head;
+            }
+            if (best == null) return;
+            var d = best.Value - eye;
+            float targetYaw = Mathf.Atan2(d.x, d.z), targetPitch = Mathf.Clamp(Mathf.Atan2(d.y, new Vector2(d.x, d.z).magnitude), -Defs.LookLimit, Defs.LookLimit);
+            float k = TestAimbotSmooth <= 0.01f ? 1f : 1f - Mathf.Exp(-dt * Mathf.Lerp(40f, 4f, TestAimbotSmooth));
+            yaw += Mathf.DeltaAngle(yaw * Mathf.Rad2Deg, targetYaw * Mathf.Rad2Deg) * Mathf.Deg2Rad * k;
+            yaw = Mathf.Repeat(yaw + Mathf.PI, Mathf.PI * 2f) - Mathf.PI;
+            pitch += (targetPitch - pitch) * k;
         }
 
         void FixedUpdate()
