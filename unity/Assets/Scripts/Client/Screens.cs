@@ -464,7 +464,7 @@ namespace RiftWard.Client
                     for (int k = 0; k < Defs.MaxUpgradeLevel; k++)
                         Ui.Box(row, k < lv ? Palette.Amber : Palette.Line, "Pip").rectTransform.Place(new Vector2(0, 0.5f), new Vector2(200 + k * 32, 0), new Vector2(28, 6), new Vector2(0, 0.5f));
                     bool maxed = lv >= Defs.MaxUpgradeLevel;
-                    int cost = Defs.UpgradeCost(armoryPick, lv);
+                    int cost = Defs.UpgradeCost(armoryPick, lv, p.Loadout.RarityOf(armoryPick));
                     var up = Ui.Button(row, maxed ? "已滿級" : $"升級  {cost} G", () => ArmoryRequest("/api/shop/upgrade", new Dictionary<string, object> { ["weapon"] = armoryPick, ["stat"] = key }), 14, Palette.Amber, new Color(0, 0, 0, 0), Palette.Amber);
                     up.GetComponent<RectTransform>().Place(new Vector2(1, 0.5f), Vector2.zero, new Vector2(150, 44), new Vector2(1, 0.5f));
                     up.interactable = !maxed && p.Gold >= cost;
@@ -522,6 +522,8 @@ namespace RiftWard.Client
 
         Text characterStatus;
         string drawPool = "gear";
+        string gearFilter = "";   // "" = all slots
+        public void SetGearFilter(string slot) { gearFilter = slot; ShowCharacter(); }
         List<GearItem> lastDraw = new List<GearItem>();
 
         RectTransform characterRoot;
@@ -610,23 +612,41 @@ namespace RiftWard.Client
                 }
             }
             var bagHead = Ui.Rect(g, "BagHead").Sized(28);
-            Ui.Label(bagHead, $"背包  {p.Inventory.Count} 件    點選裝備可穿上 / 卸下", 13, Palette.Muted, TextAnchor.MiddleLeft).rectTransform.Fill().offsetMax = new Vector2(-110, 0);
+            Ui.Label(bagHead, $"背包  {p.Inventory.Count} 件    點選裝備可穿上 / 卸下，強化可提升屬性", 13, Palette.Muted, TextAnchor.MiddleLeft).rectTransform.Fill().offsetMax = new Vector2(-110, 0);
             Ui.Button(bagHead, "一鍵分解", () => BulkSalvage("gear"), 12, Palette.Amber).GetComponent<RectTransform>().Place(new Vector2(1, 0.5f), Vector2.zero, new Vector2(100, 28), new Vector2(1, 0.5f));
+            // Category tabs, like the weapon list: all, then one per slot with its count.
+            var tabs = Ui.HStack(g, 6).Sized(34);
+            var filters = new List<(string id, string label)> { ("", "全部") };
+            foreach (var slot in Gear.Slots) filters.Add((slot, Gear.SlotNames[slot]));
+            foreach (var (id, label) in filters)
+            {
+                int count = id == "" ? p.Inventory.Count : p.Inventory.FindAll(i => i.Slot == id).Count;
+                bool on = gearFilter == id;
+                string pick = id;
+                Ui.Button(tabs, $"{label}  {count}", () => { gearFilter = pick; ShowCharacter(); }, 13, on ? Palette.Amber : Palette.Muted,
+                    on ? new Color(Palette.Amber.r, Palette.Amber.g, Palette.Amber.b, 0.1f) : new Color(1, 1, 1, 0.03f), on ? Palette.Amber : Palette.Line);
+            }
             var listHost = Ui.Rect(g, "Inventory");
             listHost.gameObject.AddComponent<LayoutElement>().flexibleHeight = 1;
             var list = Widgets.ScrollList(listHost, out _);
             list.parent.GetComponent<RectTransform>().Fill();
-            var sorted = new List<GearItem>(p.Inventory);
-            sorted.Sort((a, b) => b.Rarity != a.Rarity ? b.Rarity.CompareTo(a.Rarity) : string.CompareOrdinal(a.Slot, b.Slot));
+            var sorted = gearFilter == "" ? new List<GearItem>(p.Inventory) : p.Inventory.FindAll(i => i.Slot == gearFilter);
+            sorted.Sort((a, b) => b.Rarity != a.Rarity ? b.Rarity.CompareTo(a.Rarity) : b.Level != a.Level ? b.Level.CompareTo(a.Level) : string.CompareOrdinal(a.Slot, b.Slot));
+            if (sorted.Count == 0) Ui.Label(list, gearFilter == "" ? "背包是空的，到補給站抽取裝備吧" : $"沒有{Gear.SlotNames[gearFilter]}", 13, Palette.Line).Sized(30);
             foreach (var item in sorted)
             {
                 bool worn = p.Equipment.TryGetValue(item.Slot, out var wid) && wid == item.Id;
                 var row = Ui.Rect(list, "Item").Sized(44);
                 var hit = Ui.Button(row, "", () => CharacterRequest("/api/gear/equip", new Dictionary<string, object> { ["item"] = item.Id }), 14, null,
                     worn ? new Color(item.Color.r, item.Color.g, item.Color.b, 0.1f) : new Color(0, 0, 0, 0), worn ? item.Color : new Color(0, 0, 0, 0));
-                hit.GetComponent<RectTransform>().Fill().offsetMax = new Vector2(-70, 0);
+                hit.GetComponent<RectTransform>().Fill().offsetMax = new Vector2(-150, 0);
                 Ui.Label(hit.transform, item.Name + (worn ? "  · 已裝備" : ""), 15, item.Color, TextAnchor.UpperLeft, true).rectTransform.Place(new Vector2(0, 1), new Vector2(10, -4), new Vector2(260, 20), new Vector2(0, 1));
                 Ui.Label(hit.transform, item.StatText(), 12, Palette.Muted).rectTransform.Place(new Vector2(0, 1), new Vector2(10, -24), new Vector2(300, 16), new Vector2(0, 1));
+                // Enhance: price depends on rarity and current level.
+                var enhance = Ui.Button(row, item.Maxed ? "已滿強化" : $"強化 {item.UpgradeCost}G", () => CharacterRequest("/api/gear/upgrade", new Dictionary<string, object> { ["item"] = item.Id }),
+                    12, item.Maxed ? Palette.Muted : Palette.Amber);
+                enhance.interactable = !item.Maxed && p.Gold >= item.UpgradeCost;
+                enhance.GetComponent<RectTransform>().Place(new Vector2(1, 0.5f), new Vector2(-68, 0), new Vector2(78, 34), new Vector2(1, 0.5f));
                 if (!worn)
                 {
                     var scrap = Ui.Button(row, "分解", () => CharacterRequest("/api/gear/salvage", new Dictionary<string, object> { ["item"] = item.Id }), 12, Palette.Muted);
@@ -651,6 +671,7 @@ namespace RiftWard.Client
             var gold = weapons ? Gear.WeaponSalvageGold : Gear.GearSalvageGold;
             int tiers = Gear.RarityNames.Length;
             var counts = new int[tiers];
+            var refunds = new int[tiers];   // half of the enhancement gold comes back on salvage
             if (weapons)
             {
                 foreach (var w in p.Loadout.Owned)
@@ -663,7 +684,14 @@ namespace RiftWard.Client
             else
             {
                 var worn = new HashSet<string>(p.Equipment.Values);
-                foreach (var item in p.Inventory) if (!worn.Contains(item.Id)) counts[item.Rarity]++;
+                foreach (var item in p.Inventory)
+                {
+                    if (worn.Contains(item.Id)) continue;
+                    counts[item.Rarity]++;
+                    int invested = 0;
+                    for (int n = 0; n < item.Level; n++) invested += Gear.UpgradeCost(item.Rarity, n);
+                    refunds[item.Rarity] += invested / 2;
+                }
             }
             var chosen = new bool[tiers];
             chosen[0] = chosen[1] = true;   // 劣質 + 普通 ticked by default
@@ -684,7 +712,7 @@ namespace RiftWard.Client
             void Refresh()
             {
                 int n = 0, g = 0, high = 0;
-                for (int r = 0; r < tiers; r++) if (chosen[r]) { n += counts[r]; g += counts[r] * gold[r]; if (r >= 3) high += counts[r]; }
+                for (int r = 0; r < tiers; r++) if (chosen[r]) { n += counts[r]; g += counts[r] * gold[r] + refunds[r]; if (r >= 3) high += counts[r]; }
                 summary.text = n > 0 ? $"將分解 {n} {(weapons ? "把" : "件")}  ·  獲得 {g} 金幣" : "沒有符合條件的項目";
                 warning.text = high > 0 ? $"注意：包含 {high} {(weapons ? "把" : "件")}傳奇以上，分解後無法復原" : "";
                 armedUntil = -1f;

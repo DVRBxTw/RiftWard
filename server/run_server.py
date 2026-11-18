@@ -13,9 +13,26 @@ import threading
 import sys
 import time
 
-from service import BetaServer, Store, HOST, PORT, VERSION
+from service import BetaServer, Store, HOST, PORT, VERSION, tls_context, cert_fingerprint
 
 GAME_PORT = 24770
+
+
+def ensure_certificate(data: Path):
+    """Creates a self-signed certificate for the account/update service on first run (clients pin its
+    fingerprint, so no certificate authority is involved). Returns (cert, key) paths, or None without openssl."""
+    cert, key = data / "tls.crt", data / "tls.key"
+    if cert.is_file() and key.is_file():
+        return cert, key
+    candidates = [shutil.which("openssl"), r"C:\Program Files\Git\usr\bin\openssl.exe", r"C:\Program Files\Git\mingw64\bin\openssl.exe"]
+    openssl = next((c for c in candidates if c and Path(c).is_file()), None)
+    if openssl is None:
+        print("openssl not found: the account service stays plain HTTP only", flush=True)
+        return None
+    subprocess.run([openssl, "req", "-x509", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:prime256v1", "-nodes",
+                    "-days", "3650", "-subj", "/CN=RiftWard", "-keyout", str(key), "-out", str(cert)],
+                   check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    return cert, key
 
 
 def port_free():
@@ -52,7 +69,11 @@ def main():
     manifest = {"version": version, "sha256": digest, "size": pack.stat().st_size, "package": "zip"}
     (releases / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
     try:
-        api = BetaServer((HOST, PORT), store, base / "releases")
+        pair = ensure_certificate(base / "server-data")
+        tls = tls_context(*pair) if pair else None
+        api = BetaServer((HOST, PORT), store, base / "releases", tls)
+        if tls:
+            print(f"TLS enabled on {PORT} · certificate fingerprint (put in server.cfg): {cert_fingerprint(pair[0])}", flush=True)
     except OSError as exc:
         raise SystemExit(f"Cannot bind {HOST}:{PORT}: {exc}") from exc
     thread = threading.Thread(target=api.serve_forever, daemon=True)

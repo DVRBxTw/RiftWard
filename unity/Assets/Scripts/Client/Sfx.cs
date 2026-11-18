@@ -32,13 +32,17 @@ namespace RiftWard.Client
             v.Play();
         }
 
+        /// Weapon fire sound name for a weapon at a rarity (傳奇+ adds a shimmer layer).
+        public static string FireName(string weapon, int rarity) => "fire_" + weapon + (rarity >= 3 ? "_rare" : "");
+
         static AudioClip Make(string name)
         {
+            if (name.StartsWith("fire_")) return Fire(name);
             switch (name)
             {
                 case "shot": return Tone(name, 360, 0.05f, 0.1f, 0.25f);
-                case "hit": return Tone(name, 740, 0.05f, 0.12f, 0.15f);
-                case "head": return Tone(name, 1100, 0.06f, 0.14f, 0.1f);
+                case "hit": return Tone(name, 1320, 0.035f, 0.07f, 0.05f);
+                case "head": return Events(name, new[] { (0f, 0.03f, 1760f, 0.05f, 0.45f), (0.035f, 0.05f, 2640f, 0.05f, 0.4f) });
                 case "explosion": return Tone(name, 90, 0.35f, 0.4f, 0.85f, 9f);
                 case "reload_out": return Events(name, new[] { (0f, 0.05f, 520f, 0.7f, 0.5f), (0.06f, 0.12f, 180f, 0.85f, 0.35f) });
                 case "reload_in": return Events(name, new[] { (0f, 0.035f, 1500f, 0.5f, 0.6f), (0.04f, 0.06f, 300f, 0.6f, 0.5f) });
@@ -46,6 +50,99 @@ namespace RiftWard.Client
                 case "heartbeat": return Events(name, new[] { (0f, 0.09f, 55f, 0.1f, 0.9f), (0.22f, 0.08f, 50f, 0.1f, 0.7f) });
                 default: return Tone(name, 440, 0.05f, 0.1f, 0f);
             }
+        }
+
+        // ------------------------------------------------------------ sci-fi weapons
+
+        const int FireRate = 44100;
+
+        /// Synthesised energy-weapon shots, one character per gun:
+        /// P-9 laser zap, AR-27 pulse rifle, SG-8 plasma blast, LR-50 rail gun.
+        static AudioClip Fire(string name)
+        {
+            bool rare = name.EndsWith("_rare");
+            string weapon = name.Substring(5).Replace("_rare", "");
+            float duration = weapon == "sniper" ? 0.75f : weapon == "shotgun" ? 0.38f : weapon == "rifle" ? 0.16f : 0.12f;
+            int count = (int)(FireRate * duration);
+            var data = new float[count];
+            var rng = new System.Random(name.GetHashCode());
+            float p1 = 0, p2 = 0, p3 = 0, p4 = 0, low = 0, band = 0, crackle = 0;
+            float dt = 1f / FireRate;
+            for (int i = 0; i < count; i++)
+            {
+                float t = i * dt;
+                float noise = (float)rng.NextDouble() * 2 - 1;
+                float v;
+                switch (weapon)
+                {
+                    case "pistol":
+                    {
+                        // Laser zap: a fast downward sweep with a square-ish edge and a tiny noise click.
+                        float f = 300f + 1900f * Mathf.Exp(-t * 38f);
+                        p1 += 2 * Mathf.PI * f * dt;
+                        float tone = Mathf.Sin(p1) + 0.35f * Mathf.Sin(p1 * 3f) + 0.15f * Mathf.Sin(p1 * 5f);
+                        v = tone * Mathf.Exp(-t * 26f) * 0.5f + noise * Mathf.Exp(-t * 300f) * 0.35f;
+                        break;
+                    }
+                    case "rifle":
+                    {
+                        // Pulse rifle: two detuned sweeps (chorus), FM bite and a low thump.
+                        float f = 170f + 820f * Mathf.Exp(-t * 30f);
+                        p1 += 2 * Mathf.PI * f * dt;
+                        p2 += 2 * Mathf.PI * f * 1.013f * dt;
+                        p3 += 2 * Mathf.PI * (70f + 60f * Mathf.Exp(-t * 25f)) * dt;
+                        float fm = Mathf.Sin(p1 + 2.2f * Mathf.Sin(p1 * 2f) * Mathf.Exp(-t * 40f));
+                        v = (fm + Mathf.Sin(p2) * 0.7f) * Mathf.Exp(-t * 22f) * 0.42f + Mathf.Sin(p3) * Mathf.Exp(-t * 18f) * 0.55f
+                            + noise * Mathf.Exp(-t * 160f) * 0.3f;
+                        break;
+                    }
+                    case "shotgun":
+                    {
+                        // Plasma blast: low-passed noise burst, a sub drop and electric crackle.
+                        low += (noise - low) * Mathf.Lerp(0.5f, 0.06f, Mathf.Clamp01(t * 6f));
+                        p1 += 2 * Mathf.PI * (38f + 170f * Mathf.Exp(-t * 14f)) * dt;
+                        if (rng.NextDouble() < 0.004 * Mathf.Exp(-t * 6f)) crackle = 1f;
+                        crackle *= 0.93f;
+                        p2 += 2 * Mathf.PI * 2400f * dt;
+                        v = low * Mathf.Exp(-t * 9f) * 0.9f + Mathf.Sin(p1) * Mathf.Exp(-t * 7f) * 0.75f + Mathf.Sin(p2) * crackle * 0.25f;
+                        break;
+                    }
+                    default:
+                    {
+                        // Rail gun: a rising charge whine, then a deep boom and a long metallic ring with echoes.
+                        const float charge = 0.05f;
+                        if (t < charge)
+                        {
+                            float k = t / charge;
+                            p1 += 2 * Mathf.PI * (2000f + 4500f * k * k) * dt;
+                            v = Mathf.Sin(p1) * k * 0.28f;
+                        }
+                        else
+                        {
+                            float u = t - charge;
+                            p2 += 2 * Mathf.PI * (32f + 110f * Mathf.Exp(-u * 9f)) * dt;
+                            p3 += 2 * Mathf.PI * 1180f * dt;
+                            p4 += 2 * Mathf.PI * 1777f * dt;
+                            band += (noise - band) * 0.25f;
+                            float ring = (Mathf.Sin(p3) + 0.6f * Mathf.Sin(p4)) * Mathf.Exp(-u * 6f);
+                            float echo = 0.35f * Mathf.Exp(-u * 4f) * (Mathf.Sin(2 * Mathf.PI * 4f * u) > 0.6f ? 1f : 0f);
+                            v = Mathf.Sin(p2) * Mathf.Exp(-u * 5f) * 0.85f + band * Mathf.Exp(-u * 30f) * 0.6f + ring * (0.18f + echo);
+                        }
+                        break;
+                    }
+                }
+                if (rare)
+                {
+                    // 傳奇+: a bright shimmering overtone that rides on top of the shot.
+                    float s = Mathf.Sin(2 * Mathf.PI * 3520f * t + 3f * Mathf.Sin(2 * Mathf.PI * 9f * t)) * Mathf.Exp(-t * 14f);
+                    v += s * 0.12f;
+                }
+                float attack = Mathf.Min(1f, i / 30f);
+                data[i] = Mathf.Clamp(v * attack, -1f, 1f) * 0.8f;
+            }
+            var clip = AudioClip.Create(name, count, 1, FireRate, false);
+            clip.SetData(data, 0);
+            return clip;
         }
 
         /// Decaying sine with optional noise mix.

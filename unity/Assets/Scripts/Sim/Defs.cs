@@ -26,7 +26,7 @@ namespace RiftWard.Sim
         /// XP needed to go from this account level to the next; mirrors level_for() in server/service.py.
         public static int AccountLevelNeed(int level) => 100 + 50 * level;
 
-        public const string Version = "0.7.3-unity.1";
+        public const string Version = "0.7.4-unity.1";
 
         // Player movement
         public const float EyeHeight = 1.65f;
@@ -99,8 +99,11 @@ namespace RiftWard.Sim
 
         public static readonly string[] UpgradeKeys = { "damage", "mag", "reload" };
 
-        public static int UpgradeCost(string weapon, int level) =>
-            Mathf.RoundToInt(120f * (level + 1) * Weapons[weapon].UpgradeFactor);
+        /// Upgrade price multiplier per rarity (劣質 .. 神話); mirrors RARITY_UPGRADE_MULT in server/service.py.
+        public static readonly float[] RarityUpgradeMult = { 0.6f, 1.0f, 1.4f, 2.0f, 3.0f };
+
+        public static int UpgradeCost(string weapon, int level, int rarity = 1) =>
+            (int)System.Math.Round(120.0 * (level + 1) * Weapons[weapon].UpgradeFactor * RarityUpgradeMult[Mathf.Clamp(rarity, 0, RarityUpgradeMult.Length - 1)], System.MidpointRounding.ToEven);
 
         public static readonly KindDef[] Kinds =
         {

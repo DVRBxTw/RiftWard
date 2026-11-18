@@ -8,8 +8,9 @@ namespace RiftWard.Client
     public sealed class GearItem
     {
         public string Id, Slot;
-        public int Rarity;
-        public Dictionary<string, int> Stats = new Dictionary<string, int>();
+        public int Rarity, Level;
+        /// Effective stats (enhancement included); Base holds the +0 values.
+        public Dictionary<string, int> Stats = new Dictionary<string, int>(), Base = new Dictionary<string, int>();
         /// Overrides used when a reveal card shows something other than gear (weapon draws).
         public string Title, Detail;
 
@@ -18,10 +19,15 @@ namespace RiftWard.Client
             var item = new GearItem { Id = d.Str("id"), Slot = d.Str("slot"), Rarity = Mathf.Clamp(d.Int("rarity"), 0, Gear.RarityNames.Length - 1) };
             var stats = d.Obj("stats");
             if (stats != null) foreach (var kv in stats) item.Stats[kv.Key] = kv.Value is double n ? (int)n : 0;
+            var baseStats = d.Obj("base");
+            if (baseStats != null) foreach (var kv in baseStats) item.Base[kv.Key] = kv.Value is double n ? (int)n : 0;
+            item.Level = Mathf.Clamp(d.Int("level"), 0, Gear.MaxLevel);
             return item;
         }
 
-        public string Name => Gear.ItemName(Slot, Rarity);
+        public string Name => Gear.ItemName(Slot, Rarity) + (Level > 0 ? $" +{Level}" : "");
+        public bool Maxed => Level >= Gear.MaxLevel;
+        public int UpgradeCost => Gear.UpgradeCost(Rarity, Level);
         public Color Color => Gear.RarityColors[Rarity];
 
         public string StatText()
@@ -38,6 +44,11 @@ namespace RiftWard.Client
         /// Currency colours shared by the nav chips, shop and icons.
         public static readonly Color GearKeyColor = Palette.Hex("b07cff"), WeaponKeyColor = Palette.Hex("e5534b");
         public static readonly string[] RarityNames = { "劣質", "普通", "稀世", "傳奇", "神話" };
+        /// Gear enhancement; mirrors GEAR_UPGRADE_BASE / GEAR_MAX_LEVEL in server/service.py.
+        public const int MaxLevel = 5;
+        public static readonly int[] UpgradeBase = { 40, 70, 120, 200, 320 };
+        public static int UpgradeCost(int rarity, int level) => UpgradeBase[Mathf.Clamp(rarity, 0, 4)] * (level + 1);
+
         /// Gold per salvaged piece; mirrors GEAR_SALVAGE_GOLD / DUPLICATE_GOLD in server/service.py.
         public static readonly int[] GearSalvageGold = { 10, 25, 60, 150, 400 };
         public static readonly int[] WeaponSalvageGold = { 20, 50, 120, 300, 800 };

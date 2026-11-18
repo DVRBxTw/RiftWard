@@ -417,6 +417,56 @@ namespace RiftWard.Sim
 
         public float LevelScale => 1f + 0.08f * (Level - 1);
 
+        /// Entry points on the arena edge: the middle of each side and the four corners.
+        static readonly Vector3[] SpawnGates =
+        {
+            new Vector3(0, 0, 20.5f), new Vector3(0, 0, -20.5f), new Vector3(20.5f, 0, 0), new Vector3(-20.5f, 0, 0),
+            new Vector3(17.5f, 0, 17.5f), new Vector3(-17.5f, 0, 17.5f), new Vector3(17.5f, 0, -17.5f), new Vector3(-17.5f, 0, -17.5f),
+        };
+        const float SpawnMinPlayerDistance = 12f;
+
+        /// The gates farthest from every living player. A second gate must be at least 90 degrees away from the
+        /// first (seen from the arena centre), so a big wave arrives as a pincer, never as a ring around the players.
+        List<Vector3> PickGates(int wanted)
+        {
+            var players = new List<Vector3>();
+            foreach (var a in Actors.Values) if (a.Alive) players.Add(a.Position);
+            if (players.Count == 0) players.Add(Vector3.zero);
+            float Score(Vector3 g)
+            {
+                float best = float.MaxValue;
+                foreach (var p in players) best = Mathf.Min(best, Vector3.Distance(new Vector3(p.x, 0, p.z), g));
+                return best + Rand(0f, 2f);   // a little randomness so equal choices vary between waves
+            }
+            var ranked = new List<(Vector3 gate, float score)>();
+            foreach (var g in SpawnGates) ranked.Add((g, Score(g)));
+            ranked.Sort((x, y) => y.score.CompareTo(x.score));
+            var picked = new List<Vector3> { ranked[0].gate };
+            if (wanted > 1)
+                foreach (var (gate, _) in ranked)
+                    if (Vector3.Angle(gate, picked[0]) >= 90f) { picked.Add(gate); break; }
+            return picked;
+        }
+
+        /// A spot scattered around a gate, inside the arena, out of cover and never close to a player.
+        Vector3 SpawnNear(Vector3 gate, float scatter)
+        {
+            Vector3 best = gate;
+            float bestDistance = -1f;
+            for (int attempt = 0; attempt < 8; attempt++)
+            {
+                var p = gate + new Vector3(Rand(-scatter, scatter), 0, Rand(-scatter, scatter));
+                p.x = Mathf.Clamp(p.x, -21.5f, 21.5f);
+                p.z = Mathf.Clamp(p.z, -21.5f, 21.5f);
+                p = PushOutOfCover(p, 0.6f);
+                float nearest = float.MaxValue;
+                foreach (var a in Actors.Values) if (a.Alive) nearest = Mathf.Min(nearest, Vector3.Distance(a.Position, p));
+                if (nearest >= SpawnMinPlayerDistance) return p;
+                if (nearest > bestDistance) { bestDistance = nearest; best = p; }
+            }
+            return best;   // players are everywhere: use the farthest candidate found
+        }
+
         public void SpawnWave()
         {
             int players = Mathf.Max(1, Actors.Count);
@@ -431,11 +481,13 @@ namespace RiftWard.Sim
             if (Wave >= 4) pool.Add(Defs.KindSniper);
             if (Wave >= 5) pool.Add(Defs.KindShield);
             bool hasBoss = false;
+            var gates = PickGates(count > 10 ? 2 : 1);
             for (int i = 0; i < count; i++)
             {
-                float angle = Mathf.PI * 2f * i / count + Wave * 0.7f;
                 bool boss = (Wave == 10 || Wave == 20) && i == 0;
-                var e = new Enemy { Id = nextEnemy++, Position = new Vector3(Mathf.Sin(angle) * 19f, 0, Mathf.Cos(angle) * 19f), Boss = boss, ShotCooldown = Rand(1.5f, 3.5f) };
+                // The boss and the first half come through the farthest gate, the rest through the second (if any).
+                var gate = gates[boss || i < (count + 1) / 2 ? 0 : gates.Count - 1];
+                var e = new Enemy { Id = nextEnemy++, Position = SpawnNear(gate, boss ? 0.5f : 3.2f), Boss = boss, ShotCooldown = Rand(1.5f, 3.5f) };
                 if (boss)
                 {
                     hasBoss = true;

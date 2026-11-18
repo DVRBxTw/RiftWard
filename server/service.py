@@ -11,7 +11,9 @@ from pathlib import Path
 import random
 import re
 import secrets
+import socket
 import sqlite3
+import ssl
 import threading
 import time
 from collections import defaultdict, deque
@@ -31,9 +33,30 @@ MAX_UPGRADE = 5
 MAX_REWARD = 3000
 
 
-def upgrade_cost(weapon: str, level: int) -> int:
+# Upgrade prices scale with rarity (劣質 .. 神話): better items cost more to improve.
+RARITY_UPGRADE_MULT = [0.6, 1.0, 1.4, 2.0, 3.0]
+GEAR_UPGRADE_BASE = [40, 70, 120, 200, 320]   # gold for gear +1; level n -> n+1 costs base * (n + 1)
+GEAR_MAX_LEVEL = 5
+GEAR_LEVEL_BONUS = 0.2                         # every enhancement level adds 20% to all of an item's stats
+
+
+def upgrade_cost(weapon: str, level: int, rarity: int = 1) -> int:
     factor = {"pistol": 1.0, "rifle": 1.3, "shotgun": 1.4, "sniper": 1.6}[weapon]
-    return int(round(120 * (level + 1) * factor))
+    return int(round(120 * (level + 1) * factor * RARITY_UPGRADE_MULT[max(0, min(len(RARITY_UPGRADE_MULT) - 1, rarity))]))
+
+
+def gear_upgrade_cost(rarity: int, level: int) -> int:
+    return GEAR_UPGRADE_BASE[rarity] * (level + 1)
+
+
+def gear_invested(item) -> int:
+    return sum(gear_upgrade_cost(item["rarity"], n) for n in range(item.get("level", 0)))
+
+
+def gear_stats(item) -> dict:
+    """Effective stats of an item at its enhancement level (stored stats are the +0 values)."""
+    mult = 1 + GEAR_LEVEL_BONUS * item.get("level", 0)
+    return {k: int(round(v * mult)) for k, v in item["stats"].items()}
 
 
 # ---- account level, talents, gear and supply draws
@@ -200,12 +223,12 @@ class Store:
         result["talent_points"] = max(0, level - 1 - sum(talents.values()))
         pity = self._pity(account_id)
         result["pity"] = {pool: PITY_LIMIT - count for pool, count in pity.items()}   # draws left until 傳奇+ is guaranteed
-        result["inventory"] = gear["inventory"]
+        result["inventory"] = [dict(item, stats=gear_stats(item), base=item["stats"], level=item.get("level", 0)) for item in gear["inventory"]]
         result["equipment"] = gear["equipped"]
         bonus = {k: talents[k] * per for k, per in TALENTS.items()}
         for item in gear["inventory"]:
             if gear["equipped"].get(item["slot"]) == item["id"]:
-                for k, v in item["stats"].items():
+                for k, v in gear_stats(item).items():
                     bonus[k] = bonus.get(k, 0) + v
         result["bonus"] = {k: round(v, 2) for k, v in bonus.items()}
         return result
@@ -228,6 +251,9 @@ class Store:
         data = data if isinstance(data, dict) else {}
         inventory = [i for i in data.get("inventory", []) if isinstance(i, dict) and i.get("slot") in GEAR_SLOTS
                      and isinstance(i.get("rarity"), int) and 0 <= i["rarity"] < len(RARITIES) and isinstance(i.get("stats"), dict)]
+        for i in inventory:
+            level = i.get("level", 0)
+            i["level"] = max(0, min(GEAR_MAX_LEVEL, level)) if isinstance(level, int) else 0
         ids = {i["id"] for i in inventory}
         equipped = {k: v for k, v in (data.get("equipped") or {}).items() if k in GEAR_SLOTS and v in ids}
         return {"inventory": inventory[:INVENTORY_LIMIT], "equipped": equipped}
@@ -368,6 +394,24 @@ class Store:
         return self._save_loadout(account_id, loadout, DUPLICATE_GOLD[rarity])
 
     @_locked
+    def upgrade_gear(self, account_id: int, item_id):
+        """Enhances one gear item by a level; the price depends on its rarity and current level."""
+        gear = self._raw_gear(account_id)
+        item = next((i for i in gear["inventory"] if i["id"] == item_id), None)
+        if item is None:
+            raise ValueError("找不到此裝備")
+        level = item.get("level", 0)
+        if level >= GEAR_MAX_LEVEL:
+            raise ValueError("已達最高強化等級")
+        cost = gear_upgrade_cost(item["rarity"], level)
+        with self.connect() as db:
+            if not db.execute("UPDATE progress SET gold=gold-? WHERE account_id=? AND gold>=?", (cost, account_id, cost)).rowcount:
+                raise ValueError("金幣不足")
+        item["level"] = level + 1
+        self._save_gear(account_id, gear)
+        return self.profile(account_id)
+
+    @_locked
     def equip_gear(self, account_id: int, item_id):
         gear = self._raw_gear(account_id)
         item = next((i for i in gear["inventory"] if i["id"] == item_id), None)
@@ -392,7 +436,7 @@ class Store:
         gear["inventory"].remove(item)
         self._save_gear(account_id, gear)
         with self.connect() as db:
-            db.execute("UPDATE progress SET gold=gold+? WHERE account_id=?", (GEAR_SALVAGE_GOLD[item["rarity"]], account_id))
+            db.execute("UPDATE progress SET gold=gold+? WHERE account_id=?", (GEAR_SALVAGE_GOLD[item["rarity"]] + gear_invested(item) // 2, account_id))
         return self.profile(account_id)
 
     @_locked
@@ -414,7 +458,7 @@ class Store:
             for item in gear["inventory"]:
                 if item["rarity"] in chosen and item["id"] not in worn:
                     count += 1
-                    gold += GEAR_SALVAGE_GOLD[item["rarity"]]
+                    gold += GEAR_SALVAGE_GOLD[item["rarity"]] + gear_invested(item) // 2
                 else:
                     kept.append(item)
             gear["inventory"] = kept
@@ -616,7 +660,7 @@ class Store:
         if level >= MAX_UPGRADE:
             raise ValueError("已達最高等級")
         levels[stat] = level + 1
-        return self._spend(account_id, upgrade_cost(weapon, level), loadout)
+        return self._spend(account_id, upgrade_cost(weapon, level, loadout["rarity"].get(weapon, 1)), loadout)
 
     @_locked
     def reward(self, account_id: int, gold):
@@ -691,8 +735,11 @@ class Store:
 class BetaServer(ThreadingHTTPServer):
     daemon_threads = True
 
-    def __init__(self, address, store: Store, releases: Path):
+    def __init__(self, address, store: Store, releases: Path, tls: ssl.SSLContext | None = None):
         self.game_online = lambda: False
+        # Optional TLS on the same port: connections that open with a TLS handshake are encrypted, plain HTTP
+        # (older clients, the local game server) keeps working. Networks that filter plain HTTP see only TLS.
+        self.tls = tls
         self.store = store
         self.releases = releases.resolve()
         self.limits = defaultdict(deque)
@@ -716,13 +763,49 @@ class BetaServer(ThreadingHTTPServer):
             return None
 
 
+def tls_context(cert: Path, key: Path) -> ssl.SSLContext | None:
+    """Server-side TLS context from PEM files, or None when they are missing."""
+    if not cert.is_file() or not key.is_file():
+        return None
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    context.minimum_version = ssl.TLSVersion.TLSv1_2
+    context.load_cert_chain(cert, key)
+    return context
+
+
+def cert_fingerprint(cert: Path) -> str:
+    """SHA-256 of the certificate (DER), lower-case hex: what clients pin."""
+    der = ssl.PEM_cert_to_DER_cert(cert.read_text(encoding="ascii"))
+    return hashlib.sha256(der).hexdigest()
+
+
 class Handler(BaseHTTPRequestHandler):
     server: BetaServer
     server_version = "RiftWardBeta/0.3"
 
     def setup(self):
+        tls = self.server.tls
+        if tls is not None:
+            self.request.settimeout(10)
+            try:
+                first = self.request.recv(1, socket.MSG_PEEK)
+            except OSError:
+                first = b""
+            if first == b"\x16":   # TLS handshake record
+                self.request = tls.wrap_socket(self.request, server_side=True)
         super().setup()
         self.connection.settimeout(15)
+
+    def finish(self):
+        try:
+            super().finish()
+        finally:
+            # The server only shuts down the original socket; a TLS wrapper must be closed here.
+            if isinstance(self.request, ssl.SSLSocket):
+                try:
+                    self.request.close()
+                except OSError:
+                    pass
 
     def log_message(self, fmt, *args):
         # No credentials, tokens, request bodies or query strings in logs.
@@ -882,7 +965,7 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(200, {"ok": True, "count": count, "profile": store.profile(profile["id"])})
             else:
                 self._json(404, {"ok": False, "error": "找不到此服務"})
-        elif self.path in ("/api/talent/assign", "/api/talent/reset", "/api/gacha/draw", "/api/gacha/weapon", "/api/gear/equip", "/api/gear/salvage", "/api/weapon/select", "/api/weapon/salvage", "/api/salvage/bulk"):
+        elif self.path in ("/api/talent/assign", "/api/talent/reset", "/api/gacha/draw", "/api/gacha/weapon", "/api/gear/equip", "/api/gear/salvage", "/api/gear/upgrade", "/api/weapon/select", "/api/weapon/salvage", "/api/salvage/bulk"):
             try:
                 extra = {}
                 if self.path == "/api/talent/assign":
@@ -904,6 +987,8 @@ class Handler(BaseHTTPRequestHandler):
                     result = store.salvage_weapon_copy(profile["id"], data.get("weapon"), data.get("index"), data.get("rarity"))
                 elif self.path == "/api/gear/equip":
                     result = store.equip_gear(profile["id"], data.get("item"))
+                elif self.path == "/api/gear/upgrade":
+                    result = store.upgrade_gear(profile["id"], data.get("item"))
                 else:
                     result = store.salvage(profile["id"], data.get("item"))
             except ValueError as exc:

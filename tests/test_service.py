@@ -68,6 +68,9 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(self.call("/api/shop/buy",{"weapon":"sniper"},auth)[0],400)
         code, upgraded = self.call("/api/shop/upgrade",{"weapon":"rifle","stat":"damage"},auth)
         self.assertEqual(code,200)
+        # The starter rifle is 劣質: upgrade price x0.6 (120 * 1.3 * 0.6 = 94).
+        self.assertEqual(upgraded["profile"]["gold"], 1000 - 94)
+        self.assertEqual(service.upgrade_cost("rifle", 0, 4), 468)
         self.assertEqual(upgraded["profile"]["loadout"]["levels"]["rifle"]["damage"],1)
         self.assertEqual(self.call("/api/shop/upgrade",{"weapon":"sniper","stat":"damage"},auth)[0],400)
         self.assertEqual(self.call("/api/shop/upgrade",{"weapon":"rifle","stat":"speed"},auth)[0],400)
@@ -168,6 +171,35 @@ class ServiceTests(unittest.TestCase):
         with urlopen(Request(url, headers={"Range": "bytes=999-"}), timeout=5) as r:   # out of range: whole file
             self.assertEqual((r.status, r.read()), (200, self.payload))
 
+    def test_tls_and_plain_http_share_the_port(self):
+        import shutil, ssl, subprocess, http.client
+        openssl = shutil.which("openssl") or "C:/Program Files/Git/usr/bin/openssl.exe"
+        if not Path(openssl).is_file():
+            self.skipTest("openssl not available")
+        cert, key = self.base / "tls.crt", self.base / "tls.key"
+        subprocess.run([openssl, "req", "-x509", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:prime256v1", "-nodes", "-days", "1",
+                        "-subj", "/CN=RiftWard", "-keyout", str(key), "-out", str(cert)], check=True, capture_output=True)
+        server = service.BetaServer(("127.0.0.1", 0), self.store, self.base / "releases", service.tls_context(cert, key))
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        try:
+            port = server.server_port
+            client = ssl.create_default_context()
+            client.check_hostname = False
+            client.verify_mode = ssl.CERT_NONE   # clients pin the fingerprint instead of trusting a CA
+            tls = http.client.HTTPSConnection("127.0.0.1", port, context=client, timeout=5)
+            tls.request("GET", "/health")
+            pinned = hashlib.sha256(tls.sock.getpeercert(binary_form=True)).hexdigest()
+            body = json.loads(tls.getresponse().read())
+            tls.close()
+            self.assertEqual((body["ok"], pinned), (True, service.cert_fingerprint(cert)))
+            plain = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+            plain.request("GET", "/health")
+            self.assertTrue(json.loads(plain.getresponse().read())["ok"])
+            plain.close()
+        finally:
+            server.shutdown()
+            server.server_close()
+
     def test_admin_grant(self):
         account = self.register()
         auth = {"Authorization":"Bearer "+account["token"]}
@@ -217,16 +249,33 @@ class ServiceTests(unittest.TestCase):
         self.assertGreaterEqual(r["profile"]["bonus"][primary], item["stats"][primary])
         self.assertEqual(self.call("/api/gear/salvage", {"item": item["id"]}, auth)[0], 400)
         other = r["profile"]["inventory"][1]
+        # Gear enhancement: price by rarity and level, +20% stats per level, half refunded on salvage.
+        with self.store.connect() as db:
+            db.execute("UPDATE progress SET gold=10000 WHERE account_id=?", (r["profile"]["id"],))
+        for level in range(service.GEAR_MAX_LEVEL):
+            code, up = self.call("/api/gear/upgrade", {"item": other["id"]}, auth)
+            self.assertEqual(code, 200)
+        upgraded = next(i for i in up["profile"]["inventory"] if i["id"] == other["id"])
+        paid = sum(service.gear_upgrade_cost(other["rarity"], n) for n in range(service.GEAR_MAX_LEVEL))
+        self.assertEqual((upgraded["level"], up["profile"]["gold"]), (5, 10000 - paid))
+        for k, v in upgraded["base"].items():
+            self.assertEqual(upgraded["stats"][k], round(v * 2))
+        self.assertEqual(self.call("/api/gear/upgrade", {"item": other["id"]}, auth)[0], 400)
+        self.assertGreater(service.gear_upgrade_cost(4, 0), service.gear_upgrade_cost(0, 0))
+        gold = up["profile"]["gold"]
+        code, r = self.call("/api/gear/salvage", {"item": other["id"]}, auth)
+        self.assertEqual(r["profile"]["gold"], gold + service.GEAR_SALVAGE_GOLD[other["rarity"]] + paid // 2)
+        other = r["profile"]["inventory"][1]
         gold = r["profile"]["gold"]
         code, r = self.call("/api/gear/salvage", {"item": other["id"]}, auth)
-        self.assertEqual((code, len(r["profile"]["inventory"])), (200, 9))
+        self.assertEqual((code, len(r["profile"]["inventory"])), (200, 8))   # 10 drawn, 2 salvaged
         self.assertGreater(r["profile"]["gold"], gold)
         # Bulk salvage: 傳奇+ needs confirm; worn gear always survives.
         self.assertEqual(self.call("/api/salvage/bulk", {"kind": "gear", "rarities": [3]}, auth)[0], 400)
         self.assertEqual(self.call("/api/salvage/bulk", {"kind": "gear", "rarities": []}, auth)[0], 400)
         gold = r["profile"]["gold"]
         code, r = self.call("/api/salvage/bulk", {"kind": "gear", "rarities": [0, 1, 2, 3, 4], "confirm": True}, auth)
-        self.assertEqual((code, r["count"], [i["id"] for i in r["profile"]["inventory"]]), (200, 8, [item["id"]]))
+        self.assertEqual((code, r["count"], [i["id"] for i in r["profile"]["inventory"]]), (200, 7, [item["id"]]))
         self.assertEqual(r["profile"]["gold"], gold + r["gold"])
 
     def test_lifetime_stats(self):

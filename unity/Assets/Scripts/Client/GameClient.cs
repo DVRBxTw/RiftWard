@@ -40,6 +40,10 @@ namespace RiftWard.Client
         // Looked up once per enemy view instead of searching the hierarchy every frame.
         readonly Dictionary<int, (Transform laser, CharacterRig rig)> enemyParts = new Dictionary<int, (Transform, CharacterRig)>();
         readonly HashSet<int> plasmaMounted = new HashSet<int>();
+        readonly Dictionary<int, List<float>> bladeSlots = new Dictionary<int, List<float>>();
+        /// Render-side mission clock: advances every frame and eases toward Sim.Elapsed, which only changes per
+        /// simulation tick (or per snapshot online). Orbiting gadgets use it so they move smoothly at any frame rate.
+        float visualClock;
         readonly Dictionary<int, CharacterRig> actorRigs = new Dictionary<int, CharacterRig>();   // reused each frame to find views whose entity is gone
         readonly Dictionary<int, List<Transform>> droneViews = new Dictionary<int, List<Transform>>();
         readonly Dictionary<int, TextMesh> nameTags = new Dictionary<int, TextMesh>();
@@ -206,7 +210,7 @@ namespace RiftWard.Client
             foreach (var list in droneViews.Values) foreach (var t in list) if (t != null) Destroy(t.gameObject);
             foreach (var list in bladeViews.Values) foreach (var t in list) if (t != null) Destroy(t.gameObject);
             foreach (var tag in nameTags.Values) if (tag != null) Destroy(tag.gameObject);
-            droneViews.Clear(); bladeViews.Clear(); nameTags.Clear();
+            droneViews.Clear(); bladeViews.Clear(); nameTags.Clear(); bladeSlots.Clear();
             enemyHp.Clear(); enemyParts.Clear(); actorRigs.Clear(); plasmaMounted.Clear();
         }
 
@@ -360,7 +364,8 @@ namespace RiftWard.Client
             // A miss that stopped short of full range hit a wall or the ground.
             if (!shot.Hit && Vector3.Distance(shot.Origin, shot.End) < Defs.ShotRange - 0.5f) ImpactEffect(shot.End, shot.End - shot.Origin);
             int rarity = Sim.Actors.TryGetValue(shot.Shooter, out var shooter) ? shooter.Loadout.RarityOf(shooter.WeaponId) : 1;
-            if (rarity >= 3) { RarityShot(shot, origin, rarity); if (shot.Shooter == LocalId) { Hud.OnLocalShot(shot, Camera); Sfx.Play(shot.Head ? "head" : shot.Hit ? "hit" : "shot", 0.6f); ApplyRecoil(); } return; }
+            ShotSound(shot, shooter, rarity);
+            if (rarity >= 3) { RarityShot(shot, origin, rarity); if (shot.Shooter == LocalId) { Hud.OnLocalShot(shot, Camera); ApplyRecoil(); } return; }
             var beam = new GameObject("Beam");
             var line = beam.AddComponent<LineRenderer>();
             line.positionCount = 2;
@@ -377,7 +382,6 @@ namespace RiftWard.Client
             }
             if (shot.Shooter != LocalId) return;
             Hud.OnLocalShot(shot, Camera);
-            Sfx.Play(shot.Head ? "head" : shot.Hit ? "hit" : "shot", 0.6f);
             ApplyRecoil();
         }
 
@@ -445,6 +449,15 @@ namespace RiftWard.Client
             }
         }
 
+        /// Each gun has its own fire sound; your hits add a short confirmation blip, teammates are quieter.
+        void ShotSound(ShotEvent shot, Actor shooter, int rarity)
+        {
+            if (shooter == null) return;
+            bool mine = shot.Shooter == LocalId;
+            Sfx.Play(Sfx.FireName(shooter.WeaponId, rarity), mine ? 0.55f : 0.22f);
+            if (mine && (shot.Hit || shot.Head)) Sfx.Play(shot.Head ? "head" : "hit", 0.45f);
+        }
+
         /// Bullet striking cover or ground: a brief flash, a puff of dust and a few sparks bouncing back.
         void ImpactEffect(Vector3 at, Vector3 incoming)
         {
@@ -463,7 +476,7 @@ namespace RiftWard.Client
             if (!droneViews.TryGetValue(a.Id, out var drones)) droneViews[a.Id] = drones = new List<Transform>();
             while (drones.Count < a.Drones) drones.Add(Models.Drone().transform);
             while (drones.Count > a.Drones) { Destroy(drones[drones.Count - 1].gameObject); drones.RemoveAt(drones.Count - 1); }
-            float t = Sim.Elapsed;
+            float t = visualClock;
             for (int i = 0; i < drones.Count; i++)
             {
                 var offset = Defs.DroneOffset(i, drones.Count, t);
@@ -483,12 +496,28 @@ namespace RiftWard.Client
             if (a.Plasma) plasmaMounted.Add(a.Id);
             if (!bladeViews.TryGetValue(a.Id, out var blades)) bladeViews[a.Id] = blades = new List<Transform>();
             int bladeCount = a.Alive ? Defs.BladeCount(a.OrbitLevel) : 0;
-            while (blades.Count < bladeCount) blades.Add(Models.Blade().transform);
+            while (blades.Count < bladeCount)
+            {
+                var blade = Models.Blade().transform;
+                blade.localScale = Vector3.one * 0.05f;
+                blade.position = view.transform.position;
+                blades.Add(blade);
+            }
             while (blades.Count > bladeCount) { Destroy(blades[blades.Count - 1].gameObject); blades.RemoveAt(blades.Count - 1); }
+            // Smooth orbit: the clock is continuous (see visualClock), slot spacing glides when a blade is added
+            // or removed instead of snapping, and new blades grow in.
+            if (!bladeSlots.TryGetValue(a.Id, out var slots)) bladeSlots[a.Id] = slots = new List<float>();
+            while (slots.Count < blades.Count) slots.Add(slots.Count == 0 ? 0f : slots[slots.Count - 1]);
+            while (slots.Count > blades.Count) slots.RemoveAt(slots.Count - 1);
+            float glide = 1f - Mathf.Exp(-8f * Time.deltaTime);
+            Vector3 center = view.transform.position;
             for (int i = 0; i < blades.Count; i++)
             {
-                blades[i].position = view.transform.position + Defs.BladeOffset(i, blades.Count, t);
+                slots[i] = Mathf.Lerp(slots[i], i * Mathf.PI * 2f / blades.Count, glide);
+                float angle = t * 3.2f + slots[i];
+                blades[i].position = center + new Vector3(Mathf.Cos(angle) * 2.4f, 1.0f + Mathf.Sin(t * 2.6f + i) * 0.06f, Mathf.Sin(angle) * 2.4f);
                 blades[i].rotation = Quaternion.Euler(10f, -t * 1100f + i * 40f, 0);
+                blades[i].localScale = Vector3.one * Mathf.MoveTowards(blades[i].localScale.x, 1f, Time.deltaTime * 4f);
             }
         }
 
@@ -633,6 +662,11 @@ namespace RiftWard.Client
 
         void Render(float dt)
         {
+            // Frozen while the sim is (paused, choosing a buff, mission over), so gadgets do not run ahead and snap back.
+            if (!Paused && !Sim.BuffPending && Sim.State == MissionState.Playing) visualClock += dt;
+            float drift = Sim.Elapsed - visualClock;
+            if (Mathf.Abs(drift) > 0.5f) visualClock = Sim.Elapsed;          // big jump (start, pause, lag): snap
+            else visualClock += drift * (1f - Mathf.Exp(-4f * dt));       // otherwise ease toward the sim
             Sim.Actors.TryGetValue(LocalId, out var me);
             foreach (var a in Sim.Actors.Values)
             {
@@ -667,6 +701,7 @@ namespace RiftWard.Client
                 if (droneViews.TryGetValue(id, out var ds)) { foreach (var d in ds) Destroy(d.gameObject); droneViews.Remove(id); }
                 if (nameTags.TryGetValue(id, out var tag)) { Destroy(tag.gameObject); nameTags.Remove(id); }
                 if (bladeViews.TryGetValue(id, out var bs)) { foreach (var b in bs) Destroy(b.gameObject); bladeViews.Remove(id); }
+                bladeSlots.Remove(id);
             }
 
             foreach (var e in Sim.Enemies.Values)

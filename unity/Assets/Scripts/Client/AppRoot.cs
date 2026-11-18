@@ -443,11 +443,12 @@ namespace RiftWard.Client
                 ["talents"] = new Dictionary<string, object> { ["hp"] = 2.0, ["damage"] = 3.0, ["crit"] = 1.0 },
                 ["inventory"] = new List<object>
                 {
-                    new Dictionary<string, object> { ["id"] = "a", ["slot"] = "armor", ["rarity"] = 3.0, ["stats"] = new Dictionary<string, object> { ["hp"] = 32.0, ["crit"] = 4.0 } },
-                    new Dictionary<string, object> { ["id"] = "b", ["slot"] = "module", ["rarity"] = 4.0, ["stats"] = new Dictionary<string, object> { ["damage"] = 16.0, ["speed"] = 6.0 } },
+                    new Dictionary<string, object> { ["id"] = "a", ["slot"] = "armor", ["rarity"] = 3.0, ["level"] = 3.0, ["stats"] = new Dictionary<string, object> { ["hp"] = 32.0, ["crit"] = 4.0 } },
+                    new Dictionary<string, object> { ["id"] = "b", ["slot"] = "module", ["rarity"] = 4.0, ["level"] = 5.0, ["stats"] = new Dictionary<string, object> { ["damage"] = 16.0, ["speed"] = 6.0 } },
                     new Dictionary<string, object> { ["id"] = "c", ["slot"] = "boots", ["rarity"] = 1.0, ["stats"] = new Dictionary<string, object> { ["speed"] = 3.0 } },
                     new Dictionary<string, object> { ["id"] = "d", ["slot"] = "chip", ["rarity"] = 2.0, ["stats"] = new Dictionary<string, object> { ["crit"] = 5.0, ["hp"] = 10.0 } },
                     new Dictionary<string, object> { ["id"] = "e", ["slot"] = "armor", ["rarity"] = 0.0, ["stats"] = new Dictionary<string, object> { ["hp"] = 6.0 } },
+                    new Dictionary<string, object> { ["id"] = "f", ["slot"] = "armor", ["rarity"] = 2.0, ["level"] = 1.0, ["stats"] = new Dictionary<string, object> { ["hp"] = 14.0, ["speed"] = 2.0 } },
                 },
                 ["equipment"] = new Dictionary<string, object> { ["armor"] = "a", ["module"] = "b" },
                 ["bonus"] = new Dictionary<string, object> { ["hp"] = 42.0, ["damage"] = 22.0, ["speed"] = 6.0, ["crit"] = 5.0 },
@@ -463,6 +464,10 @@ namespace RiftWard.Client
             Screens.ShowCharacter();
             yield return Settle(0.4f);
             yield return Shot(folder, "unity-character");
+            Screens.SetGearFilter("armor");
+            yield return Settle(0.3f);
+            yield return Shot(folder, "unity-character-armor");
+            Screens.SetGearFilter("");
             Screens.ShowShop();
             yield return Settle(0.4f);
             yield return Shot(folder, "unity-shop");
