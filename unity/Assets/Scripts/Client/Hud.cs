@@ -12,6 +12,8 @@ namespace RiftWard.Client
     {
         public readonly Canvas Canvas;
         readonly Text region, wave, stats, level, xpText, banner, combo, comboCaption, headTag, skillLabel, skillTime;
+        readonly Text tierTag;
+        readonly RectTransform tierBox;
         readonly Text shieldValue, shieldMax, dashLabel, dashTime, weaponName, weaponRarity, ammo, ammoMax, hint, revive, toast, bossName, lowAmmo;
         readonly Ui.Bar xpBar, shieldBar, skillBar, dashBar, reloadBar, bossBar;
         readonly RectTransform bossRoot, toastPill, radar, radarDots, killFeed, damageLayer, hitRoot;
@@ -49,6 +51,10 @@ namespace RiftWard.Client
             // ---- top-left mission info
             region = Mono(root, "", 13, Palette.Amber);
             region.rectTransform.Place(new Vector2(0, 1), new Vector2(40, -30), new Vector2(400, 18));
+            tierBox = Ui.Box(root, new Color(0, 0, 0, 0.45f), "Tier").rectTransform;
+            tierBox.Place(new Vector2(0, 1), new Vector2(40, -29), new Vector2(52, 19), new Vector2(0, 1));
+            tierTag = Ui.Label(tierBox, "", 14, Palette.Amber, TextAnchor.MiddleCenter, false);
+            tierTag.rectTransform.Fill();
             wave = Ui.Label(root, "", 30, Palette.Bone, TextAnchor.UpperLeft, true).Outlined();
             wave.rectTransform.Place(new Vector2(0, 1), new Vector2(40, -50), new Vector2(400, 40));
             stats = Mono(root, "", 13, Palette.Hex("d6d1c6"));
@@ -57,7 +63,7 @@ namespace RiftWard.Client
             // ---- top-centre XP and boss
             level = Mono(root, "LV 1", 15, Palette.Amber);
             level.rectTransform.Place(new Vector2(0.5f, 1), new Vector2(-200, -32), new Vector2(120, 20), new Vector2(0, 1));
-            xpText = Mono(root, "", 12, Palette.Hex("c9c5bb"));
+            xpText = Mono(root, "", 13, Palette.Hex("d6d1c6"));
             xpText.alignment = TextAnchor.UpperRight;
             xpText.rectTransform.Place(new Vector2(0.5f, 1), new Vector2(200, -34), new Vector2(300, 20), new Vector2(1, 1));
             xpBar = new Ui.Bar(root, new Color(1, 1, 1, 0.18f), Palette.Amber);
@@ -101,9 +107,9 @@ namespace RiftWard.Client
             var me = Ui.Box(radar, Palette.Amber, "Me");
             me.rectTransform.Place(new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(9, 9));
             me.rectTransform.localRotation = Quaternion.Euler(0, 0, 45);
-            var north = Mono(radar, "雷達 · 28m", 10, Palette.Muted);
+            var north = Mono(radar, "雷達 · 28m", 12, Palette.Hex("c9c5bb"));
             north.alignment = TextAnchor.UpperCenter;
-            north.rectTransform.Place(new Vector2(0.5f, 0), new Vector2(0, -4), new Vector2(160, 14), new Vector2(0.5f, 1));
+            north.rectTransform.Place(new Vector2(0.5f, 0), new Vector2(0, -4), new Vector2(180, 18), new Vector2(0.5f, 1));
             killFeed = Ui.Rect(root, "KillFeed").Place(new Vector2(1, 1), new Vector2(-36, -RadarSize - 54), new Vector2(300, 200), new Vector2(1, 1));
 
             comboCaption = Mono(root, "連殺", 13, Palette.Hex("c9c5bb"));
@@ -171,8 +177,8 @@ namespace RiftWard.Client
             }
             weaponName = Ui.Label(weapon, "", 14, Palette.Bone, TextAnchor.UpperLeft, true).Outlined();
             weaponName.rectTransform.Place(new Vector2(0, 1), new Vector2(18, -42), new Vector2(200, 20), new Vector2(0, 1));
-            weaponRarity = Mono(weapon, "", 11, Palette.Muted);
-            weaponRarity.rectTransform.Place(new Vector2(0, 1), new Vector2(18, -62), new Vector2(200, 16), new Vector2(0, 1));
+            weaponRarity = Mono(weapon, "", 13, Palette.Hex("c9c5bb"));
+            weaponRarity.rectTransform.Place(new Vector2(0, 1), new Vector2(18, -62), new Vector2(240, 18), new Vector2(0, 1));
             ammo = Mono(weapon, "12", 56, Palette.Bone);
             ammo.alignment = TextAnchor.LowerRight;
             ammo.rectTransform.Place(new Vector2(1, 0), new Vector2(-74, 14), new Vector2(160, 70), new Vector2(1, 0));
@@ -181,9 +187,9 @@ namespace RiftWard.Client
             ammoMax.rectTransform.Place(new Vector2(1, 0), new Vector2(-70, 22), new Vector2(60, 24), new Vector2(0, 0));
             reloadBar = new Ui.Bar(weapon, new Color(1, 1, 1, 0.15f), Palette.Bone);
             reloadBar.Root.Place(new Vector2(0, 0), new Vector2(18, 14), new Vector2(294, 3), new Vector2(0, 0));
-            hint = Mono(root, "", 11, Palette.Hex("a9a59c"));
+            hint = Mono(root, "", 13, Palette.Hex("d6d1c6"));
             hint.alignment = TextAnchor.LowerRight;
-            hint.rectTransform.Place(new Vector2(1, 0), new Vector2(-30, 160), new Vector2(400, 16), new Vector2(1, 0));
+            hint.rectTransform.Place(new Vector2(1, 0), new Vector2(-30, 160), new Vector2(560, 18), new Vector2(1, 0));
 
             revive = Ui.Label(root, "", 20, Palette.Hex("7dff9a"), TextAnchor.MiddleCenter).Outlined();
             revive.rectTransform.Place(new Vector2(0.5f, 0), new Vector2(0, 230), new Vector2(720, 30));
@@ -206,7 +212,17 @@ namespace RiftWard.Client
             return back.rectTransform;
         }
 
-        static Text Mono(Transform parent, string text, int size, Color color) => Ui.Label(parent, text, size, color).Outlined();
+        /// HUD text over the 3D view. Large text gets a full outline; small text a single soft drop shadow, because
+        /// a four-way outline around thin CJK strokes at 10–13 px reads as doubled, blurry glyphs.
+        static Text Mono(Transform parent, string text, int size, Color color)
+        {
+            var t = Ui.Label(parent, text, size, color);
+            if (size >= 15) return t.Outlined();
+            var shadow = t.gameObject.AddComponent<Shadow>();
+            shadow.effectColor = new Color(0, 0, 0, 0.75f);
+            shadow.effectDistance = new Vector2(1f, -1f);
+            return t;
+        }
 
         static Sprite RadialSprite()
         {
@@ -346,7 +362,18 @@ namespace RiftWard.Client
             toastPill.localScale = Vector3.one * (0.92f + 0.08f * toastAlpha);
             toastPill.sizeDelta = new Vector2(Mathf.Max(240, toast.preferredWidth + 48), 34);
 
-            region.text = sim.Difficulty > 0 ? $"{Defs.Regions[sim.Region].Name}  ·  {Defs.Difficulty(sim.Difficulty).Name}" : Defs.Regions[sim.Region].Name;
+            region.text = Defs.Regions[sim.Region].Name;
+            if (Changed(tierTag, sim.Difficulty * 100 + sim.Region))
+            {
+                var tier = Defs.Difficulty(sim.Difficulty);
+                tierBox.gameObject.SetActive(sim.Difficulty > 0);
+                tierTag.text = tier.Name;
+                tierTag.color = tier.Accent;
+                tierBox.GetComponent<Image>().color = new Color(0.05f, 0.05f, 0.06f, 0.82f);   // dark plate: the accent text reads over any sky
+                var outline = tierBox.GetComponent<Outline>() ?? tierBox.gameObject.AddComponent<Outline>();
+                outline.effectColor = tier.Accent; outline.effectDistance = new Vector2(1, -1);
+                tierBox.anchoredPosition = new Vector2(40 + region.preferredWidth + 10, -29);
+            }
             if (Changed(wave, sim.Wave)) wave.text = $"第 {sim.Wave} 波  / {Defs.WavesPerMission}";
             if (Changed(stats, ((long)sim.Enemies.Count << 42) | ((long)sim.Kills << 21) | (long)(int)sim.Elapsed))
                 stats.text = $"剩餘 {sim.Enemies.Count:00}    擊破 {sim.Kills:00}    {(int)sim.Elapsed / 60:00}:{(int)sim.Elapsed % 60:00}";

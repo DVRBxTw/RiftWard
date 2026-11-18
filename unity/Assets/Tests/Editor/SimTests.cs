@@ -429,6 +429,54 @@ namespace RiftWard.Tests
         }
 
         [Test]
+        public void CompactSnapshotsRoundTripAndShrink()
+        {
+            var sim = new GameSim(21);
+            for (int i = 1; i <= 4; i++)
+            {
+                var kit = new Loadout { Owned = new List<string> { "rifle", "sniper" }, Equipped = new List<string> { "rifle", "sniper" } };
+                sim.AddActor(i, kit).Name = "Player_" + i;
+            }
+            sim.StartMission(3);
+            sim.WaveDelay = 999f;
+            for (int i = 0; i < 30; i++)
+            {
+                var e = new Enemy { Id = 100 + i, Position = new Vector3(-20 + i * 1.37f, 0, 18.25f - i), Yaw = -3f + i * 0.2f, Hp = 80, MaxHp = 120, Kind = i % 8, Elite = i == 3, Boss = i == 7 };
+                sim.Enemies[e.Id] = e;
+            }
+            for (int i = 0; i < 60; i++) sim.SpawnBullet(new Vector3(i * 0.3f, 1.2f, -i * 0.3f), new Vector3(4.5f, 0, -6.1f), 10, BulletKind.Enemy);
+            for (int i = 0; i < 10; i++) sim.SpawnPickup(new Vector3(i, 0, i), PickupKind.Xp);
+            byte[] Encode(bool full)
+            {
+                using var ms = new System.IO.MemoryStream();
+                using (var w = new System.IO.BinaryWriter(ms)) Protocol.WriteSnapshot(w, sim, full);
+                return ms.ToArray();
+            }
+            var fullBytes = Encode(true);
+            var partBytes = Encode(false);
+            // The float-based format this replaced came to about 3440 bytes for this scene.
+            TestContext.WriteLine($"snapshot bytes: full {fullBytes.Length}, partial {partBytes.Length} (previous format about 3440)");
+            Assert.Less(partBytes.Length, 2300);
+            Assert.Less(partBytes.Length, fullBytes.Length);
+
+            var mirror = new GameSim();
+            Protocol.ReadSnapshot(new System.IO.BinaryReader(new System.IO.MemoryStream(fullBytes)), mirror, 1, out _, out _);
+            Protocol.ReadSnapshot(new System.IO.BinaryReader(new System.IO.MemoryStream(partBytes)), mirror, 1, out _, out _);
+            Assert.AreEqual("Player_2", mirror.Actors[2].Name, "a partial snapshot keeps the names from the last full one");
+            CollectionAssert.AreEqual(new[] { "rifle", "sniper" }, mirror.Actors[2].Loadout.Equipped);
+            foreach (var e in sim.Enemies.Values)
+            {
+                var m = mirror.Enemies[e.Id];
+                Assert.Less(Vector3.Distance(e.Position, m.Position), 0.01f);
+                Assert.AreEqual(Mathf.DeltaAngle(e.Yaw * Mathf.Rad2Deg, m.Yaw * Mathf.Rad2Deg), 0f, 0.01f);
+                Assert.AreEqual((e.Boss, e.Elite, e.Kind), (m.Boss, m.Elite, m.Kind));
+            }
+            var b0 = sim.Bullets.Values.First();
+            Assert.Less(Vector3.Distance(b0.Velocity, mirror.Bullets[b0.Id].Velocity), 0.01f);
+            Assert.Less(Vector3.Distance(sim.Actors[3].Position, mirror.Actors[3].Position), 0.01f);
+        }
+
+        [Test]
         public void BossesAreGiantSoldiersWithEnragePhase()
         {
             var sim = NewMission();

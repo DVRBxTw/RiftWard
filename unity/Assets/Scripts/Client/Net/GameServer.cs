@@ -49,6 +49,10 @@ namespace RiftWard.Client
             public readonly HashSet<int> Invited = new HashSet<int>();
             /// Set by the pause menu; the mission freezes only while one player is in the room.
             public bool Paused;
+            /// Snapshots sent this mission; every 20th (once a second) carries names and weapon kits, as does the
+            /// next one after someone joins.
+            public int SnapshotCount;
+            public bool ForceFull = true;
         }
 
         const int MaxPlayers = 64, RoomSize = 4;
@@ -183,7 +187,10 @@ namespace RiftWard.Client
             if (room.SnapshotTimer >= 0.05f)
             {
                 room.SnapshotTimer = 0;
-                Broadcast(room, Protocol.Frame(Msg.Snapshot, w => Protocol.WriteSnapshot(w, sim)));
+                bool full = room.ForceFull || room.SnapshotCount % 20 == 0;
+                room.ForceFull = false;
+                room.SnapshotCount++;
+                Broadcast(room, Protocol.Frame(Msg.Snapshot, w => Protocol.WriteSnapshot(w, sim, full)));
             }
             if ((sim.State == MissionState.Victory || sim.State == MissionState.Defeat) && !room.Finishing) StartCoroutine(Finish(room));
         }
@@ -604,6 +611,8 @@ namespace RiftWard.Client
             foreach (var kv in ready) sim.SetAdmin(kv.Key, kv.Value.Admin);
             room.Mode = "playing";
             room.Finishing = false;
+            room.ForceFull = true;
+            room.SnapshotCount = 0;
             room.FastWave = -1;
             Broadcast(room, Protocol.Frame(Msg.Deploy, w => { w.Write(region); w.Write(difficulty); }));
             SendLobby(room);
@@ -627,6 +636,7 @@ namespace RiftWard.Client
             var sim = room.Sim;
             AddToSim(sim, id, players[id]);
             sim.SetAdmin(id, players[id].Admin);
+            room.ForceFull = true;   // the newcomer needs everyone's names and weapons now
             players[id].Conn.Send(Protocol.Frame(Msg.Deploy, w => { w.Write(sim.Region); w.Write(sim.Difficulty); }));
         }
 

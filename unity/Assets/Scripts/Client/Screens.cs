@@ -84,11 +84,24 @@ namespace RiftWard.Client
 
             // Account block on the far right, resource chips to its left.
             var account = Ui.Rect(bar, "Account").Place(new Vector2(1, 0.5f), new Vector2(-40, 0), new Vector2(210, 52), new Vector2(1, 0.5f));
+            // Title + name + level share about 225 px before the resource chips: shrink the text, then shorten the
+            // name with an ellipsis, rather than run into the chips.
+            const float NameRoom = 225f;
             var who = Ui.Label(account, $"{p.Username}  ·  Lv {p.Level}", 15, Palette.Bone, TextAnchor.UpperRight, true);
-            who.rectTransform.Place(new Vector2(1, 1), Vector2.zero, new Vector2(210, 22), new Vector2(1, 1));
+            who.rectTransform.Place(new Vector2(1, 1), Vector2.zero, new Vector2(NameRoom, 22), new Vector2(1, 1));
+            Text worn = null;
             if (!string.IsNullOrEmpty(p.Title))
-                Ui.Label(account, $"〔{p.Title}〕", 15, Palette.Amber, TextAnchor.UpperRight, true).rectTransform
-                    .Place(new Vector2(1, 1), new Vector2(-who.preferredWidth - 2, 0), new Vector2(160, 22), new Vector2(1, 1));
+                worn = Ui.Label(account, $"〔{p.Title}〕", 15, Palette.Amber, TextAnchor.UpperRight, true);
+            float Total() => who.preferredWidth + (worn != null ? worn.preferredWidth + 2 : 0);
+            if (Total() > NameRoom) { who.fontSize = 13; if (worn != null) worn.fontSize = 13; }
+            string shortName = p.Username;
+            while (Total() > NameRoom && shortName.Length > 3)
+            {
+                shortName = shortName.Substring(0, shortName.Length - 1);
+                who.text = $"{shortName}…  ·  Lv {p.Level}";
+            }
+            if (worn != null)
+                worn.rectTransform.Place(new Vector2(1, 1), new Vector2(-who.preferredWidth - 2, 0), new Vector2(160, 22), new Vector2(1, 1));
             var links = Ui.HStack(account, 4);
             links.Place(new Vector2(1, 0), Vector2.zero, new Vector2(p.Admin ? 250 : 190, 24), new Vector2(1, 0));
             if (p.Admin) Ui.Button(links, "管理員", ShowAdmin, 12, Palette.Danger, new Color(0, 0, 0, 0), new Color(0, 0, 0, 0));
@@ -1468,12 +1481,20 @@ namespace RiftWard.Client
                 var (cat, catName) = AchievementCategories[c];
                 var items = p.Achievements.Where(a => a.Category == cat).ToList();
                 float x0 = c / (float)AchievementCategories.Length, x1 = (c + 1) / (float)AchievementCategories.Length;
-                var col = Ui.VStack(pad, 10);
-                col.anchorMin = new Vector2(x0, 0); col.anchorMax = new Vector2(x1, 1);
-                col.offsetMin = new Vector2(c > 0 ? 8 : 0, 0); col.offsetMax = new Vector2(c < AchievementCategories.Length - 1 ? -8 : 0, -60);
-                var head = Ui.Rect(col, "Head").Sized(24);
+                var area = Ui.Rect(pad, "Column");
+                area.anchorMin = new Vector2(x0, 0); area.anchorMax = new Vector2(x1, 1);
+                area.offsetMin = new Vector2(c > 0 ? 8 : 0, 0); area.offsetMax = new Vector2(c < AchievementCategories.Length - 1 ? -8 : 0, -60);
+                var head = Ui.Rect(area, "Head").Place(new Vector2(0, 1), Vector2.zero, new Vector2(0, 24), new Vector2(0, 1));
+                head.anchorMax = new Vector2(1, 1); head.sizeDelta = new Vector2(0, 24);
                 Ui.Label(head, catName, 17, Palette.Bone, TextAnchor.MiddleLeft, true).rectTransform.Fill();
                 Ui.Label(head, $"{items.Sum(a => a.Claimed)} / {items.Count * 3}", 13, Palette.Muted, TextAnchor.MiddleRight).rectTransform.Fill();
+                // The cards scroll inside their column, so more achievements never run off the page.
+                var host = Ui.Rect(area, "Cards");
+                host.anchorMin = Vector2.zero; host.anchorMax = Vector2.one; host.offsetMin = Vector2.zero; host.offsetMax = new Vector2(0, -34);
+                var col = Widgets.ScrollList(host, out _);
+                col.parent.GetComponent<RectTransform>().Fill();
+                col.parent.GetComponent<Image>().color = new Color(0, 0, 0, 0);
+                col.GetComponent<VerticalLayoutGroup>().spacing = 10;
                 foreach (var a in items) AchievementCard(col, a);
             }
         }

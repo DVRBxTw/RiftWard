@@ -680,6 +680,24 @@ class ServiceTests(unittest.TestCase):
         for bad in (5,-1,True,"4"):
             self.assertEqual(grant(weapon="saber",rarity=bad)[1]["error"],"稀有度不正確")
 
+    def test_friend_list_shows_level_and_earned_title(self):
+        me = self.register()
+        other = self.second_account()
+        oid = other["profile"]["id"]
+        self.store.request_friend(oid,"Beta_Test")
+        self.store.respond_friend(me["profile"]["id"],"Second_Test",True)
+        with self.store.connect() as db:
+            db.execute("UPDATE progress SET xp=?, achievements=? WHERE account_id=?",
+                       (1000, json.dumps({"claimed":{"kills":3,"headshots":1},"title":"kills"}), oid))
+        friend = self.store.friends(me["profile"]["id"])["friends"][0]
+        self.assertEqual((friend["username"],friend["level"],friend["title"]),("Second_Test",service.level_for(1000)[0],"殲滅者"))
+        # A worn title whose 金 tier is not claimed is not shown.
+        with self.store.connect() as db:
+            db.execute("UPDATE progress SET achievements=? WHERE account_id=?", (json.dumps({"claimed":{"headshots":1},"title":"headshots"}), oid))
+        self.assertEqual(self.store.friends(me["profile"]["id"])["friends"][0]["title"],"")
+        # The full profile agrees with the brief.
+        self.assertEqual(self.store.profile(oid)["title"]["text"],"")
+
     def test_manifest_and_path_restriction(self):
         code, manifest = self.call("/api/version")
         self.assertEqual(code,200)

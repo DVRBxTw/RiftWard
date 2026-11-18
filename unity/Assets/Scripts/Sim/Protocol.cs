@@ -96,35 +96,59 @@ namespace RiftWard.Sim
 
         // ------------------------------------------------------------ snapshot
 
-        public static void WriteSnapshot(BinaryWriter w, GameSim sim)
+        // Compact encodings for snapshots: positions and velocities to the centimetre in 16-bit integers (±327 m,
+        // far beyond the 46 m arena), angles to 1e-4 rad. Halves the bytes per vector compared with floats.
+        const float PosScale = 100f, AngleScale = 10000f;
+
+        static void WriteQ(this BinaryWriter w, Vector3 v)
+        {
+            w.Write((short)Mathf.Clamp(Mathf.RoundToInt(v.x * PosScale), short.MinValue, short.MaxValue));
+            w.Write((short)Mathf.Clamp(Mathf.RoundToInt(v.y * PosScale), short.MinValue, short.MaxValue));
+            w.Write((short)Mathf.Clamp(Mathf.RoundToInt(v.z * PosScale), short.MinValue, short.MaxValue));
+        }
+
+        static Vector3 ReadQ(this BinaryReader r) => new Vector3(r.ReadInt16() / PosScale, r.ReadInt16() / PosScale, r.ReadInt16() / PosScale);
+        /// Angle wrapped to [-pi, pi) in 1e-4 rad steps (fits a short: at most 31416).
+        static void WriteAngle(this BinaryWriter w, float a) => w.Write((short)Mathf.RoundToInt((Mathf.Repeat(a + Mathf.PI, Mathf.PI * 2f) - Mathf.PI) * AngleScale));
+        static float ReadAngle(this BinaryReader r) => r.ReadInt16() / AngleScale;
+
+        /// One mission snapshot. Names and weapon kits change rarely, so they are only included when full is set
+        /// (about once a second, and whenever someone joins); in between, clients keep the last ones they got.
+        public static void WriteSnapshot(BinaryWriter w, GameSim sim, bool full = true)
         {
             w.Write((byte)sim.State); w.Write(sim.Region); w.Write(sim.Wave); w.Write(sim.Kills); w.Write(sim.Elapsed);
             w.Write(sim.Level); w.Write(sim.Xp); w.Write(sim.XpNeed); w.Write(sim.BuffPending);
-            w.Write(sim.Actors.Count);
+            w.Write(full);
+            w.Write((ushort)sim.Actors.Count);
             foreach (var a in sim.Actors.Values)
             {
-                w.Write(a.Id); w.Write(a.Position); w.Write(a.Hp); w.Write(a.MaxHp); w.Write(a.Yaw); w.Write(a.VerticalVelocity);
-                w.Write(a.DashCooldown); w.Write(a.DashLeft); w.Write(a.DashDirection); w.Write(a.Ack);
-                w.Write(a.Ammo); w.Write(a.Mag); w.Write(a.Reload); w.Write(a.ReloadTime); w.Write((byte)a.Slot);
+                w.Write(a.Id); w.WriteQ(a.Position); w.Write(a.Hp); w.Write(a.MaxHp); w.WriteAngle(a.Yaw); w.Write(a.VerticalVelocity);
+                w.Write(a.DashCooldown); w.Write(a.DashLeft); w.WriteQ(a.DashDirection); w.Write(a.Ack);
+                w.Write((short)a.Ammo); w.Write((short)a.Mag); w.Write(a.Reload); w.Write(a.ReloadTime); w.Write((byte)a.Slot);
                 w.Write(a.SkillCooldown); w.Write(a.SkillMult); w.Write(a.Revive); w.Write(GameSim.EffectiveSpeed(a));
                 w.Write(a.IsAdmin && a.Admin.Fly); w.Write(a.Zoom);
-                w.Write((byte)a.Loadout.Equipped.Count);
-                foreach (var weapon in a.Loadout.Equipped) w.Write(weapon);
-                w.Write(a.Name ?? ""); w.Write((byte)a.Drones); w.Write(a.Plasma);
+                if (full)
+                {
+                    w.Write((byte)a.Loadout.Equipped.Count);
+                    foreach (var weapon in a.Loadout.Equipped) w.Write(weapon);
+                    w.Write(a.Name ?? "");
+                }
+                w.Write((byte)a.Drones); w.Write(a.Plasma);
                 w.Write((byte)a.OrbitLevel); w.Write(a.DroneEvolved); w.Write(a.PlasmaEvolved);
                 w.Write((byte)a.Loadout.RarityOf(a.WeaponId));
-                w.Write((short)Mathf.RoundToInt(a.Pitch * 10000f));   // aim pitch so teammates' rigs aim up / down
+                w.WriteAngle(a.Pitch);                                 // aim pitch so teammates' rigs aim up / down
+                w.Write(a.Damage);                                     // current weapon damage, shown on the HUD
             }
-            w.Write(sim.Enemies.Count);
+            w.Write((ushort)sim.Enemies.Count);
             foreach (var e in sim.Enemies.Values)
             {
-                w.Write(e.Id); w.Write(e.Position); w.Write(e.Hp); w.Write(e.MaxHp); w.Write(e.Yaw);
-                w.Write(e.Boss); w.Write((byte)e.Kind); w.Write((byte)e.State); w.Write(e.Elite);
+                w.Write(e.Id); w.WriteQ(e.Position); w.Write(e.Hp); w.Write(e.MaxHp); w.WriteAngle(e.Yaw);
+                w.Write((byte)((e.Boss ? 1 : 0) | (e.Elite ? 2 : 0))); w.Write((byte)e.Kind); w.Write((byte)e.State);
             }
-            w.Write(sim.Bullets.Count);
-            foreach (var b in sim.Bullets.Values) { w.Write(b.Id); w.Write(b.Position); w.Write(b.Velocity); w.Write((byte)b.Kind); }
-            w.Write(sim.Pickups.Count);
-            foreach (var p in sim.Pickups.Values) { w.Write(p.Id); w.Write(p.Position); w.Write((byte)p.Kind); }
+            w.Write((ushort)sim.Bullets.Count);
+            foreach (var b in sim.Bullets.Values) { w.Write(b.Id); w.WriteQ(b.Position); w.WriteQ(b.Velocity); w.Write((byte)b.Kind); }
+            w.Write((ushort)sim.Pickups.Count);
+            foreach (var p in sim.Pickups.Values) { w.Write(p.Id); w.WriteQ(p.Position); w.Write((byte)p.Kind); }
         }
 
         /// Applies a server snapshot onto a client-side mirror simulation. Returns the local actor's acked input sequence.
@@ -133,69 +157,76 @@ namespace RiftWard.Sim
             localSpeed = Defs.BaseSpeed; localFly = false;
             sim.State = (MissionState)r.ReadByte(); sim.Region = r.ReadInt32(); sim.Wave = r.ReadInt32(); sim.Kills = r.ReadInt32(); sim.Elapsed = r.ReadSingle();
             sim.Level = r.ReadInt32(); sim.Xp = r.ReadInt32(); sim.XpNeed = r.ReadInt32(); sim.BuffPending = r.ReadBoolean();
+            bool full = r.ReadBoolean();
             int ack = 0;
             var seen = new HashSet<int>();
-            int count = r.ReadInt32();
+            int count = r.ReadUInt16();
             for (int i = 0; i < count; i++)
             {
                 int id = r.ReadInt32();
                 seen.Add(id);
                 if (!sim.Actors.TryGetValue(id, out var a)) sim.Actors[id] = a = new Actor { Id = id };
-                a.Position = r.ReadVector3(); a.Hp = r.ReadSingle(); a.MaxHp = r.ReadSingle(); a.Yaw = r.ReadSingle(); a.VerticalVelocity = r.ReadSingle();
-                a.DashCooldown = r.ReadSingle(); a.DashLeft = r.ReadSingle(); a.DashDirection = r.ReadVector3(); a.Ack = r.ReadInt32();
-                a.Ammo = r.ReadInt32(); a.Mag = r.ReadInt32(); a.Reload = r.ReadSingle(); a.ReloadTime = r.ReadSingle(); a.Slot = r.ReadByte();
+                a.Position = r.ReadQ(); a.Hp = r.ReadSingle(); a.MaxHp = r.ReadSingle(); a.Yaw = r.ReadAngle(); a.VerticalVelocity = r.ReadSingle();
+                a.DashCooldown = r.ReadSingle(); a.DashLeft = r.ReadSingle(); a.DashDirection = r.ReadQ(); a.Ack = r.ReadInt32();
+                a.Ammo = r.ReadInt16(); a.Mag = r.ReadInt16(); a.Reload = r.ReadSingle(); a.ReloadTime = r.ReadSingle(); a.Slot = r.ReadByte();
                 a.SkillCooldown = r.ReadSingle(); a.SkillMult = r.ReadSingle(); a.Revive = r.ReadSingle();
                 float speed = r.ReadSingle();
                 bool fly = r.ReadBoolean();
                 a.Zoom = r.ReadSingle();
-                int kit = r.ReadByte();
-                var equipped = new List<string>();
-                for (int k = 0; k < kit; k++) equipped.Add(r.ReadString());
-                a.Loadout.Equipped = equipped.Where(Defs.Weapons.ContainsKey).DefaultIfEmpty("pistol").ToList();
-                a.Name = r.ReadString(); a.Drones = r.ReadByte(); a.Plasma = r.ReadBoolean();
+                if (full)
+                {
+                    int kit = r.ReadByte();
+                    var equipped = new List<string>();
+                    for (int k = 0; k < kit; k++) equipped.Add(r.ReadString());
+                    a.Loadout.Equipped = equipped.Where(Defs.Weapons.ContainsKey).DefaultIfEmpty("pistol").ToList();
+                    a.Name = r.ReadString();
+                }
+                a.Drones = r.ReadByte(); a.Plasma = r.ReadBoolean();
                 a.OrbitLevel = r.ReadByte(); a.DroneEvolved = r.ReadBoolean(); a.PlasmaEvolved = r.ReadBoolean();
                 a.Loadout.Rarity[a.WeaponId] = r.ReadByte();
-                a.Pitch = r.ReadInt16() / 10000f;
+                a.Pitch = r.ReadAngle();
+                a.Damage = r.ReadSingle();
                 a.Speed = speed;
                 if (id == localId) { ack = a.Ack; localSpeed = speed; localFly = fly; }
             }
             foreach (var id in sim.Actors.Keys.Where(id => !seen.Contains(id)).ToList()) sim.Actors.Remove(id);
 
             seen.Clear();
-            count = r.ReadInt32();
+            count = r.ReadUInt16();
             for (int i = 0; i < count; i++)
             {
                 int id = r.ReadInt32();
                 seen.Add(id);
                 if (!sim.Enemies.TryGetValue(id, out var e)) sim.Enemies[id] = e = new Enemy { Id = id };
-                e.Position = r.ReadVector3(); e.Hp = r.ReadSingle(); e.MaxHp = r.ReadSingle(); e.Yaw = r.ReadSingle();
-                e.Boss = r.ReadBoolean(); e.Kind = r.ReadByte(); e.State = r.ReadByte(); e.Elite = r.ReadBoolean();
+                e.Position = r.ReadQ(); e.Hp = r.ReadSingle(); e.MaxHp = r.ReadSingle(); e.Yaw = r.ReadAngle();
+                int flags = r.ReadByte();
+                e.Boss = (flags & 1) != 0; e.Elite = (flags & 2) != 0; e.Kind = r.ReadByte(); e.State = r.ReadByte();
                 e.Scale = Defs.Kinds[Mathf.Clamp(e.Kind, 0, Defs.Kinds.Length - 1)].Scale * (e.Elite ? 1.35f : 1f);
             }
             foreach (var id in sim.Enemies.Keys.Where(id => !seen.Contains(id)).ToList()) sim.Enemies.Remove(id);
 
             seen.Clear();
-            count = r.ReadInt32();
+            count = r.ReadUInt16();
             for (int i = 0; i < count; i++)
             {
                 int id = r.ReadInt32();
                 seen.Add(id);
                 if (!sim.Bullets.TryGetValue(id, out var b)) sim.Bullets[id] = b = new Bullet { Id = id };
-                var p = r.ReadVector3();
+                var p = r.ReadQ();
                 b.Position = b.Position == Vector3.zero ? p : Vector3.Lerp(b.Position, p, 0.5f);
-                b.Velocity = r.ReadVector3();
+                b.Velocity = r.ReadQ();
                 b.Kind = (BulletKind)r.ReadByte();
             }
             foreach (var id in sim.Bullets.Keys.Where(id => !seen.Contains(id)).ToList()) sim.Bullets.Remove(id);
 
             seen.Clear();
-            count = r.ReadInt32();
+            count = r.ReadUInt16();
             for (int i = 0; i < count; i++)
             {
                 int id = r.ReadInt32();
                 seen.Add(id);
                 if (!sim.Pickups.TryGetValue(id, out var p)) sim.Pickups[id] = p = new Pickup { Id = id };
-                p.Position = r.ReadVector3();
+                p.Position = r.ReadQ();
                 p.Kind = (PickupKind)r.ReadByte();
             }
             foreach (var id in sim.Pickups.Keys.Where(id => !seen.Contains(id)).ToList()) sim.Pickups.Remove(id);

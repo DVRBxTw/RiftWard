@@ -237,6 +237,7 @@ class Store:
     def __init__(self, directory: Path):
         self.lock = threading.RLock()
         self.last_reward = {}
+        self._local = threading.local()   # per-thread connection shared inside a db_session()
         directory.mkdir(parents=True, exist_ok=True)
         self.path = directory / "players.sqlite3"
         keyfile = directory / "server.key"
@@ -296,22 +297,62 @@ class Store:
                 if column not in columns:
                     db.execute(f"ALTER TABLE progress ADD COLUMN {column} {ddl}")
 
-    @contextmanager
-    def connect(self):
+    def _open(self):
         db = sqlite3.connect(self.path, timeout=5)
         db.row_factory = sqlite3.Row
         db.execute("PRAGMA foreign_keys=ON")
+        return db
+
+    @contextmanager
+    def db_session(self):
+        """Shares one connection across everything this thread does until the block ends (one request, one
+        profile build). Without a session every connect() opens and closes its own connection."""
+        if getattr(self._local, "db", None) is not None:
+            yield
+            return
+        db = self._open()
+        self._local.db, self._local.depth = db, 0
         try:
-            with db:
-                yield db
+            yield
         finally:
+            self._local.db = None
             db.close()
+
+    @contextmanager
+    def connect(self):
+        """A transaction. Inside a session the shared connection is used; only the outermost block commits."""
+        shared = getattr(self._local, "db", None)
+        if shared is None:
+            db = self._open()
+            try:
+                with db:
+                    yield db
+            finally:
+                db.close()
+            return
+        if self._local.depth:
+            self._local.depth += 1
+            try:
+                yield shared
+            finally:
+                self._local.depth -= 1
+            return
+        self._local.depth = 1
+        try:
+            with shared:
+                yield shared
+        finally:
+            self._local.depth = 0
 
     @staticmethod
     def _hash(password: str, salt: bytes):
         return hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, ITERATIONS)
 
     def profile(self, account_id: int):
+        with self.db_session():
+            return self._profile(account_id)
+
+    def _profile(self, account_id: int):
         with self.connect() as db:
             row = db.execute(
                 "SELECT a.id,a.username,p.unlocked,p.tutorial_complete,p.gold,p.loadout,p.stats,p.xp,p.keys,p.weapon_keys,p.talents,p.gear,p.cleared FROM accounts a "
@@ -1056,16 +1097,35 @@ class Store:
                               (account_id, account_id)).fetchall()
         return [r[1] if r[0] == account_id else r[0] for r in rows]
 
-    def _brief(self, account_id):
-        profile = self.profile(account_id)
-        return {"id": account_id, "username": profile["username"], "level": profile["level"], "title": profile["title"]["text"]}
+    def _briefs(self, ids):
+        """Name, level and worn title for many accounts in one query (no full profile per friend)."""
+        if not ids:
+            return {}
+        with self.connect() as db:
+            rows = db.execute("SELECT a.id, a.username, p.xp, p.achievements FROM accounts a JOIN progress p ON p.account_id=a.id "
+                              "WHERE a.id IN (%s)" % ",".join("?" * len(ids)), list(ids)).fetchall()
+        out = {}
+        for row in rows:
+            try:
+                ach = json.loads(row["achievements"] or "{}")
+            except ValueError:
+                ach = {}
+            ach = ach if isinstance(ach, dict) else {}
+            title = ach.get("title") if isinstance(ach.get("title"), str) else ""
+            claimed = ach.get("claimed") if isinstance(ach.get("claimed"), dict) else {}
+            earned = title in TITLES and isinstance(claimed.get(title), int) and claimed[title] >= 3
+            out[row["id"]] = {"id": row["id"], "username": row["username"], "level": level_for(row["xp"])[0], "title": TITLES[title] if earned else ""}
+        return out
 
     def friends(self, account_id):
-        with self.connect() as db:
-            incoming = [r[0] for r in db.execute("SELECT requester FROM friendships WHERE addressee=? AND status='pending' ORDER BY created", (account_id,))]
-            outgoing = [r[0] for r in db.execute("SELECT addressee FROM friendships WHERE requester=? AND status='pending' ORDER BY created", (account_id,))]
-        friends = sorted((self._brief(i) for i in self.friend_ids(account_id)), key=lambda f: f["username"].lower())
-        return {"friends": friends, "incoming": [self._brief(i) for i in incoming], "outgoing": [self._brief(i) for i in outgoing]}
+        with self.db_session():
+            with self.connect() as db:
+                incoming = [r[0] for r in db.execute("SELECT requester FROM friendships WHERE addressee=? AND status='pending' ORDER BY created", (account_id,))]
+                outgoing = [r[0] for r in db.execute("SELECT addressee FROM friendships WHERE requester=? AND status='pending' ORDER BY created", (account_id,))]
+            friend_ids = self.friend_ids(account_id)
+            briefs = self._briefs(set(friend_ids) | set(incoming) | set(outgoing))
+        friends = sorted((briefs[i] for i in friend_ids if i in briefs), key=lambda f: f["username"].lower())
+        return {"friends": friends, "incoming": [briefs[i] for i in incoming if i in briefs], "outgoing": [briefs[i] for i in outgoing if i in briefs]}
 
     @_locked
     def request_friend(self, account_id, username):
@@ -1474,7 +1534,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         try:
-            self._post()
+            with self.server.store.db_session():
+                self._post()
         except (BrokenPipeError, ConnectionResetError, TimeoutError):
             return
         except (ValueError, TypeError, UnicodeError):

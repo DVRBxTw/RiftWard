@@ -214,6 +214,7 @@ namespace RiftWard.Client
                         Unlocked = success && finishedTier > clearedAtDeploy && finishedTier + 1 < Defs.Difficulties.Length ? finishedTier + 1 : -1,
                     };
                     Client.Menus.ShowResult(success, finishedRegion, kills, elapsed, gold, (Profile?.Gold ?? 0) + gold, grade, record, progress, finishedTier);
+                    RefreshMe();
                     Debug.Log($"UNITY_CLIENT_RESULT success={success} gold={gold} picks={testPicks}");
                     if (netTest) StartCoroutine(TestFinish(success, gold));
                     break;
@@ -296,6 +297,28 @@ namespace RiftWard.Client
             if (notifyServer && Net.Welcomed) Net.Send(Msg.RefreshProfile);
 
             Client.Menus.AdminPanel = profile.Admin ? (Action<Transform>)Screens.AbilityPanel : null;
+            if (Client.Menus.ResultOpen) Client.Menus.SetResultNotes(ResultNotes(profile));
+        }
+
+        /// The result sheet's progress lines: today's missions (and what can be collected), the next mission to
+        /// finish, and the achievement closest to its next tier.
+        static string ResultNotes(Profile p)
+        {
+            var lines = new List<string>();
+            var tasks = p.Daily.Tasks;
+            if (tasks.Count > 0)
+            {
+                int done = tasks.Count(t => t.Done);
+                string ready = p.Daily.Claimable > 0 ? $"   <color=#f0b24a>{p.Daily.Claimable} 項獎勵可領取</color>" : "";
+                lines.Add($"<color=#8c8f93>每日任務</color>  {done} / {tasks.Count} 完成{ready}");
+                var next = tasks.Where(t => !t.Done).OrderByDescending(t => (float)t.Progress / t.Goal).FirstOrDefault();
+                if (next != null) lines.Add($"<color=#8c8f93>下一項</color>  {next.Text}  <color=#f0b24a>{next.Progress} / {next.Goal}</color>");
+            }
+            int claimable = p.AchievementsClaimable;
+            var near = p.Achievements.Where(a => !a.Complete && !a.CanClaim).OrderByDescending(a => (float)a.Progress / a.Goal).FirstOrDefault();
+            if (claimable > 0) lines.Add($"<color=#8c8f93>成就</color>  <color=#f0b24a>{claimable} 階獎勵可領取</color>");
+            else if (near != null) lines.Add($"<color=#8c8f93>成就</color>  {near.Name}（{"銅銀金"[Mathf.Clamp(near.Claimed, 0, 2)]}）  <color=#f0b24a>{Mathf.Min(near.Progress, near.Goal)} / {near.Goal}</color>");
+            return lines.Count > 0 ? string.Join("\n", lines.Take(3)) : "<color=#8c8f93>離線任務不計入每日任務與成就</color>";
         }
 
         public void Logout()
@@ -629,6 +652,13 @@ namespace RiftWard.Client
             Screens.ShowAchievements();
             yield return Settle(0.4f);
             yield return Shot(folder, "unity-achievements");
+            // A long name with a long title must not run into the resource chips.
+            string realName = Profile.Username, realTitle = Profile.Title;
+            Profile.Username = "Commander_Longname_2026"; Profile.Title = "裂隙征服者";
+            Screens.ShowAchievements();
+            yield return Settle(0.3f);
+            yield return Shot(folder, "unity-nav-long");
+            Profile.Username = realName; Profile.Title = realTitle;
             Screens.ShowTitlePickerForCapture();
             yield return Settle(0.3f);
             yield return Shot(folder, "unity-titles");
@@ -816,6 +846,7 @@ namespace RiftWard.Client
             yield return Shot(folder, "unity-pause");
             Client.Menus.HideAll();
             Client.Menus.ShowResult(true, 0, 86, 742, 740, 1980, "A", new[] { 41, 13, 290, 176 }, new Menus.ResultProgress { Xp = 301, Level = 3, LevelXp = 180, Wave = 20, BestWave = 14, Unlocked = 2 }, 1);
+            Client.Menus.SetResultNotes(ResultNotes(Profile));
             yield return Settle(0.2f);
             yield return Shot(folder, "unity-result");
             Client.Menus.HideAll();

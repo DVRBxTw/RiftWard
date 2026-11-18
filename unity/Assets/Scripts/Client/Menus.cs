@@ -11,6 +11,14 @@ namespace RiftWard.Client
         readonly GameClient client;
         readonly Canvas canvas;
         GameObject buffs, pause, result;
+        Text resultNotes;
+        public bool ResultOpen => result != null;
+
+        /// Rich-text lines under the result's XP bar (daily missions, nearest achievement).
+        public void SetResultNotes(string text)
+        {
+            if (result != null && resultNotes != null) resultNotes.text = text;
+        }
         int[] shownOffer;
         public System.Action LeaveRequested;
         public System.Action RetryRequested;
@@ -197,6 +205,14 @@ namespace RiftWard.Client
             }
             Ui.Label(stack, gold >= 0 ? $"獲得金幣  +{gold} G      持有  {totalGold} G" : "離線任務不發放金幣；連線至基地後出擊才會獲得金幣。", gold >= 0 ? 20 : 15, gold >= 0 ? Palette.Amber : Palette.Muted).Sized(28);
             if (progress != null) ProgressBlock(stack, progress);
+            if (progress != null)
+            {
+                // Daily missions and the nearest achievement; filled in once the updated profile arrives.
+                resultNotes = Ui.Label(stack, "<color=#8c8f93>正在同步任務進度…</color>", 14, Palette.Bone);
+                resultNotes.supportRichText = true;
+                resultNotes.Sized(66);
+                sheet.sizeDelta += new Vector2(0, 80);
+            }
             var row = Ui.HStack(stack, 10).Sized(52);
             Ui.Button(row, "返回主頁", () => { HideAll(); LeaveRequested?.Invoke(); }, 18);
             Ui.Button(row, "再次挑戰", () => { HideAll(); RetryRequested?.Invoke(); }, 18, Palette.Amber, null, Palette.Amber);

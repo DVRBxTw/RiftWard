@@ -45,7 +45,7 @@ VERSION = re.search(r'Version = "([^"]+)"', (ROOT / "unity/Assets/Scripts/Sim/De
 HELLO, INPUT, CHOOSE_BUFF, REQUEST_DEPLOY, LEAVE_MISSION = 1, 2, 3, 5, 7
 WELCOME, ERROR, LOBBY, DEPLOY, SNAPSHOT, EVENTS, BUFF_OFFER, FINISH = 50, 51, 52, 53, 54, 55, 56, 57
 EYE_HEIGHT, SHOT_RANGE = 1.65, 65.0
-KIND_SCALE = [1.0, 0.9, 1.0, 0.75, 1.0, 2.2, 2.6]   # Defs.Kinds scale, for aiming at the chest
+KIND_SCALE = [1.0, 0.9, 1.0, 0.75, 1.0, 2.2, 2.6, 1.15, 3.0]   # Defs.Kinds scale, for aiming at the chest
 
 
 # ------------------------------------------------------------------ wire format (C# BinaryWriter)
@@ -124,28 +124,36 @@ class Connection:
 # ------------------------------------------------------------------ game state from snapshots
 
 def read_snapshot(r: Reader, me: int):
+    """Snapshot layout (Protocol.WriteSnapshot): vectors are three int16 in centimetres, angles int16 in 1e-4
+    rad; names and weapon kits only appear when the full flag is set."""
+    def q():
+        x, y, z = r.take("hhh")
+        return (x / 100, y / 100, z / 100)
     state = r.u8()
     r.i32()  # region
     wave, kills = r.i32(), r.i32()
     r.f32(); r.i32(); r.i32(); r.i32(); r.bool()   # elapsed, level, xp, xp need, buff pending
+    full = r.bool()
     mine = None
-    for _ in range(r.i32()):
-        aid = r.i32(); pos = r.vec(); hp = r.f32(); r.f32(); r.f32(); r.f32()
-        r.f32(); r.f32(); r.vec(); r.i32()
-        r.i32(); r.i32(); r.f32(); r.f32(); r.u8()
+    for _ in range(r.take("H")[0]):
+        aid = r.i32(); pos = q(); hp = r.f32(); r.f32(); r.i16(); r.f32()
+        r.f32(); r.f32(); q(); r.i32()
+        r.i16(); r.i16(); r.f32(); r.f32(); r.u8()
         r.f32(); r.f32(); r.f32(); r.f32()
         r.bool(); r.f32()
-        for _ in range(r.u8()):
+        if full:
+            for _ in range(r.u8()):
+                r.string()
             r.string()
-        r.string(); r.u8(); r.bool(); r.u8(); r.bool(); r.bool(); r.u8(); r.i16()
+        r.u8(); r.bool(); r.u8(); r.bool(); r.bool(); r.u8(); r.i16(); r.f32()
         if aid == me:
             mine = (pos, hp)
     enemies = []
-    for _ in range(r.i32()):
-        r.i32(); pos = r.vec(); hp = r.f32(); r.f32(); r.f32()
-        r.bool(); kind = r.u8(); r.u8(); elite = r.bool()
+    for _ in range(r.take("H")[0]):
+        r.i32(); pos = q(); hp = r.f32(); r.f32(); r.i16()
+        flags = r.u8(); kind = r.u8(); r.u8()
         if hp > 0:
-            enemies.append((pos, KIND_SCALE[min(kind, len(KIND_SCALE) - 1)] * (1.35 if elite else 1.0)))
+            enemies.append((pos, KIND_SCALE[min(kind, len(KIND_SCALE) - 1)] * (1.35 if flags & 2 else 1.0)))
     return state, wave, kills, mine, enemies
 
 
