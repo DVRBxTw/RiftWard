@@ -9,7 +9,8 @@ $gh = 'C:\Program Files\GitHub CLI\gh.exe'
 
 $defs = Get-Content (Join-Path $project 'unity\Assets\Scripts\Sim\Defs.cs') -Raw
 if ($defs -notmatch 'Version = "([^"]+)"') { throw 'Cannot read Defs.Version' }
-$tag = 'v' + $Matches[1]
+$version = $Matches[1]   # saved now: later -match calls overwrite $Matches
+$tag = "v$version"
 if (-not (Test-Path $Notes)) { throw "Release notes not found: $Notes" }
 if (git -C $project status --porcelain) { throw 'Commit your changes first: the release is built from the committed tree.' }
 
@@ -36,9 +37,9 @@ Start-Process cmd.exe -ArgumentList '/c', "`"$(Join-Path $build 'StartServer.cmd
 $manifest = Join-Path $build 'releases\manifest.json'
 for ($i = 0; $i -lt 30; $i++) {
   Start-Sleep -Seconds 2
-  if ((Test-Path $manifest) -and ((Get-Content $manifest -Raw | ConvertFrom-Json).version -eq $Matches[1])) { break }
+  if ((Test-Path $manifest) -and ((Get-Content $manifest -Raw | ConvertFrom-Json).version -eq $version)) { break }
 }
-if ((Get-Content $manifest -Raw | ConvertFrom-Json).version -ne $Matches[1]) { throw 'Server did not publish the new version' }
+if ((Get-Content $manifest -Raw | ConvertFrom-Json).version -ne $version) { throw 'Server did not publish the new version' }
 
 # 5. Push, tag and publish the same zip
 git -C $project push origin main
