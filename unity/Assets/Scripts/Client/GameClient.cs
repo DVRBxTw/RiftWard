@@ -22,6 +22,11 @@ namespace RiftWard.Client
         public World World { get; private set; }
         public Hud Hud { get; private set; }
         public Sfx Sfx { get; private set; }
+        /// Middle-mouse pings from you and your teammates.
+        public PingMarkers Pings { get; private set; }
+        float lastPing = -9f;
+        /// For the automated screenshots: hold the aim-down-sights pose.
+        public bool AimForCapture;
         public Menus Menus { get; private set; }
 
         float yaw, pitch, recoilPending, shake, zoomFov = BaseFov;
@@ -65,6 +70,9 @@ namespace RiftWard.Client
         bool shownLow;
         /// Seconds since your last shot (drives slide / bolt / pump cycling), view-model kick and barrel heat.
         float cycle = 99f, kick, heat, lastAmmo = -1;
+        /// 0 = hip, 1 = aimed down sights (eased toward the right-mouse state).
+        float ads;
+        static bool reloadIdle(Actor me) => !(me.Reload > 0);
         bool hotVented;
         AudioReverbFilter reverb;
 
@@ -122,6 +130,7 @@ namespace RiftWard.Client
             Hud = new Hud();
             Hud.Show(false);
             Sfx = new Sfx(gameObject);
+            Pings = new PingMarkers(Sfx);
             Menus = new Menus(this);
         }
 
@@ -257,8 +266,18 @@ namespace RiftWard.Client
             LockCursor(false);
         }
 
+        /// Middle mouse: mark the resource under the crosshair (or the spot on the ground) for the whole room.
+        void Ping()
+        {
+            if (Time.time - lastPing < 0.4f || !PingMarkers.Target(Camera, Sim, out var position, out byte kind)) return;
+            lastPing = Time.time;
+            if (net != null) net.Send(Msg.Ping, w => { w.Write(position); w.Write(kind); });
+            else Pings.Add(LocalId, "", position, kind);
+        }
+
         void ClearViews()
         {
+            Pings?.Clear();
             foreach (var d in new[] { actorViews, enemyViews, bulletViews, pickupViews })
             {
                 foreach (var v in d.Values) Destroy(v);
@@ -340,6 +359,7 @@ namespace RiftWard.Client
                 yaw = Mathf.Repeat(yaw + Input.GetAxisRaw("Mouse X") * LookSensitivity * 10f * GameSettings.Sensitivity + Mathf.PI, Mathf.PI * 2f) - Mathf.PI;
                 pitch = Mathf.Clamp(pitch + Input.GetAxisRaw("Mouse Y") * LookSensitivity * 10f * GameSettings.Sensitivity, -Defs.LookLimit, Defs.LookLimit);
                 if (TestAimbot && Input.GetMouseButton(1)) LockOnNearest(Time.deltaTime);
+                if (Input.GetMouseButtonDown(2)) Ping();
                 if (Bindings.Pressed(Bindings.Action.View)) thirdPerson = !thirdPerson;
                 if (Bindings.Pressed(Bindings.Action.Slot1)) desiredSlot = 0;
                 if (Bindings.Pressed(Bindings.Action.Slot2)) desiredSlot = 1;
@@ -827,6 +847,7 @@ namespace RiftWard.Client
             if (Mathf.Abs(drift) > 0.5f) visualClock = Sim.Elapsed;          // big jump (start, pause, lag): snap
             else visualClock += drift * (1f - Mathf.Exp(-4f * dt));       // otherwise ease toward the sim
             Sim.Actors.TryGetValue(LocalId, out var me);
+            Pings.Update(Camera, Sim, me != null ? me.Position : Camera.transform.position);
             foreach (var a in Sim.Actors.Values)
             {
                 if (!actorViews.TryGetValue(a.Id, out var view))
@@ -973,9 +994,14 @@ namespace RiftWard.Client
             }
             float dashT = me.DashCooldown > 0 ? Defs.DashCooldown - me.DashCooldown : 99f;
             float dash = me.Alive && dashT < 0.32f ? Mathf.Sin(Mathf.PI * dashT / 0.32f) : 0f;
-            bool zooming = Input.GetMouseButton(1) && showWeapon && Active;
+            bool zooming = (Input.GetMouseButton(1) && Active || AimForCapture) && showWeapon;
             zoomFov = Mathf.Lerp(zoomFov, BaseFov * (zooming ? me.Zoom : 1f), 1f - Mathf.Exp(-14f * dt));
             Camera.fieldOfView = zoomFov + 7f * dash;
+            // Aim down sights: bring the gun up to the centre of the view while right mouse is held.
+            ads = Mathf.Lerp(ads, zooming && !me.Melee && reloadIdle(me) ? 1f : 0f, 1f - Mathf.Exp(-16f * dt));
+            Hud.SetAds(ads, me.WeaponId == "sniper");
+            // Sniper: once the scope fills the screen, hide the gun model so it doesn't poke into the glass.
+            if (weaponHolder != null) weaponHolder.gameObject.SetActive(showWeapon && !(me.WeaponId == "sniper" && ads > 0.8f));
             shake = Mathf.Max(0, shake - dt);
             // Reload: tilt the weapon, drop the magazine out of frame, seat a fresh one, then settle.
             float reload = me.Reload > 0 && me.ReloadTime > 0 ? 1f - me.Reload / me.ReloadTime : 0f;
@@ -996,8 +1022,9 @@ namespace RiftWard.Client
             float seat = reload > 0.8f && reload < 0.92f ? Mathf.Sin(Mathf.PI * (reload - 0.8f) / 0.12f) : 0f;
             AnimateWeapon(me, dt);
             weaponHolder.localPosition = WeaponRest + new Vector3(0.02f, -0.045f, -0.1f) * dash + new Vector3(0, 0, -shake)
-                + new Vector3(-0.03f, -0.07f, -0.04f) * tilt + new Vector3(0, 0.012f, 0) * seat + new Vector3(0, 0.006f, -0.035f) * kick + meleeOffset;
-            weaponHolder.localRotation = Quaternion.Euler(new Vector3(6f, 2f, -6f) * dash + new Vector3(-14f, 18f, 32f) * tilt + new Vector3(-4f, 0, 0) * seat
+                + new Vector3(-0.03f, -0.07f, -0.04f) * tilt + new Vector3(0, 0.012f, 0) * seat + new Vector3(0, 0.006f, -0.035f) * kick + meleeOffset
+                + new Vector3(-WeaponRest.x, 0.02f, 0.1f) * ads;
+            weaponHolder.localRotation = Quaternion.Euler(new Vector3(-1.5f, 0, 0) * ads + new Vector3(6f, 2f, -6f) * dash + new Vector3(-14f, 18f, 32f) * tilt + new Vector3(-4f, 0, 0) * seat
                 + new Vector3(-5f, 0, 0) * kick + meleeEuler);
         }
 

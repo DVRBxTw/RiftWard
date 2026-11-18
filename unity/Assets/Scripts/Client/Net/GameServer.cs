@@ -20,7 +20,7 @@ namespace RiftWard.Client
             public Profile Profile;
             public bool Pending;
             public int[] OfferSent;
-            public float LastInput;
+            public float LastInput, LastPing = -9f;
             public AdminSettings Admin = new AdminSettings();
             public Room Room;
             /// Region and difficulty picked while playing alone (no room).
@@ -393,7 +393,15 @@ namespace RiftWard.Client
                         if (room != null) room.Paused = pauseOn && room.Members.Count == 1;
                         break;
                     case Msg.RefreshFriends:
-                        FetchFriends(p);
+                        FetchFriends(p, true);
+                        break;
+                    case Msg.Ping:
+                        var pingAt = r.ReadVector3();
+                        byte pingKind = r.ReadByte();
+                        if (mode != "playing" || sim == null || pingKind > 4 || clock - p.LastPing < 0.35f) break;
+                        if (float.IsNaN(pingAt.x + pingAt.y + pingAt.z) || pingAt.sqrMagnitude > 1e6f) break;
+                        p.LastPing = clock;
+                        Broadcast(room, Protocol.Frame(Msg.PingMark, w => { w.Write(id); w.Write(p.ChatName); w.Write(pingAt); w.Write(pingKind); }));
                         break;
                     case Msg.InviteFriend:
                         int invitee = r.ReadInt32();
@@ -460,13 +468,22 @@ namespace RiftWard.Client
 
         Player Online(int accountId) => players.Values.FirstOrDefault(o => o.Profile != null && o.AccountId == accountId);
 
-        void FetchFriends(Player p)
+        /// <param name="cascade">A friendship changed: also refetch every online player on either side of it,
+        /// so the other account sees the change (and this player's presence) without logging in again.</param>
+        void FetchFriends(Player p, bool cascade = false)
         {
             api.Post("/api/server/friends", new Dictionary<string, object> { ["account_id"] = p.AccountId }, result =>
             {
                 if (!result.Bool("ok") || !players.ContainsValue(p)) return;
+                var before = p.Friends;
                 p.Friends = (result.Arr("friends") ?? new List<object>()).Select(o => o is double d ? (int)d : 0).Where(i => i > 0).ToList();
                 SendPresence(p);
+                if (!cascade) return;
+                foreach (int fid in before.Union(p.Friends).Distinct())
+                {
+                    var other = Online(fid);
+                    if (other != null && other != p) FetchFriends(other);
+                }
             });
         }
 

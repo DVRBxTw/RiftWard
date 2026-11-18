@@ -1096,7 +1096,8 @@ namespace RiftWard.Client
         // ---- friends
 
         Dictionary<string, object> friendData;
-        readonly Dictionary<int, (Text status, Image dot, Button invite)> friendRows = new Dictionary<int, (Text, Image, Button)>();
+        readonly Dictionary<int, (Text status, Image dot, Button invite, RectTransform row, string name)> friendRows = new Dictionary<int, (Text, Image, Button, RectTransform, string)>();
+        Text friendCount; int friendTotal;
 
         public void ShowFriends(bool fetch = true)
         {
@@ -1111,7 +1112,9 @@ namespace RiftWard.Client
             var head = Ui.Rect(left, "Head").Sized(30);
             Ui.Label(head, "好友名單", 22, Palette.Bone, TextAnchor.MiddleLeft, true).rectTransform.Fill();
             int online = friends.Count(f => FriendPresence.StateOf(f.Int("id")) != PresenceState.Offline);
-            Ui.Label(head, $"線上 {online} · 共 {friends.Count} / 100", 13, Palette.Muted, TextAnchor.MiddleRight).rectTransform.Fill();
+            friendTotal = friends.Count;
+            friendCount = Ui.Label(head, $"線上 {online} · 共 {friends.Count} / 100", 13, Palette.Muted, TextAnchor.MiddleRight);
+            friendCount.rectTransform.Fill();
             Ui.Label(left, app.Net.Welcomed ? "按「邀請」會把好友拉進你的房間；你還沒有房間時會自動建立一個。" : "目前未連線到遊戲伺服器，無法顯示上線狀態或邀請好友。", 13, Palette.Muted).Sized(20);
             var list = Widgets.ScrollList(left, out _);
             list.parent.gameObject.AddComponent<LayoutElement>().flexibleHeight = 1;
@@ -1208,7 +1211,7 @@ namespace RiftWard.Client
             var invite = Ui.Button(rt, "邀請", () => { app.InviteFriend(id); SocialStatus($"已向 {who} 送出組隊邀請"); }, 14, Palette.Teammate, new Color(0, 0, 0, 0), Palette.Teammate);
             invite.GetComponent<RectTransform>().Place(new Vector2(1, 0.5f), new Vector2(-104, 0), new Vector2(76, 32), new Vector2(1, 0.5f));
             PaintInvite(invite, app.Net.Welcomed && FriendPresence.StateOf(id) != PresenceState.Offline);
-            friendRows[id] = (status, dot, invite);
+            friendRows[id] = (status, dot, invite, rt, who ?? "");
         }
 
         static void PaintInvite(Button invite, bool can)
@@ -1230,6 +1233,12 @@ namespace RiftWard.Client
                 kv.Value.dot.color = FriendPresence.ColorOf(kv.Key);
                 PaintInvite(kv.Value.invite, app.Net.Welcomed && FriendPresence.StateOf(kv.Key) != PresenceState.Offline);
             }
+            // The count and the online-first order were drawn before presence arrived: keep them in step too.
+            int online = friendRows.Keys.Count(id => FriendPresence.StateOf(id) != PresenceState.Offline);
+            if (friendCount != null) friendCount.text = $"線上 {online} · 共 {friendTotal} / 100";
+            int index = 0;
+            foreach (var kv in friendRows.OrderBy(kv => FriendPresence.StateOf(kv.Key) == PresenceState.Offline ? 1 : 0).ThenBy(kv => kv.Value.name, StringComparer.OrdinalIgnoreCase))
+                if (kv.Value.row != null) kv.Value.row.SetSiblingIndex(index++);
         }
 
         void LoadFriends()

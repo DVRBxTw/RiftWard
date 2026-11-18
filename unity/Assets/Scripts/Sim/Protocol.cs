@@ -22,6 +22,8 @@ namespace RiftWard.Sim
         DeclineInvite = 16,
         /// [bool paused]: the pause menu opened or closed. Honoured only while the player is alone in the room.
         SetPause = 17,
+        /// [vector3 position][byte kind]: middle-mouse ping (kind 0 = ground, else PickupKind + 1).
+        Ping = 18,
         // server → client
         Welcome = 50, Error = 51, Lobby = 52, Deploy = 53, Snapshot = 54, Events = 55, BuffOffer = 56, Finish = 57, ProfileSync = 58, Notice = 59, BackHome = 60,
         /// [byte channel][int account id][string name][string title][string text][bool admin]
@@ -30,6 +32,8 @@ namespace RiftWard.Sim
         Presence = 62,
         /// [int account id][string name][string room code]
         Invite = 63,
+        /// [int actor id][string name][vector3 position][byte kind]: a ping from someone in the room.
+        PingMark = 64,
     }
 
     /// Chat channels: everyone on the server, the player's room, and server notices.

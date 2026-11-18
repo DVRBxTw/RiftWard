@@ -38,7 +38,7 @@ namespace RiftWard.Client
         };
 
         /// Player text shown in a rich-text label: angle brackets are swapped so nobody can inject markup.
-        static string Safe(string text) => (text ?? "").Replace("<", "‹").Replace(">", "›");
+        public static string Safe(string text) => (text ?? "").Replace("<", "‹").Replace(">", "›");
 
         /// One message as rich text: channel tag, title and name, then the message.
         public static string Format(Line l)
@@ -172,7 +172,7 @@ namespace RiftWard.Client
         {
             canvas = Ui.Canvas("ChatHud", 15);
             logRoot = Ui.Rect(canvas.transform, "ChatLog").Place(new Vector2(0, 0), new Vector2(28, 220), new Vector2(520, 200), new Vector2(0, 0));
-            backing = Ui.Box(logRoot, new Color(0.03f, 0.031f, 0.034f, 0.55f), "Backing").rectTransform;
+            backing = Ui.Box(logRoot, new Color(0.03f, 0.031f, 0.034f, 0.3f), "Backing").rectTransform;
             backing.anchorMin = Vector2.zero; backing.anchorMax = new Vector2(1, 0); backing.pivot = new Vector2(0.5f, 0);
             log = Ui.Label(logRoot, "", 14, Palette.Bone, TextAnchor.LowerLeft);
             log.supportRichText = true;
@@ -213,7 +213,7 @@ namespace RiftWard.Client
         {
             Typing = true;
             GameClient.LockCursor(false);
-            inputRow = Ui.Box(canvas.transform, new Color(0.04f, 0.043f, 0.05f, 0.92f), "ChatInput").rectTransform;
+            inputRow = Ui.Box(canvas.transform, new Color(0.04f, 0.043f, 0.05f, 0.6f), "ChatInput").rectTransform;
             inputRow.Place(new Vector2(0, 0), new Vector2(28, 176), new Vector2(520, 36), new Vector2(0, 0));
             var outline = inputRow.gameObject.AddComponent<Outline>();
             outline.effectColor = Palette.Amber; outline.effectDistance = new Vector2(1, -1);

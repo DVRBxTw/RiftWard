@@ -230,6 +230,13 @@ namespace RiftWard.Client
                     if (netTest && chatLine.Channel == ChatChannel.World && Profile != null && chatLine.AccountId != Profile.Id) testChats++;
                     break;
                 case Msg.Presence: FriendPresence.Read(r); break;
+                case Msg.PingMark:
+                    int pingOwner = r.ReadInt32();
+                    string pingName = r.ReadString();
+                    var pingAt = r.ReadVector3();
+                    byte pingKind = r.ReadByte();
+                    if (inNetMission) Client.Pings.Add(pingOwner, pingOwner == Net.LocalId ? "" : pingName, pingAt, pingKind);
+                    break;
                 case Msg.Invite:
                     int from = r.ReadInt32();
                     string fromName = r.ReadString(), code = r.ReadString();
@@ -803,6 +810,12 @@ namespace RiftWard.Client
             sim.Fire(Client.LocalId, sim.Enemies.Values.First().Position + Vector3.up * Defs.HeadHeight);
             yield return Settle(0.05f);
             yield return Shot(folder, "unity-combat");
+            // Middle-mouse pings: a teammate's mark on the med kit plus your own spot on the ground.
+            Client.Pings.Add(2, "Sean", me.Position + new Vector3(1.5f, 0, 4), 1);
+            Client.Pings.Add(Client.LocalId, "", me.Position + new Vector3(-4f, 0, 14), 0);
+            yield return Settle(0.5f);
+            yield return Shot(folder, "unity-pings");
+            Client.Pings.Clear();
             Chat.Show(true);
             Chat.OpenForCapture();
             for (int f = 0; f < 10; f++) { Chat.Update(true, false); yield return null; }
@@ -832,6 +845,11 @@ namespace RiftWard.Client
             Client.Hud.ResetTransient();
             yield return Settle(0.4f);
             yield return Shot(folder, "unity-rifle");
+            Client.AimForCapture = true;
+            yield return Settle(0.5f);
+            yield return Shot(folder, "unity-rifle-ads");
+            Client.AimForCapture = false;
+            yield return Settle(0.4f);
             me.Reload = me.ReloadTime * 0.55f;
             yield return Settle(0.02f);
             yield return Shot(folder, "unity-reload");
@@ -839,6 +857,11 @@ namespace RiftWard.Client
             Client.SelectSlot(1);
             yield return Settle(0.4f);
             yield return Shot(folder, "unity-sniper");
+            Client.AimForCapture = true;
+            yield return Settle(0.5f);
+            yield return Shot(folder, "unity-sniper-scope");
+            Client.AimForCapture = false;
+            yield return Settle(0.3f);
             Client.Menus.OpenPause();
             float pausedAt = sim.Elapsed;
             yield return Settle(0.6f);

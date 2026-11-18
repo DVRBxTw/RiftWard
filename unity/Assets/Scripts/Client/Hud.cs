@@ -33,6 +33,9 @@ namespace RiftWard.Client
         int comboCount, localKills;
         float lastHp = -1;
         static Sprite disc;
+        readonly List<Image> crossBars = new List<Image>();
+        RectTransform scopeRoot; Image scopeLens, adsShade, redDot; readonly List<Image> scopeLines = new List<Image>();
+        float adsAmount; bool adsSniper;
 
         const float RadarRange = 28f, RadarSize = 168f;
 
@@ -121,7 +124,12 @@ namespace RiftWard.Client
 
             // ---- crosshair, hit markers, damage arcs
             foreach (var (pos, size) in new[] { (new Vector2(-11, 0), new Vector2(8, 2)), (new Vector2(11, 0), new Vector2(8, 2)), (new Vector2(0, 11), new Vector2(2, 8)), (new Vector2(0, -11), new Vector2(2, 8)), (Vector2.zero, new Vector2(2, 2)) })
-                Ui.Box(root, Palette.Bone, "Cross").rectTransform.Place(new Vector2(0.5f, 0.5f), pos, size);
+            {
+                var bar = Ui.Box(root, Palette.Bone, "Cross");
+                bar.rectTransform.Place(new Vector2(0.5f, 0.5f), pos, size);
+                crossBars.Add(bar);
+            }
+            BuildScope(root);
             hitRoot = Ui.Rect(root, "Hit").Place(new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(60, 60));
             for (int i = 0; i < 4; i++)
             {
@@ -224,6 +232,80 @@ namespace RiftWard.Client
             return t;
         }
 
+        /// Aim-down-sights screen: a soft dark ring and red dot for most guns; a full scope (black mask, glass
+        /// tint, mil-dot cross-hair) for the sniper. Drawn under the rest of the HUD.
+        void BuildScope(Transform root)
+        {
+            adsShade = Ui.Box(root, Color.white, "AdsShade");
+            adsShade.sprite = RadialSprite(); adsShade.rectTransform.Fill(); adsShade.raycastTarget = false;
+            adsShade.color = new Color(0, 0, 0, 0);
+            adsShade.transform.SetSiblingIndex(1);
+            redDot = Ui.Box(root, Palette.Danger, "RedDot");
+            redDot.sprite = Disc(); redDot.rectTransform.Place(new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(7, 7)); redDot.gameObject.AddComponent<Outline>().effectColor = new Color(0, 0, 0, 0.6f);
+            redDot.raycastTarget = false;
+            scopeRoot = Ui.Rect(root, "Scope"); scopeRoot.Fill(); scopeRoot.SetSiblingIndex(2);
+            // Mask: a square scope image (clear disc, black outside) plus black bars filling the wide-screen sides.
+            scopeLens = Ui.Box(scopeRoot, Color.white, "Lens");
+            scopeLens.sprite = ScopeSprite(); scopeLens.raycastTarget = false;
+            scopeLens.rectTransform.anchorMin = new Vector2(0.5f, 0); scopeLens.rectTransform.anchorMax = new Vector2(0.5f, 1);
+            scopeLens.rectTransform.sizeDelta = new Vector2(0, 0); scopeLens.preserveAspect = true;
+            foreach (int side in new[] { -1, 1 })
+            {
+                var bar = Ui.Box(scopeRoot, Color.black, "Bar").rectTransform;
+                bar.anchorMin = new Vector2(side < 0 ? 0 : 0.5f, 0); bar.anchorMax = new Vector2(side < 0 ? 0.5f : 1, 1);
+                bar.pivot = new Vector2(side < 0 ? 0 : 1, 0.5f);
+                scopeLines.Add(bar.GetComponent<Image>());
+            }
+            var reticle = new Color(0.02f, 0.02f, 0.02f, 0.95f);
+            // Thin centre cross with thick outer posts, plus mil dots.
+            foreach (var (pos, size) in new[] {
+                (new Vector2(0, 0), new Vector2(760, 1.5f)), (new Vector2(0, 0), new Vector2(1.5f, 760)),
+                (new Vector2(-250, 0), new Vector2(260, 5)), (new Vector2(250, 0), new Vector2(260, 5)), (new Vector2(0, -250), new Vector2(5, 260)) })
+            { var l = Ui.Box(scopeRoot, reticle, "Reticle"); l.rectTransform.Place(new Vector2(0.5f, 0.5f), pos, size); l.raycastTarget = false; }
+            for (int i = -3; i <= 3; i++)
+            {
+                if (i == 0) continue;
+                foreach (var v in new[] { new Vector2(i * 22, 0), new Vector2(0, i * 22) })
+                { var d = Ui.Box(scopeRoot, reticle, "Mil"); d.sprite = Disc(); d.rectTransform.Place(new Vector2(0.5f, 0.5f), v, new Vector2(5, 5)); d.raycastTarget = false; }
+            }
+            var dot = Ui.Box(scopeRoot, Palette.Danger, "Centre"); dot.sprite = Disc(); dot.rectTransform.Place(new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(4, 4));
+            scopeRoot.gameObject.AddComponent<CanvasGroup>().alpha = 0; scopeRoot.GetComponent<CanvasGroup>().blocksRaycasts = false;
+        }
+
+        /// ads: 0 hip … 1 fully aimed. sniper: show the full scope instead of the red dot.
+        public void SetAds(float ads, bool sniper)
+        {
+            adsAmount = ads; adsSniper = sniper;
+            if (scopeRoot == null) return;
+            float scope = sniper ? Mathf.Clamp01((ads - 0.75f) / 0.25f) : 0f;
+            scopeRoot.GetComponent<CanvasGroup>().alpha = scope;
+            float lensW = scopeRoot.rect.height;
+            scopeLens.rectTransform.sizeDelta = new Vector2(lensW, 0);
+            scopeLines[0].rectTransform.offsetMin = Vector2.zero; scopeLines[0].rectTransform.offsetMax = new Vector2(-lensW / 2f + 1f, 0);
+            scopeLines[1].rectTransform.offsetMin = new Vector2(lensW / 2f - 1f, 0); scopeLines[1].rectTransform.offsetMax = Vector2.zero;
+            adsShade.color = new Color(0, 0, 0, sniper ? 0 : 0.55f * ads);
+            float dot = sniper ? 0 : Mathf.Clamp01((ads - 0.5f) / 0.5f);
+            redDot.color = new Color(Palette.Danger.r, Palette.Danger.g, Palette.Danger.b, dot);
+            foreach (var c in crossBars) { var col = c.color; col.a = 1f - Mathf.Clamp01(ads * 1.6f); c.color = col; }
+        }
+
+        /// Scope mask: transparent disc with a soft dark edge and faint glass tint, opaque black outside.
+        static Sprite ScopeSprite()
+        {
+            const int n = 512;
+            var tex = new Texture2D(n, n) { wrapMode = TextureWrapMode.Clamp };
+            var px = new Color[n * n];
+            for (int y = 0; y < n; y++)
+                for (int x = 0; x < n; x++)
+                {
+                    float d = new Vector2(x - n / 2f + 0.5f, y - n / 2f + 0.5f).magnitude / (n / 2f);
+                    float a = d > 0.96f ? 1f : Mathf.Lerp(0.06f, 0.92f, Mathf.Pow(Mathf.Clamp01((d - 0.72f) / 0.24f), 1.6f));
+                    px[y * n + x] = d > 0.96f ? Color.black : new Color(0.01f, 0.03f, 0.04f, a);
+                }
+            tex.SetPixels(px); tex.Apply();
+            return Sprite.Create(tex, new Rect(0, 0, n, n), new Vector2(0.5f, 0.5f));
+        }
+
         static Sprite RadialSprite()
         {
             const int n = 128;
@@ -275,6 +357,7 @@ namespace RiftWard.Client
 
         public void ResetTransient()
         {
+            SetAds(0f, false);
             banner.text = ""; bannerTimer = 0; comboCount = 0; comboTimer = 0; damageFlash = 0; lastHp = -1; localKills = 0;
             foreach (var f in floaters) Object.Destroy(f.text.gameObject);
             floaters.Clear();
