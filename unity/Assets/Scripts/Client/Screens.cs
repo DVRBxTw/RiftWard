@@ -984,9 +984,9 @@ namespace RiftWard.Client
         void TaskCard(Transform parent, DailyTask task, int index)
         {
             bool ready = task.Done && !task.Claimed;
-            var card = Ui.Box(parent, ready ? new Color(Palette.Amber.r, Palette.Amber.g, Palette.Amber.b, 0.08f) : Palette.Sheet, "Task").Sized(104);
-            var outline = card.gameObject.AddComponent<Outline>();
-            outline.effectColor = ready ? Palette.Amber : Palette.Line;
+            var card = Ui.Box(parent, ready ? new Color(0.115f, 0.105f, 0.085f, 1f) : Palette.Sheet, "Task").Sized(104);
+            if (ready) Ui.Frame(card.rectTransform, Palette.Amber, 1f, 3f);
+            else card.gameObject.AddComponent<Outline>().effectColor = Palette.Line;
             var c = card.rectTransform;
             Ui.Label(c, $"0{index + 1}", 14, task.Done ? Palette.Amber : Palette.Muted).rectTransform.Place(new Vector2(0, 1), new Vector2(22, -20), new Vector2(30, 20), new Vector2(0, 1));
             Ui.Label(c, task.Text, 20, task.Claimed ? Palette.Muted : Palette.Bone, TextAnchor.UpperLeft, true)
@@ -999,9 +999,13 @@ namespace RiftWard.Client
             Ui.Label(c, $"{task.Progress} / {task.Goal}", 14, task.Done ? Palette.Amber : Palette.Muted, TextAnchor.MiddleLeft, task.Done)
                 .rectTransform.Place(new Vector2(0, 1), new Vector2(402, -49), new Vector2(110, 20), new Vector2(0, 1));
             RewardRow(c, task.Reward, new Vector2(60, -72), task.Claimed);
-            var button = ready ? PrimaryButton(c, "領取", () => Claim(task.Id), 18)
-                : Ui.Button(c, task.Claimed ? "已領取" : "進行中", null, 16, Palette.Muted, new Color(0, 0, 0, 0), Palette.Line);
-            button.interactable = ready;
+            if (!ready)
+            {
+                Ui.Label(c, task.Claimed ? "已領取" : "進行中", 16, task.Claimed ? Palette.Muted : Palette.Hex("b9b5ab"), TextAnchor.MiddleRight).rectTransform
+                    .Place(new Vector2(1, 0.5f), new Vector2(-30, 0), new Vector2(124, 48), new Vector2(1, 0.5f));
+                return;
+            }
+            var button = PrimaryButton(c, "領取", () => Claim(task.Id), 18);
             button.GetComponent<RectTransform>().Place(new Vector2(1, 0.5f), new Vector2(-22, 0), new Vector2(124, 48), new Vector2(1, 0.5f));
         }
 
@@ -1009,18 +1013,22 @@ namespace RiftWard.Client
         {
             bool ready = daily.BonusReady && !daily.BonusClaimed;
             var accent = Gear.RarityColors[3];
-            var card = Ui.Box(parent, ready ? new Color(accent.r, accent.g, accent.b, 0.1f) : Palette.Sheet, "Bonus").Sized(96);
-            var outline = card.gameObject.AddComponent<Outline>();
-            outline.effectColor = ready ? accent : Palette.Line;
+            var card = Ui.Box(parent, ready ? new Color(0.115f, 0.105f, 0.085f, 1f) : Palette.Sheet, "Bonus").Sized(96);
+            if (ready) Ui.Frame(card.rectTransform, accent, 1f, 3f);
+            else card.gameObject.AddComponent<Outline>().effectColor = Palette.Line;
             var c = card.rectTransform;
             Ui.Box(c, accent, "Mark").rectTransform.Place(new Vector2(0, 0.5f), Vector2.zero, new Vector2(3, 96), new Vector2(0, 0.5f));
             Caps(c, "DAILY BONUS", accent).rectTransform.Place(new Vector2(0, 1), new Vector2(22, -14), new Vector2(200, 16), new Vector2(0, 1));
             Ui.Label(c, $"全部完成獎勵  ·  已領 {daily.ClaimedCount} / {daily.Tasks.Count}", 19, daily.BonusClaimed ? Palette.Muted : Palette.Bone, TextAnchor.UpperLeft, true)
                 .rectTransform.Place(new Vector2(0, 1), new Vector2(22, -32), new Vector2(460, 26), new Vector2(0, 1));
             RewardRow(c, daily.Bonus, new Vector2(22, -66), daily.BonusClaimed);
-            var button = ready ? Ui.Button(c, "領取", () => Claim("bonus"), 18, Palette.Ink, accent, accent)
-                : Ui.Button(c, daily.BonusClaimed ? "已領取" : "未完成", null, 16, Palette.Muted, new Color(0, 0, 0, 0), Palette.Line);
-            button.interactable = ready;
+            if (!ready)
+            {
+                Ui.Label(c, daily.BonusClaimed ? "已領取" : "未完成", 16, Palette.Muted, TextAnchor.MiddleRight).rectTransform
+                    .Place(new Vector2(1, 0.5f), new Vector2(-30, 0), new Vector2(124, 48), new Vector2(1, 0.5f));
+                return;
+            }
+            var button = Ui.Button(c, "領取", () => Claim("bonus"), 18, Palette.Ink, accent, accent);
             button.GetComponent<RectTransform>().Place(new Vector2(1, 0.5f), new Vector2(-22, 0), new Vector2(124, 48), new Vector2(1, 0.5f));
         }
 
@@ -1357,7 +1365,13 @@ namespace RiftWard.Client
                 var actions = Ui.HStack(right, 10).Sized(48);
                 int id = pick.Int("id");
                 if (hasGift && !claimed) PrimaryButton(actions, "領取附件", () => MailRequest("/api/mail/claim", new Dictionary<string, object> { ["id"] = id }), 17);
-                var delete = Ui.Button(actions, "刪除郵件", () => { MailRequest("/api/mail/delete", new Dictionary<string, object> { ["id"] = id }); mailPick = -1; }, 15, Palette.Muted);
+                Button delete = null;
+                bool deleteArmed = false;
+                delete = Ui.DangerButton(actions, "刪除郵件", () =>
+                {
+                    if (!deleteArmed) { deleteArmed = true; delete.SetCaption("確定刪除？"); return; }
+                    MailRequest("/api/mail/delete", new Dictionary<string, object> { ["id"] = id }); mailPick = -1;
+                }, 15);
                 delete.interactable = claimed;
             }
             if (fetch) MailRequest("/api/mail/list", null);
@@ -1555,9 +1569,9 @@ namespace RiftWard.Client
         void AchievementCard(Transform parent, Achievement a)
         {
             bool ready = a.CanClaim;
-            var card = Ui.Box(parent, ready ? new Color(Palette.Amber.r, Palette.Amber.g, Palette.Amber.b, 0.08f) : Palette.Sheet, "Achievement").Sized(100);
-            var outline = card.gameObject.AddComponent<Outline>();
-            outline.effectColor = ready ? Palette.Amber : Palette.Line;
+            var card = Ui.Box(parent, ready ? new Color(0.115f, 0.105f, 0.085f, 1f) : Palette.Sheet, "Achievement").Sized(100);
+            if (ready) Ui.Frame(card.rectTransform, Palette.Amber, 1f, 3f);
+            else card.gameObject.AddComponent<Outline>().effectColor = Palette.Line;
             var c = card.rectTransform;
             Color tierColor = a.Complete ? TierColors[2] : TierColors[Mathf.Clamp(a.Claimed, 0, 2)];
             Ui.Label(c, a.Name, 16, a.Complete ? TierColors[2] : Palette.Bone, TextAnchor.UpperLeft, true).rectTransform.Place(new Vector2(0, 1), new Vector2(14, -9), new Vector2(170, 22), new Vector2(0, 1));
@@ -1567,7 +1581,7 @@ namespace RiftWard.Client
                 var pip = Ui.Box(c, t < a.Claimed ? TierColors[t] : new Color(1, 1, 1, 0.1f), "Pip").rectTransform;
                 pip.Place(new Vector2(1, 1), new Vector2(-14 - (2 - t) * 18, -15), new Vector2(14, 5), new Vector2(1, 1));
             }
-            Ui.Label(c, a.Text, 12, Palette.Muted).rectTransform.Place(new Vector2(0, 1), new Vector2(14, -33), new Vector2(256, 18), new Vector2(0, 1));
+            Ui.Label(c, a.Text, 13, Palette.Hex("b9b5ab")).rectTransform.Place(new Vector2(0, 1), new Vector2(14, -33), new Vector2(256, 18), new Vector2(0, 1));
             if (a.Complete)
             {
                 Ui.Label(c, string.IsNullOrEmpty(a.Title) ? "全部完成" : $"全部完成 · 稱號〔{a.Title}〕", 13, TierColors[2], TextAnchor.UpperLeft, true)
@@ -1581,9 +1595,13 @@ namespace RiftWard.Client
             Ui.Label(c, $"{Mathf.Min(a.Progress, a.Goal)} / {a.Goal}", 12, ready ? Palette.Amber : Palette.Muted, TextAnchor.MiddleLeft, ready)
                 .rectTransform.Place(new Vector2(0, 1), new Vector2(122, -53), new Vector2(80, 18), new Vector2(0, 1));
             RewardRow(c, a.Reward, new Vector2(14, -76), false, 12, a.Claimed == 2 && !string.IsNullOrEmpty(a.Title) ? $"稱號〔{a.Title}〕" : null);
-            var button = ready ? PrimaryButton(c, $"領取{AchievementTier(a.Claimed)}", () => ClaimAchievement(a.Id), 14)
-                : Ui.Button(c, $"{AchievementTier(a.Claimed)}階", null, 13, tierColor, new Color(0, 0, 0, 0), Palette.Line);
-            button.interactable = ready;
+            if (!ready)
+            {
+                Ui.Label(c, $"下一階 · {AchievementTier(a.Claimed)}", 13, tierColor, TextAnchor.MiddleRight).rectTransform
+                    .Place(new Vector2(1, 1), new Vector2(-14, -52), new Vector2(90, 32), new Vector2(1, 1));
+                return;
+            }
+            var button = PrimaryButton(c, $"領取{AchievementTier(a.Claimed)}", () => ClaimAchievement(a.Id), 14);
             button.GetComponent<RectTransform>().Place(new Vector2(1, 1), new Vector2(-12, -52), new Vector2(64, 32), new Vector2(1, 1));
         }
 
@@ -2056,9 +2074,9 @@ namespace RiftWard.Client
             var r = Begin("admin");
             var pad = Ui.Rect(r, "Pad").Fill();
             pad.offsetMin = new Vector2(48, 40); pad.offsetMax = new Vector2(-48, -40);
-            Ui.Button(pad, "← 返回基地", app.ShowHome, 14, Palette.Muted, new Color(0, 0, 0, 0), new Color(0, 0, 0, 0))
-                .GetComponent<RectTransform>().Place(new Vector2(0, 1), new Vector2(-14, 0), new Vector2(130, 24), new Vector2(0, 1));
-            Ui.Label(pad, "管理員控制台", 40, Palette.Bone, TextAnchor.UpperLeft, true).rectTransform.Place(new Vector2(0, 1), new Vector2(0, -30), new Vector2(500, 52), new Vector2(0, 1));
+            Ui.Button(pad, "← 返回基地", app.ShowHome, 15)
+                .GetComponent<RectTransform>().Place(new Vector2(0, 1), Vector2.zero, new Vector2(130, 32), new Vector2(0, 1));
+            Ui.Label(pad, "管理員控制台", 40, Palette.Bone, TextAnchor.UpperLeft, true).rectTransform.Place(new Vector2(0, 1), new Vector2(0, -40), new Vector2(500, 52), new Vector2(0, 1));
             Ui.Button(pad, "管理員能力", ShowAbilityOverlay, 15, Palette.Danger, new Color(0, 0, 0, 0), Palette.Danger)
                 .GetComponent<RectTransform>().Place(new Vector2(1, 1), new Vector2(0, -38), new Vector2(140, 40), new Vector2(1, 1));
 
@@ -2125,7 +2143,16 @@ namespace RiftWard.Client
                 });
             }
             Ui.Button(actions, "發給指定玩家", () => Send(false), 15);
-            Ui.Button(actions, "發給全部玩家", () => Send(true), 15, Palette.Amber, null, Palette.Amber);
+            // Affects every account: asks once before it goes out.
+            Button toAll = null;
+            float toAllArmed = -9f;
+            toAll = Ui.DangerButton(actions, "發給全部玩家", () =>
+            {
+                if (Time.unscaledTime - toAllArmed > 4f) { toAllArmed = Time.unscaledTime; toAll.SetCaption("確定發給全部？"); return; }
+                toAll.SetCaption("發給全部玩家"); toAllArmed = -9f;
+                Send(true);
+            }, 15);
+            toAll.gameObject.AddComponent<RevertCaption>().Arm(() => Time.unscaledTime - toAllArmed > 4f, "發給全部玩家", Palette.Danger);
             adminStatus = Ui.Label(gs, "", 14, Palette.Amber).Sized(22);
             Widgets.Section(gs, "玩家名單").Sized(22);
             adminList = Widgets.ScrollList(gs, out _);

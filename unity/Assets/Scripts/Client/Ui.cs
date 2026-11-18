@@ -128,6 +128,30 @@ namespace RiftWard.Client
         public static Button DangerButton(Transform parent, string text, Action onClick, int size = 15) =>
             Button(parent, text, onClick, size, Palette.Danger, new Color(Palette.Danger.r, Palette.Danger.g, Palette.Danger.b, 0.06f), new Color(Palette.Danger.r, Palette.Danger.g, Palette.Danger.b, 0.6f));
 
+        /// A thin border drawn with four edge strips, for translucent panels (an Outline effect would copy the
+        /// whole translucent graphic behind itself and tint it solid). Optional accent bar on the left edge.
+        public static void Frame(RectTransform r, Color color, float width = 1f, float leftBar = 0f)
+        {
+            void Edge(Vector2 min, Vector2 max, Vector2 size)
+            {
+                var e = Box(r, color, "Frame").rectTransform;
+                e.anchorMin = min; e.anchorMax = max; e.pivot = new Vector2(0.5f, 0.5f);
+                e.sizeDelta = size; e.anchoredPosition = Vector2.zero;
+                e.GetComponent<Image>().raycastTarget = false;
+            }
+            Edge(new Vector2(0, 1), new Vector2(1, 1), new Vector2(0, width));
+            Edge(new Vector2(0, 0), new Vector2(1, 0), new Vector2(0, width));
+            Edge(new Vector2(0, 0), new Vector2(0, 1), new Vector2(width, 0));
+            Edge(new Vector2(1, 0), new Vector2(1, 1), new Vector2(width, 0));
+            if (leftBar > 0)
+            {
+                var bar = Box(r, color, "AccentBar").rectTransform;
+                bar.anchorMin = new Vector2(0, 0); bar.anchorMax = new Vector2(0, 1); bar.pivot = new Vector2(0, 0.5f);
+                bar.sizeDelta = new Vector2(leftBar, 0); bar.anchoredPosition = Vector2.zero;
+                bar.GetComponent<Image>().raycastTarget = false;
+            }
+        }
+
         /// The page's main action: Enter presses it when no text field is being typed in (or even while typing,
         /// when DefaultWhileTyping is set — a login form). Only safe actions are registered; never a purchase.
         public static Button DefaultButton;
@@ -182,12 +206,13 @@ namespace RiftWard.Client
     }
     /// Hover and disabled feedback for every Ui.Button. The Button's own colour tint only touches the
     /// background image, which is invisible on transparent buttons, and never dims the label.
-    public sealed class ButtonFeel : MonoBehaviour, UnityEngine.EventSystems.IPointerEnterHandler, UnityEngine.EventSystems.IPointerExitHandler
+    public sealed class ButtonFeel : MonoBehaviour, UnityEngine.EventSystems.IPointerEnterHandler, UnityEngine.EventSystems.IPointerExitHandler,
+        UnityEngine.EventSystems.ISelectHandler, UnityEngine.EventSystems.IDeselectHandler
     {
         Button button; Text label; Image fill; Outline outline;
         // Resting colours (what the caller set) and what this component last wrote over them.
         Color labelColor, fillColor, outlineColor, labelShown, fillShown, outlineShown;
-        bool hover, shownHover, shownEnabled = true, started;
+        bool hover, focus, shownHover, shownEnabled = true, started;
 
         void Start()
         {
@@ -200,7 +225,9 @@ namespace RiftWard.Client
 
         public void OnPointerEnter(UnityEngine.EventSystems.PointerEventData e) => hover = true;
         public void OnPointerExit(UnityEngine.EventSystems.PointerEventData e) => hover = false;
-        void OnDisable() => hover = false;
+        public void OnSelect(UnityEngine.EventSystems.BaseEventData e) => focus = true;
+        public void OnDeselect(UnityEngine.EventSystems.BaseEventData e) => focus = false;
+        void OnDisable() { hover = false; focus = false; }
 
         void LateUpdate()
         {
@@ -210,7 +237,7 @@ namespace RiftWard.Client
             if (label != null && label.color != labelShown) { labelColor = label.color; changed = true; }
             if (fill != null && fill.color != fillShown) { fillColor = fill.color; changed = true; }
             if (outline != null && outline.effectColor != outlineShown) { outlineColor = outline.effectColor; changed = true; }
-            bool enabled = button.interactable, lit = hover && enabled;
+            bool enabled = button.interactable, lit = (hover || focus) && enabled;
             if (!changed && lit == shownHover && enabled == shownEnabled) return;
             shownHover = lit; shownEnabled = enabled;
             if (label != null)

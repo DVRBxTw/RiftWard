@@ -513,12 +513,43 @@ namespace RiftWard.Client
             var b = Ui.DefaultButton;
             if (b == null || !(Input.GetKeyDown(KeyCode.Return) || Input.GetKeyDown(KeyCode.KeypadEnter))) return;
             if (!b.isActiveAndEnabled || !b.interactable || ChatHud.Typing) return;
-            if (!Ui.DefaultWhileTyping)
-            {
-                var focused = UnityEngine.EventSystems.EventSystem.current?.currentSelectedGameObject;
-                if (focused != null && focused.GetComponent<UnityEngine.UI.InputField>() != null) return;
-            }
+            var focused = UnityEngine.EventSystems.EventSystem.current?.currentSelectedGameObject;
+            // A focused button answers Enter itself (the event system submits it); never press two things at once.
+            if (focused != null && focused.activeInHierarchy && focused.GetComponent<UnityEngine.UI.Button>() != null) return;
+            if (!Ui.DefaultWhileTyping && focused != null && focused.GetComponent<UnityEngine.UI.InputField>() != null) return;
             b.onClick.Invoke();
+        }
+
+        /// Tab / Shift+Tab walks the menu's buttons, fields, toggles and sliders in reading order (top to bottom,
+        /// then left to right). Arrow keys then move between neighbours through the event system's own navigation.
+        void TabNavigate()
+        {
+            if (!Input.GetKeyDown(KeyCode.Tab) || ChatHud.Typing || Cursor.lockState == CursorLockMode.Locked) return;
+            var events = UnityEngine.EventSystems.EventSystem.current;
+            if (events == null) return;
+            var all = new List<UnityEngine.UI.Selectable>();
+            foreach (var s in UnityEngine.UI.Selectable.allSelectablesArray)
+                if (s != null && s.IsInteractable() && s.isActiveAndEnabled && s.navigation.mode != UnityEngine.UI.Navigation.Mode.None) all.Add(s);
+            if (all.Count == 0) return;
+            Vector2 At(UnityEngine.UI.Selectable s)
+            {
+                var rt = (RectTransform)s.transform;
+                var corners = new Vector3[4];
+                rt.GetWorldCorners(corners);
+                return new Vector2(corners[1].x, corners[1].y);   // top-left
+            }
+            all.Sort((a, b) =>
+            {
+                Vector2 pa = At(a), pb = At(b);
+                if (Mathf.Abs(pa.y - pb.y) > 12f) return pb.y.CompareTo(pa.y);
+                return pa.x.CompareTo(pb.x);
+            });
+            var current = events.currentSelectedGameObject != null ? events.currentSelectedGameObject.GetComponent<UnityEngine.UI.Selectable>() : null;
+            int index = current != null ? all.IndexOf(current) : -1;
+            bool back = Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift);
+            int next = index < 0 ? (back ? all.Count - 1 : 0) : (index + (back ? -1 : 1) + all.Count) % all.Count;
+            events.SetSelectedGameObject(all[next].gameObject);
+            if (all[next] is UnityEngine.UI.InputField field) field.ActivateInputField();
         }
 
         void Update()
@@ -527,6 +558,7 @@ namespace RiftWard.Client
             Net.Poll();
             Overlay.Update();
             PressDefaultOnEnter();
+            TabNavigate();
             Chat.Update(inNetMission, Client.Sim != null && Client.Sim.State == MissionState.Playing && !Client.Paused && !Client.Sim.BuffPending);
             if (!training || Client.Sim == null) return;
             var me = Client.Sim.Actors[Client.LocalId];
