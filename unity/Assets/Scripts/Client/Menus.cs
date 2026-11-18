@@ -153,15 +153,18 @@ namespace RiftWard.Client
         public sealed class ResultProgress
         {
             public int Xp, Level, LevelXp, Wave, BestWave;
+            /// Difficulty tier this clear opened for the region, or -1.
+            public int Unlocked = -1;
         }
 
-        public void ShowResult(bool success, int region, int kills, float elapsed, int gold, int totalGold, string grade = "", int[] record = null, ResultProgress progress = null)
+        public void ShowResult(bool success, int region, int kills, float elapsed, int gold, int totalGold, string grade = "", int[] record = null, ResultProgress progress = null, int difficulty = 0)
         {
             HideAll();
             GameClient.LockCursor(false);
             var root = Scrim(canvas.transform, 0.9f);
             result = root.gameObject;
-            var sheet = Sheet(root, success ? Palette.Amber : Palette.Danger, new Vector2(600, progress != null ? 500 : 480));
+            bool opened = progress != null && progress.Unlocked > 0;
+            var sheet = Sheet(root, success ? Palette.Amber : Palette.Danger, new Vector2(600, (progress != null ? 500 : 480) + (opened ? 34 : 0)));
             if (!string.IsNullOrEmpty(grade))
             {
                 var g = Ui.Label(sheet, grade, 96, grade == "S" ? Palette.Amber : Palette.Bone, TextAnchor.UpperRight, true);
@@ -173,7 +176,18 @@ namespace RiftWard.Client
             stack.GetComponent<VerticalLayoutGroup>().padding = new RectOffset(36, 36, 32, 32);
             Ui.Label(stack, success ? "MISSION COMPLETE" : "SIGNAL LOST", 13, success ? Palette.Amber : Palette.Danger).Sized(18);
             Ui.Label(stack, success ? "任務完成" : "任務失敗", 46, Palette.Bone, TextAnchor.UpperLeft, true).Sized(56);
-            Ui.Label(stack, Defs.Regions[region].Name, 22, Palette.Bone).Sized(30);
+            var tier = Defs.Difficulty(difficulty);
+            var place = Ui.HStack(stack, 12).Sized(30);
+            place.GetComponent<HorizontalLayoutGroup>().childForceExpandWidth = false;
+            Ui.Label(place, Defs.Regions[region].Name, 22, Palette.Bone).Sized(-1, Defs.Regions[region].Name.Length * 23 + 4);
+            var badge = Ui.Box(place, new Color(tier.Accent.r / 255f, tier.Accent.g / 255f, tier.Accent.b / 255f, 0.16f), "Tier").Sized(-1, 64);
+            Ui.Label(badge.transform, tier.Name, 15, tier.Accent, TextAnchor.MiddleCenter, true).rectTransform.Fill();
+            Ui.Rect(place, "Rest").gameObject.AddComponent<LayoutElement>().flexibleWidth = 1;
+            if (opened)
+            {
+                var next = Defs.Difficulty(progress.Unlocked);
+                Ui.Label(stack, $"已解鎖  {next.Name}難度  ·  {Defs.Regions[region].Name}", 17, next.Accent, TextAnchor.UpperLeft, true).Sized(20);
+            }
             Ui.Label(stack, $"全隊擊破  {kills}      作戰時間  {(int)elapsed / 60:00}:{(int)elapsed % 60:00}", 18, Palette.Hex("d6d1c6")).Sized(26);
             if (record != null)
             {

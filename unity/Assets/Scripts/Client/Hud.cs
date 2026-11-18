@@ -346,7 +346,7 @@ namespace RiftWard.Client
             toastPill.localScale = Vector3.one * (0.92f + 0.08f * toastAlpha);
             toastPill.sizeDelta = new Vector2(Mathf.Max(240, toast.preferredWidth + 48), 34);
 
-            region.text = Defs.Regions[sim.Region].Name;
+            region.text = sim.Difficulty > 0 ? $"{Defs.Regions[sim.Region].Name}  ·  {Defs.Difficulty(sim.Difficulty).Name}" : Defs.Regions[sim.Region].Name;
             if (Changed(wave, sim.Wave)) wave.text = $"第 {sim.Wave} 波  / {Defs.WavesPerMission}";
             if (Changed(stats, ((long)sim.Enemies.Count << 42) | ((long)sim.Kills << 21) | (long)(int)sim.Elapsed))
                 stats.text = $"剩餘 {sim.Enemies.Count:00}    擊破 {sim.Kills:00}    {(int)sim.Elapsed / 60:00}:{(int)sim.Elapsed % 60:00}";

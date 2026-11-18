@@ -25,6 +25,7 @@ class ServiceTests(unittest.TestCase):
         (releases / (self.digest + ".pck")).write_bytes(self.payload)
         (releases / "manifest.json").write_text(json.dumps({"version":service.VERSION,"sha256":self.digest,"size":len(self.payload)}))
         self.store = service.Store(self.base / "data")
+        self.store.min_wave_seconds = 0   # timing checks have their own test
         self.server = service.BetaServer(("127.0.0.1",0),self.store,releases)
         self.thread = threading.Thread(target=self.server.serve_forever,daemon=True)
         self.thread.start()
@@ -325,6 +326,292 @@ class ServiceTests(unittest.TestCase):
         progress["mission"] = 0
         self.assertEqual(self.call("/api/server/progress",progress)[0],403)
         self.assertEqual(self.call("/api/server/progress",progress,server_headers)[1]["profile"]["unlocked"],1)
+
+    def test_difficulty_unlocks_per_region(self):
+        account = self.register()
+        key = {"X-Server-Key":self.store.server_key}
+        aid = account["profile"]["id"]
+        self.assertEqual(account["profile"]["cleared"],[-1,-1,-1])
+        # 困難 stays locked until 普通 has been cleared in that region.
+        code, response = self.call("/api/server/progress",{"account_id":aid,"mission":0,"difficulty":1},key)
+        self.assertEqual((code,response["error"]),(400,"難度尚未解鎖"))
+        profile = self.call("/api/server/progress",{"account_id":aid,"mission":0,"difficulty":0},key)[1]["profile"]
+        self.assertEqual(profile["cleared"],[0,-1,-1])
+        profile = self.call("/api/server/progress",{"account_id":aid,"mission":0,"difficulty":1},key)[1]["profile"]
+        self.assertEqual(profile["cleared"],[1,-1,-1])
+        self.assertEqual(self.call("/api/server/progress",{"account_id":aid,"mission":1,"difficulty":2},key)[0],400)
+        for bad in (3,-1,True,"1"):
+            self.assertEqual(self.call("/api/server/progress",{"account_id":aid,"mission":0,"difficulty":bad},key)[0],400)
+        # Clearing a lower tier never lowers the record; higher tiers pay more XP.
+        profile = self.call("/api/server/progress",{"account_id":aid,"mission":0,"difficulty":0},key)[1]["profile"]
+        self.assertEqual(profile["cleared"][0],1)
+        base = {"kills":40,"wave":20,"victory":True}
+        self.assertEqual(service.mission_xp(base),240)
+        self.assertEqual(service.mission_xp({**base,"difficulty":1}),300)
+        self.assertEqual(service.mission_xp({**base,"difficulty":2}),360)
+        self.assertEqual(service.mission_xp({**base,"difficulty":9}),240)
+        # 噩夢 gold above the old 3000 cap is accepted, the new cap is not exceeded.
+        self.assertEqual(self.call("/api/server/reward",{"account_id":aid,"gold":6000},key)[1]["profile"]["gold"],6000)
+        self.assertEqual(self.call("/api/server/reward",{"account_id":aid,"gold":service.MAX_REWARD+1},key)[0],400)
+
+    def test_legacy_accounts_count_passed_regions_as_cleared(self):
+        self.assertEqual(service.Store._parse_cleared("[]",2),[0,0,-1])
+        self.assertEqual(service.Store._parse_cleared("[2,\"x\",true,7]",0),[2,-1,-1])
+        self.assertEqual(service.Store._parse_cleared("not json",1),[0,-1,-1])
+
+    def test_daily_missions(self):
+        account = self.register()
+        auth = {"Authorization":"Bearer "+account["token"]}
+        key = {"X-Server-Key":self.store.server_key}
+        aid = account["profile"]["id"]
+        daily = account["profile"]["daily"]
+        self.assertEqual(len(daily["tasks"]),3)
+        self.assertEqual(daily["day"],service.daily_day())
+        self.assertTrue(0 < daily["resets_in"] <= 86400)
+        ids = [t["id"] for t in daily["tasks"]]
+        self.assertNotIn("hard",ids)   # never offered before 普通 has been cleared
+        self.assertEqual(len(set(ids)),3)
+        # The same account gets the same tasks all day.
+        self.assertEqual(self.call("/api/me",{},auth)[1]["profile"]["daily"]["tasks"],daily["tasks"])
+        first = ids[0]
+        code, response = self.call("/api/daily/claim",{"task":first},auth)
+        self.assertEqual((code,response["error"]),(400,"任務尚未完成"))
+        self.assertEqual(self.call("/api/daily/claim",{"task":"bonus"},auth)[0],400)
+        self.assertEqual(self.call("/api/daily/claim",{"task":"nope"},auth)[0],400)
+        # One huge cleared mission completes every task type that can appear without 困難.
+        record = {"kills":400,"headshots":100,"shots":3000,"hits":900,"wave":20,"victory":True}
+        for _ in range(3):
+            self.assertTrue(self.call("/api/server/reward",{"account_id":aid,"gold":0,"stats":record},key)[1]["ok"])
+        daily = self.call("/api/me",{},auth)[1]["profile"]["daily"]
+        for task in daily["tasks"]:
+            self.assertTrue(task["done"])
+            self.assertEqual(task["progress"],task["goal"])   # progress is capped at the goal
+        before = self.call("/api/me",{},auth)[1]["profile"]
+        gained = {"gold":0,"keys":0,"weapon_keys":0}
+        for task in daily["tasks"]:
+            code, response = self.call("/api/daily/claim",{"task":task["id"]},auth)
+            self.assertEqual(code,200)
+            for k, v in response["reward"].items():
+                gained[k] += v
+            self.assertEqual(self.call("/api/daily/claim",{"task":task["id"]},auth)[1]["error"],"此任務獎勵已領取")
+        profile = response["profile"]
+        for k in gained:
+            self.assertEqual(profile[k],before[k]+gained[k])
+        self.assertTrue(profile["daily"]["bonus"]["ready"])
+        code, response = self.call("/api/daily/claim",{"task":"bonus"},auth)
+        self.assertEqual(code,200)
+        self.assertEqual(response["profile"]["keys"],profile["keys"]+service.DAILY_BONUS["keys"])
+        self.assertTrue(response["profile"]["daily"]["bonus"]["claimed"])
+        self.assertEqual(self.call("/api/daily/claim",{"task":"bonus"},auth)[0],400)
+        # A bad difficulty in a combat record is rejected.
+        self.assertEqual(self.call("/api/server/reward",{"account_id":aid,"gold":0,"stats":{**record,"difficulty":5}},key)[0],400)
+
+    def test_daily_rollover_and_hard_task(self):
+        self.assertEqual(service.daily_day(0),"1970-01-01")
+        self.assertEqual(service.daily_day(16*3600),"1970-01-02")   # 08:00 UTC is midnight in Taiwan
+        self.assertEqual(service.daily_resets_in(16*3600),86400)
+        offered = set()
+        for day in range(60):
+            offered.update(service.roll_daily(7,f"day-{day}",True))
+            self.assertNotIn("hard",service.roll_daily(7,f"day-{day}",False))
+        self.assertIn("hard",offered)
+        account = self.register()
+        aid = account["profile"]["id"]
+        # A stale day in storage is replaced by a fresh, unclaimed set.
+        with self.store.connect() as db:
+            db.execute("UPDATE progress SET daily=? WHERE account_id=?",
+                       (json.dumps({"day":"2000-01-01","tasks":["kills","waves","deep"],"progress":{"kills":150},"claimed":["kills"],"bonus":True}),aid))
+        daily = self.store.profile(aid)["daily"]
+        self.assertEqual(daily["day"],service.daily_day())
+        self.assertFalse(any(t["claimed"] or t["progress"] for t in daily["tasks"]))
+        self.assertFalse(daily["bonus"]["claimed"])
+
+    def test_achievements_and_titles(self):
+        account = self.register()
+        auth = {"Authorization":"Bearer "+account["token"]}
+        key = {"X-Server-Key":self.store.server_key}
+        aid = account["profile"]["id"]
+        view = {a["id"]:a for a in account["profile"]["achievements"]}
+        self.assertEqual(len(view),len(service.ACHIEVEMENTS))
+        self.assertEqual(account["profile"]["title"],{"id":"","text":""})
+        self.assertEqual(view["kills"]["text"],"累計擊殺 500 名敵人")
+        self.assertEqual((view["kills"]["reached"],view["kills"]["claimed"]),(0,0))
+        self.assertEqual(self.call("/api/achievement/claim",{"achievement":"kills"},auth)[1]["error"],"尚未達成下一階段")
+        self.assertEqual(self.call("/api/achievement/claim",{"achievement":"nope"},auth)[0],400)
+        # A flawless S-rank 困難 clear with a boss, elites and revives feeds every combat record.
+        record = {"kills":4000,"headshots":1500,"shots":9000,"hits":5000,"wave":20,"victory":True,"difficulty":1,
+                  "downs":0,"revives":3,"boss_kills":2,"elite_kills":6,"grade":"S"}
+        for _ in range(3):
+            self.assertTrue(self.call("/api/server/reward",{"account_id":aid,"gold":0,"stats":record},key)[1]["ok"])
+        stats = self.call("/api/me",{},auth)[1]["profile"]["stats"]
+        self.assertEqual((stats["flawless"],stats["s_grades"],stats["hard_victories"],stats["boss_kills"],stats["elite_kills"],stats["revives"]),(3,3,3,6,18,9))
+        # A defeat or a downed player does not count as flawless; a record without downs (old server) never does.
+        self.call("/api/server/reward",{"account_id":aid,"gold":0,"stats":{**record,"downs":1}},key)
+        self.call("/api/server/reward",{"account_id":aid,"gold":0,"stats":{k:v for k,v in record.items() if k!="downs"}},key)
+        self.assertEqual(self.call("/api/me",{},auth)[1]["profile"]["stats"]["flawless"],3)
+        for bad in ({"boss_kills":3},{"grade":"X"},{"revives":-1},{"downs":True}):
+            self.assertEqual(self.call("/api/server/reward",{"account_id":aid,"gold":0,"stats":{**record,**bad}},key)[0],400)
+        # Kills: 20000 reaches all three tiers; they are claimed one by one, each paying its own reward.
+        before = self.call("/api/me",{},auth)[1]["profile"]
+        rewards = []
+        for tier in range(3):
+            code, response = self.call("/api/achievement/claim",{"achievement":"kills"},auth)
+            self.assertEqual(code,200)
+            self.assertEqual(response["claim"]["tier"],tier)
+            rewards.append(response["claim"]["reward"])
+        self.assertEqual(rewards,service.ACHIEVEMENT_REWARDS)
+        self.assertEqual(response["claim"]["title"],"殲滅者")
+        profile = response["profile"]
+        self.assertEqual(profile["gold"],before["gold"]+900)
+        self.assertEqual(profile["keys"],before["keys"]+5)
+        self.assertEqual(profile["weapon_keys"],before["weapon_keys"]+2)
+        self.assertEqual(profile["title"],{"id":"kills","text":"殲滅者"})   # the first title is worn automatically
+        self.assertEqual(self.call("/api/achievement/claim",{"achievement":"kills"},auth)[1]["error"],"此成就已全部完成")
+        # Titles: only earned ones can be worn; empty removes it.
+        self.assertEqual(self.call("/api/achievement/title",{"title":"headshots"},auth)[1]["error"],"尚未獲得此稱號")
+        self.assertEqual(self.call("/api/achievement/title",{"title":"elites"},auth)[0],400)   # 金 tier without a title
+        for _ in range(3):
+            self.call("/api/achievement/claim",{"achievement":"headshots"},auth)
+        profile = self.call("/api/achievement/title",{"title":"headshots"},auth)[1]["profile"]
+        self.assertEqual(profile["title"]["text"],"神射手")
+        self.assertEqual(self.call("/api/achievement/title",{"title":""},auth)[1]["profile"]["title"]["id"],"")
+        # Draws and daily rewards count toward their achievements.
+        self.store.admin_grant("Beta_Test",0,None,keys=10)
+        self.call("/api/gacha/draw",{"count":10},auth)
+        view = {a["id"]:a for a in self.call("/api/me",{},auth)[1]["profile"]["achievements"]}
+        self.assertEqual((view["draws"]["progress"],view["draws"]["reached"]),(10,1))
+        self.assertEqual(view["flawless"]["reached"],1)
+        self.assertEqual(view["bosses"]["reached"],1)
+
+    def second_account(self, name="Second_Test"):
+        code, response = self.call("/api/register",{"username":name,"password":"test-password-8921"})
+        self.assertEqual(code,201)
+        return response
+
+    def test_anti_cheat_rejects_impossible_reports(self):
+        self.store.min_wave_seconds = 4
+        account = self.register()
+        key = {"X-Server-Key":self.store.server_key}
+        aid = account["profile"]["id"]
+        honest = {"kills":40,"team_kills":86,"headshots":13,"shots":290,"hits":176,"wave":20,"victory":True,"difficulty":0,
+                  "level":9,"region":0,"elapsed":742.0,"downs":0,"revives":0,"boss_kills":2,"elite_kills":6,"grade":"A"}
+        expected = service.mission_gold(86,20,9,True,0,0)
+        self.assertEqual(expected,86*3+240+120+200)
+        self.assertEqual(service.mission_gold(86,20,9,True,0,2),int(round(expected*2.4)))
+        self.assertTrue(self.call("/api/server/reward",{"account_id":aid,"gold":expected,"stats":honest},key)[1]["ok"])
+        self.store.last_reward.clear()
+        cases = [
+            ({"gold":expected+50}, "金幣"),
+            ({"stats":{**honest,"wave":12}}, "勝利但未完成"),
+            ({"stats":{**honest,"kills":90}}, "個人擊殺"),
+            ({"stats":{**honest,"elapsed":30.0}}, "作戰時間過短"),
+            ({"stats":{**honest,"team_kills":5000}}, "全隊擊殺"),
+        ]
+        for change, reason in cases:
+            body = {"account_id":aid,"gold":change.get("gold",expected),"stats":change.get("stats",honest)}
+            code, response = self.call("/api/server/reward",body,key)
+            self.assertEqual((code,response["error"]),(400,"結算資料異常，已記錄並暫停發放"),reason)
+            self.assertIn(reason,self.store.audit_log(1)[0]["reason"])
+            self.assertEqual(self.store.audit_log(1)[0]["rejected"],1)
+        # Nothing was paid for the rejected reports.
+        self.assertEqual(self.store.profile(aid)["gold"],expected)
+        # A second payout right after the first is too soon.
+        self.assertTrue(self.call("/api/server/reward",{"account_id":aid,"gold":expected,"stats":honest},key)[1]["ok"])
+        self.assertEqual(self.call("/api/server/reward",{"account_id":aid,"gold":expected,"stats":honest},key)[0],400)
+        self.assertIn("頻繁",self.store.audit_log(1)[0]["reason"])
+        # Unusual but possible play is paid and only logged.
+        self.store.last_reward.clear()
+        sharp = {**honest,"shots":400,"hits":399,"headshots":380,"aim_flags":45}
+        self.assertTrue(self.call("/api/server/reward",{"account_id":aid,"gold":expected,"stats":sharp},key)[1]["ok"])
+        entry = self.store.audit_log(1)[0]
+        self.assertEqual(entry["rejected"],0)
+        for word in ("瞄準","命中率","爆頭率"):
+            self.assertIn(word,entry["reason"])
+        # Admins see the log and a flag count per player.
+        self.store.admin_file.write_text("Beta_Test\n",encoding="utf-8")
+        auth = {"Authorization":"Bearer "+account["token"]}
+        entries = self.call("/api/admin/audit",{},auth)[1]["entries"]
+        self.assertEqual(len(entries),7)
+        self.assertEqual(entries[0]["username"],"Beta_Test")
+        players = self.call("/api/admin/players",{},auth)[1]["players"]
+        self.assertEqual(players[0]["flags"],7)
+
+    def test_system_mail(self):
+        account = self.register()
+        auth = {"Authorization":"Bearer "+account["token"]}
+        self.assertEqual(account["profile"]["mail"],{"unread":1,"claimable":1})
+        mail = self.call("/api/mail/list",{},auth)[1]["mail"]
+        self.assertEqual(len(mail),1)
+        welcome = mail[0]
+        self.assertEqual(welcome["title"],"歡迎加入裂隙守衛")
+        self.assertEqual(welcome["reward"],{"keys":3,"weapon_keys":1})
+        self.assertEqual(self.call("/api/mail/delete",{"id":welcome["id"]},auth)[1]["error"],"請先領取附件再刪除")
+        self.assertEqual(self.call("/api/mail/read",{"id":welcome["id"]},auth)[1]["profile"]["mail"]["unread"],0)
+        code, response = self.call("/api/mail/claim",{"id":welcome["id"]},auth)
+        self.assertEqual((code,response["reward"]),(200,{"keys":3,"weapon_keys":1}))
+        self.assertEqual((response["profile"]["keys"],response["profile"]["weapon_keys"]),(3,1))
+        self.assertEqual(self.call("/api/mail/claim",{"id":welcome["id"]},auth)[0],400)
+        # Admin mail: validation, one player, everyone; claim all collects every attachment at once.
+        self.store.admin_file.write_text("Beta_Test\n",encoding="utf-8")
+        other = self.second_account()
+        for bad in ({"title":""},{"title":"x"*41},{"gold":-1},{"days":0},{"username":"nobody_here"}):
+            self.assertEqual(self.call("/api/admin/mail",{"username":"*","title":"維護補償","body":"感謝耐心等候",**bad},auth)[0],400)
+        self.assertEqual(self.call("/api/admin/mail",{"username":"*","title":"維護補償","body":"感謝耐心等候","gold":500,"keys":2},auth)[1]["count"],2)
+        self.assertEqual(self.call("/api/admin/mail",{"username":"Second_Test","title":"活動獎勵","gold":100},auth)[1]["count"],1)
+        self.assertEqual(self.call("/api/admin/mail",{"username":"*","title":"公告","body":"下週更新"},{"Authorization":"Bearer "+other["token"]})[0],403)
+        oauth = {"Authorization":"Bearer "+other["token"]}
+        listing = self.call("/api/mail/list",{},oauth)[1]
+        self.assertEqual(len(listing["mail"]),3)
+        self.assertEqual(listing["profile"]["mail"]["claimable"],3)
+        code, response = self.call("/api/mail/claim_all",{},oauth)
+        self.assertEqual((response["count"],response["reward"]),(3,{"gold":600,"keys":5,"weapon_keys":1}))
+        self.assertEqual(response["profile"]["gold"],600)
+        self.assertEqual(self.call("/api/mail/claim_all",{},oauth)[1]["error"],"沒有可領取的附件")
+        # A text-only mail can be deleted right away; others' mail is out of reach.
+        self.call("/api/admin/mail",{"username":"Second_Test","title":"公告","body":"下週更新"},auth)
+        notice = self.call("/api/mail/list",{},oauth)[1]["mail"][0]
+        self.assertTrue(notice["claimed"])
+        self.assertEqual(self.call("/api/mail/delete",{"id":notice["id"]},auth)[0],400)
+        self.assertEqual(len(self.call("/api/mail/delete",{"id":notice["id"]},oauth)[1]["mail"]),3)
+        # Expired mail disappears.
+        with self.store.connect() as db:
+            db.execute("UPDATE mail SET expires=1")
+        self.assertEqual(self.call("/api/mail/list",{},oauth)[1]["mail"],[])
+
+    def test_friends(self):
+        me = self.register()
+        other = self.second_account()
+        auth = {"Authorization":"Bearer "+me["token"]}
+        oauth = {"Authorization":"Bearer "+other["token"]}
+        key = {"X-Server-Key":self.store.server_key}
+        self.assertEqual(self.call("/api/friends/request",{"username":"Beta_Test"},auth)[1]["error"],"不能加自己為好友")
+        self.assertEqual(self.call("/api/friends/request",{"username":"nobody_here"},auth)[1]["error"],"找不到此玩家")
+        code, response = self.call("/api/friends/request",{"username":"second_test"},auth)   # names are case-insensitive
+        self.assertEqual((code,response["status"]),(200,"pending"))
+        self.assertEqual([f["username"] for f in response["outgoing"]],["Second_Test"])
+        self.assertEqual(self.call("/api/friends/request",{"username":"Second_Test"},auth)[1]["error"],"已送出邀請，等待對方回應")
+        listing = self.call("/api/friends/list",{},oauth)[1]
+        self.assertEqual(listing["profile"]["friend_requests"],1)
+        self.assertEqual([f["username"] for f in listing["incoming"]],["Beta_Test"])
+        response = self.call("/api/friends/respond",{"username":"Beta_Test","accept":True},oauth)[1]
+        self.assertEqual([f["username"] for f in response["friends"]],["Beta_Test"])
+        self.assertEqual(response["profile"]["friend_requests"],0)
+        self.assertEqual(self.call("/api/friends/request",{"username":"Second_Test"},auth)[1]["error"],"Second_Test 已經是你的好友")
+        # The game server reads friend ids for presence and invites.
+        ids = self.call("/api/server/friends",{"account_id":me["profile"]["id"]},key)[1]["friends"]
+        self.assertEqual(ids,[other["profile"]["id"]])
+        self.assertEqual(self.call("/api/server/friends",{"account_id":me["profile"]["id"]})[0],403)
+        # Removing works from either side; asking someone who already asked you accepts at once.
+        self.assertEqual(self.call("/api/friends/remove",{"username":"Beta_Test"},oauth)[1]["friends"],[])
+        self.assertEqual(self.call("/api/friends/remove",{"username":"Beta_Test"},oauth)[0],400)
+        self.call("/api/friends/request",{"username":"Beta_Test"},oauth)
+        self.assertEqual(self.call("/api/friends/request",{"username":"Second_Test"},auth)[1]["status"],"accepted")
+        self.assertEqual(len(self.call("/api/friends/list",{},auth)[1]["friends"]),1)
+        # Declining removes the request.
+        third = self.second_account("Third_Test")
+        self.call("/api/friends/request",{"username":"Beta_Test"},{"Authorization":"Bearer "+third["token"]})
+        self.assertEqual(self.call("/api/friends/respond",{"username":"Third_Test","accept":False},auth)[1]["incoming"],[])
+        self.assertEqual(self.call("/api/friends/respond",{"username":"Third_Test","accept":True},auth)[0],400)
 
     def test_manifest_and_path_restriction(self):
         code, manifest = self.call("/api/version")

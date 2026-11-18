@@ -112,12 +112,13 @@ namespace RiftWard.Client
         readonly List<PlayerInput> pendingInputs = new List<PlayerInput>();
 
         /// Mirror mission driven by server snapshots; the local player is predicted and reconciled.
-        public void StartNetworked(int region, int localId, NetClient client)
+        public void StartNetworked(int region, int difficulty, int localId, NetClient client)
         {
             net = client;
             LocalId = localId;
             Sim = new GameSim();
             Sim.Region = region;
+            Sim.Difficulty = difficulty;
             Sim.State = MissionState.Playing;
             pendingInputs.Clear();
             NetworkInput = input =>
@@ -161,7 +162,7 @@ namespace RiftWard.Client
             lastState = Sim.State;
         }
 
-        public void StartOffline(int region, Loadout loadout, bool admin, AdminSettings adminSettings)
+        public void StartOffline(int region, Loadout loadout, bool admin, AdminSettings adminSettings, int difficulty = 0)
         {
             net = null;
             NetworkInput = null;
@@ -170,7 +171,7 @@ namespace RiftWard.Client
             Sim = new GameSim();
             Sim.AddActor(LocalId, loadout, admin);
             if (admin && adminSettings != null) Sim.SetAdmin(LocalId, adminSettings);
-            Sim.StartMission(region);
+            Sim.StartMission(region, difficulty);
             EnterMission(region);
         }
 
@@ -249,7 +250,7 @@ namespace RiftWard.Client
             Cursor.visible = !locked;
         }
 
-        bool Active => Sim != null && Sim.State == MissionState.Playing && !Paused && !Sim.BuffPending && Cursor.lockState == CursorLockMode.Locked;
+        bool Active => Sim != null && Sim.State == MissionState.Playing && !Paused && !Sim.BuffPending && !ChatHud.Typing && Cursor.lockState == CursorLockMode.Locked;
 
         // ------------------------------------------------------------ input & simulation
 
@@ -265,11 +266,11 @@ namespace RiftWard.Client
                 }
                 return;
             }
-            if (Input.GetKeyDown(KeyCode.Escape) && Sim.State == MissionState.Playing && !Sim.BuffPending)
+            if (Input.GetKeyDown(KeyCode.Escape) && Sim.State == MissionState.Playing && !Sim.BuffPending && !ChatHud.Typing && Time.frameCount != ChatHud.ClosedFrame)
             {
                 if (Paused) Menus.ClosePause(); else Menus.OpenPause();
             }
-            if (Sim.State == MissionState.Playing && !Paused && !Sim.BuffPending && Cursor.lockState != CursorLockMode.Locked && Input.GetMouseButtonDown(0))
+            if (Sim.State == MissionState.Playing && !Paused && !Sim.BuffPending && !ChatHud.Typing && Cursor.lockState != CursorLockMode.Locked && Input.GetMouseButtonDown(0))
             {
                 LockCursor(true);
                 releaseFireToResume = true;
@@ -767,7 +768,7 @@ namespace RiftWard.Client
 
             UpdateCamera(me, dt);
             UpdateAudio(me, dt);
-            string toast = Sim.State == MissionState.Playing && !Paused && !Sim.BuffPending && Cursor.lockState != CursorLockMode.Locked ? "點擊畫面恢復滑鼠瞄準" : Objective;
+            string toast = Sim.State == MissionState.Playing && !Paused && !Sim.BuffPending && !ChatHud.Typing && Cursor.lockState != CursorLockMode.Locked ? "點擊畫面恢復滑鼠瞄準" : Objective;
             Hud.Tick(dt, Sim, me, Camera, thirdPerson, toast);
         }
 

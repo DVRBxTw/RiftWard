@@ -21,12 +21,28 @@ namespace RiftWard.Sim
             }
         }
 
-        /// Account XP for a mission; mirrors mission_xp() in server/service.py.
-        public static int MissionXp(int kills, int wave, bool victory) => Mathf.Max(0, kills) + Mathf.Max(0, wave) * 5 + (victory ? 100 : 0);
+        /// Account XP for a mission; mirrors mission_xp() in server/service.py (higher difficulty multiplies it).
+        public static int MissionXp(int kills, int wave, bool victory, int difficulty = 0) =>
+            (int)System.Math.Round((Mathf.Max(0, kills) + Mathf.Max(0, wave) * 5 + (victory ? 100 : 0)) * (double)Difficulty(difficulty).Xp, System.MidpointRounding.ToEven);
+
+        /// Mission difficulty tiers; mirrors DIFFICULTY_* in server/service.py. A tier opens for a region once the
+        /// tier below it has been cleared there.
+        public static readonly DifficultyDef[] Difficulties =
+        {
+            new DifficultyDef("普通", "NORMAL", "標準的帝國部隊。", 1f, 1f, 0, 1f, 1f, new Color32(0x9b, 0xd3, 0x6a, 255)),
+            new DifficultyDef("困難", "HARD", "敵人血量 ×1.6、傷害 ×1.3，每波多 2 名。金幣 ×1.6、經驗 ×1.25。", 1.6f, 1.3f, 2, 1.6f, 1.25f, new Color32(0xf0, 0xb2, 0x4a, 255)),
+            new DifficultyDef("噩夢", "NIGHTMARE", "敵人血量 ×2.4、傷害 ×1.7，每波多 4 名。金幣 ×2.4、經驗 ×1.5。", 2.4f, 1.7f, 4, 2.4f, 1.5f, new Color32(0xe5, 0x53, 0x4b, 255)),
+        };
+
+        public static DifficultyDef Difficulty(int tier) => Difficulties[Mathf.Clamp(tier, 0, Difficulties.Length - 1)];
+
+        /// cleared[region] is the highest tier cleared there (-1 = none).
+        public static bool DifficultyOpen(IReadOnlyList<int> cleared, int region, int tier) =>
+            tier <= 0 || (cleared != null && region >= 0 && region < cleared.Count && cleared[region] >= tier - 1);
         /// XP needed to go from this account level to the next; mirrors level_for() in server/service.py.
         public static int AccountLevelNeed(int level) => 100 + 50 * level;
 
-        public const string Version = "0.7.4-unity.1";
+        public const string Version = "0.7.5-unity.1";
 
         // Player movement
         public const float EyeHeight = 1.65f;
@@ -197,6 +213,18 @@ namespace RiftWard.Sim
         public readonly int BaseEnemies;
         public readonly Color32 Accent;
         public RegionDef(string name, string story, int baseEnemies, Color32 accent) { Name = name; Story = story; BaseEnemies = baseEnemies; Accent = accent; }
+    }
+
+    public readonly struct DifficultyDef
+    {
+        public readonly string Name, Code, Summary;
+        public readonly float Hp, Damage, Gold, Xp;
+        public readonly int ExtraEnemies;
+        public readonly Color32 Accent;
+        public DifficultyDef(string name, string code, string summary, float hp, float damage, int extraEnemies, float gold, float xp, Color32 accent)
+        {
+            Name = name; Code = code; Summary = summary; Hp = hp; Damage = damage; ExtraEnemies = extraEnemies; Gold = gold; Xp = xp; Accent = accent;
+        }
     }
 
     public sealed class WeaponDef

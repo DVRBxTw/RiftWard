@@ -104,6 +104,11 @@ namespace RiftWard.Sim
 
         // Per-mission combat record (sent to the account service as lifetime stats).
         public int StatKills, StatHeadshots, StatShots, StatHits;
+        /// Achievement records: times downed, teammates revived, bosses and elites the team defeated while this actor was present.
+        public int StatDowns, StatRevives, StatBossKills, StatEliteKills;
+        public bool WasAlive = true;
+        /// Shots whose aim point disagreed with the player's view and were corrected (anti-cheat record).
+        public int AimFlags;
 
         public bool Alive => Hp > 0f;
         public string WeaponId => Loadout.Equipped[Mathf.Clamp(Slot, 0, Loadout.Equipped.Count - 1)];

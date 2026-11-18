@@ -8,7 +8,7 @@ namespace RiftWard.Client
     /// Rebindable keyboard controls, saved on this computer. Mouse buttons (fire / aim) and Esc stay fixed.
     public static class Bindings
     {
-        public enum Action { Forward, Back, Left, Right, Jump, Dash, Descend, Reload, Skill, Interact, View, Slot1, Slot2 }
+        public enum Action { Forward, Back, Left, Right, Jump, Dash, Descend, Reload, Skill, Interact, View, Slot1, Slot2, Chat }
 
         static readonly (Action action, string label, KeyCode key)[] Defaults =
         {
@@ -16,6 +16,7 @@ namespace RiftWard.Client
             (Action.Jump, "跳躍 / 上升", KeyCode.Space), (Action.Dash, "衝刺", KeyCode.LeftShift), (Action.Descend, "下降（飛行）", KeyCode.LeftControl),
             (Action.Reload, "換彈", KeyCode.R), (Action.Skill, "手榴彈", KeyCode.Q), (Action.Interact, "救援 / 互動", KeyCode.E),
             (Action.View, "切換視角", KeyCode.V), (Action.Slot1, "1 號武器", KeyCode.Alpha1), (Action.Slot2, "2 號武器", KeyCode.Alpha2),
+            (Action.Chat, "聊天", KeyCode.Return),
         };
 
         static readonly KeyCode[] keys = new KeyCode[Defaults.Length];
@@ -57,6 +58,8 @@ namespace RiftWard.Client
             switch (k)
             {
                 case KeyCode.Space: return "空白鍵";
+                case KeyCode.Return: return "Enter";
+                case KeyCode.KeypadEnter: return "數字鍵盤 Enter";
                 case KeyCode.LeftShift: case KeyCode.RightShift: return "Shift";
                 case KeyCode.LeftControl: case KeyCode.RightControl: return "Ctrl";
                 case KeyCode.LeftAlt: case KeyCode.RightAlt: return "Alt";

@@ -2,6 +2,7 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
 using RiftWard.Sim;
@@ -29,7 +30,19 @@ namespace RiftWard.Client
         public Dictionary<string, string> Equipment = new Dictionary<string, string>();
         public Dictionary<string, float> Bonus = new Dictionary<string, float>();
 
+        /// Highest difficulty cleared per region (-1 = never).
+        public List<int> Cleared = new List<int> { -1, -1, -1 };
+        public DailyMissions Daily = new DailyMissions();
+        public readonly List<Achievement> Achievements = new List<Achievement>();
+        /// Worn title: achievement id and its text (both empty when none).
+        public string TitleId = "", Title = "";
+        public int MailUnread, MailClaimable, FriendRequests;
+
+        /// Reached tiers not yet claimed, across all achievements.
+        public int AchievementsClaimable => Achievements.Sum(a => Mathf.Max(0, a.Reached - a.Claimed));
+
         public float BonusOf(string key) => Bonus.TryGetValue(key, out var v) ? v : 0f;
+        public bool DifficultyOpen(int region, int tier) => Defs.DifficultyOpen(Cleared, region, tier);
 
         public static Profile From(Dictionary<string, object> d)
         {
@@ -85,7 +98,92 @@ namespace RiftWard.Client
             if (equipment != null) foreach (var kv in equipment) p.Equipment[kv.Key] = kv.Value?.ToString();
             var bonus = d.Obj("bonus");
             if (bonus != null) foreach (var kv in bonus) p.Bonus[kv.Key] = kv.Value is double n ? (float)n : 0f;
+            var cleared = d.Arr("cleared");
+            if (cleared != null)
+                for (int i = 0; i < p.Cleared.Count && i < cleared.Count; i++) p.Cleared[i] = cleared[i] is double c ? (int)c : -1;
+            p.Daily = DailyMissions.From(d.Obj("daily"));
+            foreach (var o in d.Arr("achievements") ?? new List<object>()) if (o is Dictionary<string, object> a) p.Achievements.Add(Achievement.From(a));
+            var mail = d.Obj("mail");
+            if (mail != null) { p.MailUnread = mail.Int("unread"); p.MailClaimable = mail.Int("claimable"); }
+            p.FriendRequests = d.Int("friend_requests");
+            var title = d.Obj("title");
+            if (title != null) { p.TitleId = title.Str("id"); p.Title = title.Str("text"); }
             return p;
+        }
+    }
+
+    /// One three-tier achievement as reported by the account service.
+    public sealed class Achievement
+    {
+        public string Id = "", Category = "", Name = "", Text = "", Title = "";
+        public int Progress, Reached, Claimed;
+        public int[] Goals = { 1, 1, 1 };
+        public DailyReward Reward;
+
+        public bool Complete => Claimed >= 3;
+        /// Goal of the tier being worked on (the last goal once complete).
+        public int Goal => Goals[Mathf.Clamp(Claimed, 0, Goals.Length - 1)];
+        public bool CanClaim => Reached > Claimed && !Complete;
+
+        public static Achievement From(Dictionary<string, object> d)
+        {
+            var a = new Achievement
+            {
+                Id = d.Str("id"), Category = d.Str("category"), Name = d.Str("name"), Text = d.Str("text"), Title = d.Str("title"),
+                Progress = d.Int("progress"), Reached = d.Int("reached"), Claimed = d.Int("claimed"), Reward = DailyReward.From(d.Obj("reward")),
+            };
+            var goals = d.Arr("goals");
+            if (goals != null && goals.Count == 3) a.Goals = goals.Select(g => g is double v ? Mathf.Max(1, (int)v) : 1).ToArray();
+            return a;
+        }
+    }
+
+    /// Reward bundle of a daily task or the all-tasks bonus.
+    public struct DailyReward
+    {
+        public int Gold, Keys, WeaponKeys;
+
+        public static DailyReward From(Dictionary<string, object> d) =>
+            d == null ? default : new DailyReward { Gold = d.Int("gold"), Keys = d.Int("keys"), WeaponKeys = d.Int("weapon_keys") };
+    }
+
+    public sealed class DailyTask
+    {
+        public string Id = "", Text = "";
+        public int Goal = 1, Progress;
+        public bool Done, Claimed;
+        public DailyReward Reward;
+    }
+
+    /// Today's three daily missions as reported by the account service.
+    public sealed class DailyMissions
+    {
+        public readonly List<DailyTask> Tasks = new List<DailyTask>();
+        public DailyReward Bonus;
+        public bool BonusReady, BonusClaimed;
+        /// Seconds until the next reset when the profile was fetched.
+        public int ResetsIn;
+        public float FetchedAt;
+
+        /// Rewards waiting to be collected (finished tasks plus a ready bonus).
+        public int Claimable => Tasks.Count(t => t.Done && !t.Claimed) + (BonusReady && !BonusClaimed ? 1 : 0);
+        public int ClaimedCount => Tasks.Count(t => t.Claimed);
+
+        public static DailyMissions From(Dictionary<string, object> d)
+        {
+            var m = new DailyMissions { FetchedAt = Time.realtimeSinceStartup };
+            if (d == null) return m;
+            m.ResetsIn = d.Int("resets_in");
+            foreach (var o in d.Arr("tasks") ?? new List<object>())
+                if (o is Dictionary<string, object> t)
+                    m.Tasks.Add(new DailyTask
+                    {
+                        Id = t.Str("id"), Text = t.Str("text"), Goal = Mathf.Max(1, t.Int("goal", 1)), Progress = t.Int("progress"),
+                        Done = t.Bool("done"), Claimed = t.Bool("claimed"), Reward = DailyReward.From(t.Obj("reward")),
+                    });
+            var bonus = d.Obj("bonus");
+            if (bonus != null) { m.Bonus = DailyReward.From(bonus.Obj("reward")); m.BonusReady = bonus.Bool("ready"); m.BonusClaimed = bonus.Bool("claimed"); }
+            return m;
         }
     }
 

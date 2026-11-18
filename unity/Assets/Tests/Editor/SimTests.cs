@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Linq;
 using NUnit.Framework;
 using RiftWard.Sim;
@@ -211,6 +212,95 @@ namespace RiftWard.Tests
             var e = sim.Enemies.Values.First();
             Assert.Greater(e.Hp, 55f * 1.08f * 1.07f);
             Assert.Greater(e.Damage, 10f);
+        }
+
+        [Test]
+        public void HigherTiersToughenEnemiesAndPayMore()
+        {
+            GameSim Wave(int tier)
+            {
+                var s = new GameSim(42) { EnemyVariety = false };
+                s.AddActor(1, new Loadout());
+                s.StartMission(0, tier);
+                s.Wave = 10;
+                s.SpawnWave();
+                return s;
+            }
+            var normal = Wave(0);
+            var nightmare = Wave(2);
+            Assert.AreEqual(2, nightmare.Difficulty);
+            Assert.AreEqual(normal.Enemies.Count + Defs.Difficulties[2].ExtraEnemies, nightmare.Enemies.Count);
+            var bossN = normal.Enemies.Values.Single(e => e.Boss);
+            var bossX = nightmare.Enemies.Values.Single(e => e.Boss);
+            Assert.AreEqual(bossN.MaxHp * 2.4f, bossX.MaxHp, 0.5f);
+            Assert.AreEqual(bossN.Damage * 1.7f, bossX.Damage, 0.01f);
+            normal.Kills = nightmare.Kills = 100;
+            Assert.AreEqual(Mathf.RoundToInt(normal.MissionGold() * 2.4f), nightmare.MissionGold(), 1);
+            // Tier unlocks: 普通 always, each tier after the one below is cleared in that region.
+            var cleared = new List<int> { 1, -1, -1 };
+            Assert.IsTrue(Defs.DifficultyOpen(cleared, 0, 2));
+            Assert.IsFalse(Defs.DifficultyOpen(cleared, 1, 1));
+            Assert.IsTrue(Defs.DifficultyOpen(cleared, 2, 0));
+            Assert.IsFalse(Defs.DifficultyOpen(null, 0, 1));
+            // XP mirrors mission_xp() in service.py.
+            Assert.AreEqual(240, Defs.MissionXp(40, 20, true));
+            Assert.AreEqual(300, Defs.MissionXp(40, 20, true, 1));
+            Assert.AreEqual(360, Defs.MissionXp(40, 20, true, 2));
+        }
+
+        [Test]
+        public void DownsRevivesAndTeamKillsAreRecorded()
+        {
+            var sim = new GameSim(7);
+            sim.AddActor(1, new Loadout());
+            sim.AddActor(2, new Loadout());
+            sim.StartMission(0);
+            sim.WaveDelay = 999f;
+            var downed = sim.Actors[1];
+            var medic = sim.Actors[2];
+            medic.Position = downed.Position + Vector3.right;
+            downed.Hp = 0;
+            sim.Tick(0.02f);
+            Assert.AreEqual(1, downed.StatDowns);
+            sim.Inputs[2] = new PlayerInput { Interact = true, Yaw = medic.Yaw };
+            for (int i = 0; i < 200 && !downed.Alive; i++) sim.Tick(0.02f);
+            Assert.IsTrue(downed.Alive);
+            Assert.AreEqual(1, medic.StatRevives);
+            Assert.AreEqual(1, downed.StatDowns);   // being revived is not another down
+            sim.Inputs.Clear();
+            sim.Wave = 10;
+            sim.SpawnWave();
+            var boss = sim.Enemies.Values.Single(e => e.Boss);
+            boss.Hp = 1;
+            sim.Fire(1, boss.Position + Vector3.up * 1.5f);
+            for (int i = 0; i < 5 && sim.Enemies.ContainsKey(boss.Id); i++) { boss.Hp = 0.01f; sim.Fire(1, boss.Position + Vector3.up * 1.5f); }
+            if (sim.Enemies.ContainsKey(boss.Id)) Assert.Inconclusive("shot missed the boss");
+            Assert.AreEqual(1, downed.StatBossKills);
+            Assert.AreEqual(1, medic.StatBossKills);   // the whole team gets boss and elite records
+        }
+
+        [Test]
+        public void AimPointMustMatchTheView()
+        {
+            var sim = new GameSim(3);
+            var a = sim.AddActor(1, new Loadout());
+            sim.StartMission(0);
+            sim.WaveDelay = 999f;
+            Vector3 eye = a.Position + Vector3.up * Defs.EyeHeight;
+            // Looking straight ahead (+z) and aiming there: accepted.
+            sim.Inputs[1] = new PlayerInput { Fire = true, Yaw = 0, Pitch = 0, Aim = eye + Vector3.forward * Defs.ShotRange };
+            sim.Tick(0.02f);
+            Assert.AreEqual(0, a.AimFlags);
+            // Third-person: aim point taken from a camera behind the shoulder is still accepted.
+            a.FireCooldown = 0;
+            sim.Inputs[1] = new PlayerInput { Fire = true, Yaw = 0, Pitch = 0, Aim = eye + new Vector3(0.8f, 0.6f, -3.5f) + Vector3.forward * Defs.ShotRange, Seq = 2 };
+            sim.Tick(0.02f);
+            Assert.AreEqual(0, a.AimFlags);
+            // Aiming behind the player while looking forward (an aim hack sending a target directly): corrected and counted.
+            a.FireCooldown = 0;
+            sim.Inputs[1] = new PlayerInput { Fire = true, Yaw = 0, Pitch = 0, Aim = eye + Vector3.back * 20f, Seq = 3 };
+            sim.Tick(0.02f);
+            Assert.AreEqual(1, a.AimFlags);
         }
 
         [Test]

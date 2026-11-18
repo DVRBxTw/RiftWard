@@ -12,8 +12,35 @@ namespace RiftWard.Sim
     {
         // client → server
         Hello = 1, Input = 2, ChooseBuff = 3, Admin = 4, RequestDeploy = 5, SelectRegion = 6, LeaveMission = 7, RefreshProfile = 8, RequestHome = 9, CreateRoom = 10, JoinRoom = 11, LeaveRoom = 12,
+        /// [byte channel][string text]
+        Chat = 13,
+        /// Re-read the friend list from the account service (after adding / removing a friend).
+        RefreshFriends = 14,
+        /// [int account id]: invite a friend into this player's room (one is opened if needed).
+        InviteFriend = 15,
+        /// [int account id]: decline that friend's invitation.
+        DeclineInvite = 16,
         // server → client
         Welcome = 50, Error = 51, Lobby = 52, Deploy = 53, Snapshot = 54, Events = 55, BuffOffer = 56, Finish = 57, ProfileSync = 58, Notice = 59, BackHome = 60,
+        /// [byte channel][int account id][string name][string title][string text][bool admin]
+        ChatLine = 61,
+        /// [int count] × ([int account id][byte state][string room code]): friends' presence.
+        Presence = 62,
+        /// [int account id][string name][string room code]
+        Invite = 63,
+    }
+
+    /// Chat channels: everyone on the server, the player's room, and server notices.
+    public static class ChatChannel
+    {
+        public const byte World = 0, Room = 1, System = 2;
+        public const int MaxLength = 100;
+    }
+
+    /// What a friend is doing, as reported in Msg.Presence.
+    public static class PresenceState
+    {
+        public const byte Offline = 0, Lobby = 1, InRoom = 2, InMission = 3;
     }
 
     public static class Protocol

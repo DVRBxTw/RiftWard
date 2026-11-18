@@ -20,6 +20,8 @@ namespace RiftWard.Client
         {
             this.app = app;
             canvas = Ui.Canvas("Screens", 5);
+            ChatLog.Added += OnChatLine;
+            FriendPresence.Updated += RepaintPresence;
         }
 
         RectTransform Begin(string mode, bool backdrop = true)
@@ -62,26 +64,31 @@ namespace RiftWard.Client
             Ui.Label(bar, "RIFTWARD  " + Defs.Version, 11, Palette.Amber).rectTransform.Place(new Vector2(0, 0.5f), new Vector2(40, 14), new Vector2(200, 16), new Vector2(0, 0.5f));
             Ui.Label(bar, "裂隙守衛", 24, Palette.Bone, TextAnchor.UpperLeft, true).rectTransform.Place(new Vector2(0, 0.5f), new Vector2(40, -6), new Vector2(200, 32), new Vector2(0, 0.5f));
 
-            string[] ids = { "missions", "shop", "gear" };
-            string[] names = { "關卡", "商城", "裝備" };
-            Action[] go = { app.ShowHome, ShowShop, ShowCharacter };
+            string[] ids = { "missions", "daily", "social", "shop", "gear" };
+            string[] names = { "關卡", "任務", "社交", "商城", "裝備" };
+            Action[] go = { app.ShowHome, ShowDaily, () => ShowFriends(), ShowShop, ShowCharacter };
             for (int i = 0; i < ids.Length; i++)
             {
                 bool active = ids[i] == tab;
                 var b = Ui.Button(bar, names[i], go[i], 19, active ? Palette.Bone : Palette.Muted, new Color(0, 0, 0, 0), new Color(0, 0, 0, 0));
-                b.GetComponent<RectTransform>().Place(new Vector2(0, 0.5f), new Vector2(250 + i * 116, 0), new Vector2(108, NavHeight), new Vector2(0, 0.5f));
+                b.GetComponent<RectTransform>().Place(new Vector2(0, 0.5f), new Vector2(226 + i * 90, 0), new Vector2(84, NavHeight), new Vector2(0, 0.5f));
                 if (active)
                 {
                     b.GetComponentInChildren<Text>().fontStyle = FontStyle.Bold;
                     Ui.Box(b.transform, Palette.Amber, "Underline").rectTransform.Place(new Vector2(0.5f, 0), new Vector2(0, 1), new Vector2(40, 3), new Vector2(0.5f, 0));
                 }
-                if (ids[i] == "gear" && p.TalentPoints > 0)
+                if (ids[i] == "gear" && p.TalentPoints > 0 || ids[i] == "daily" && p.Daily.Claimable + p.AchievementsClaimable > 0
+                    || ids[i] == "social" && p.FriendRequests + p.MailUnread + p.MailClaimable + (app.PendingInvite != null ? 1 : 0) > 0)
                     Ui.Box(b.transform, Palette.Amber, "Badge").rectTransform.Place(new Vector2(0.5f, 0.5f), new Vector2(30, 12), new Vector2(7, 7));
             }
 
             // Account block on the far right, resource chips to its left.
             var account = Ui.Rect(bar, "Account").Place(new Vector2(1, 0.5f), new Vector2(-40, 0), new Vector2(210, 52), new Vector2(1, 0.5f));
-            Ui.Label(account, $"{p.Username}  ·  Lv {p.Level}", 15, Palette.Bone, TextAnchor.UpperRight, true).rectTransform.Place(new Vector2(1, 1), Vector2.zero, new Vector2(210, 22), new Vector2(1, 1));
+            var who = Ui.Label(account, $"{p.Username}  ·  Lv {p.Level}", 15, Palette.Bone, TextAnchor.UpperRight, true);
+            who.rectTransform.Place(new Vector2(1, 1), Vector2.zero, new Vector2(210, 22), new Vector2(1, 1));
+            if (!string.IsNullOrEmpty(p.Title))
+                Ui.Label(account, $"〔{p.Title}〕", 15, Palette.Amber, TextAnchor.UpperRight, true).rectTransform
+                    .Place(new Vector2(1, 1), new Vector2(-who.preferredWidth - 2, 0), new Vector2(160, 22), new Vector2(1, 1));
             var links = Ui.HStack(account, 4);
             links.Place(new Vector2(1, 0), Vector2.zero, new Vector2(p.Admin ? 250 : 190, 24), new Vector2(1, 0));
             if (p.Admin) Ui.Button(links, "管理員", ShowAdmin, 12, Palette.Danger, new Color(0, 0, 0, 0), new Color(0, 0, 0, 0));
@@ -106,14 +113,26 @@ namespace RiftWard.Client
         }
 
         /// Sub-navigation inside the 裝備 tab.
-        void GearTabs(RectTransform pad, string active)
+        void GearTabs(RectTransform pad, string active) =>
+            SubTabs(pad, new[] { "天賦與裝備", "武器" }, new Action[] { ShowCharacter, ShowArmory }, active == "character" ? 0 : 1);
+
+        /// Sub-navigation inside the 任務 tab; the 成就 tab carries a dot while a tier waits to be claimed.
+        void MissionTabs(RectTransform pad, int active)
         {
-            var row = Ui.Rect(pad, "SubTabs").Place(new Vector2(0, 1), Vector2.zero, new Vector2(320, 40), new Vector2(0, 1));
-            string[] names = { "天賦與裝備", "武器" };
-            Action[] go = { ShowCharacter, ShowArmory };
+            SubTabs(pad, new[] { "每日任務", "成就" }, new Action[] { ShowDaily, ShowAchievements }, active);
+            var p = app.Profile;
+            int[] waiting = { p.Daily.Claimable, p.AchievementsClaimable };
             for (int i = 0; i < 2; i++)
+                if (waiting[i] > 0 && i != active)
+                    Ui.Box(pad, Palette.Amber, "Badge").rectTransform.Place(new Vector2(0, 1), new Vector2(i * 156 + 134, -8), new Vector2(7, 7), new Vector2(0, 1));
+        }
+
+        void SubTabs(RectTransform pad, string[] names, Action[] go, int active)
+        {
+            var row = Ui.Rect(pad, "SubTabs").Place(new Vector2(0, 1), Vector2.zero, new Vector2(156 * names.Length, 40), new Vector2(0, 1));
+            for (int i = 0; i < names.Length; i++)
             {
-                bool on = (i == 0 ? "character" : "armory") == active;
+                bool on = i == active;
                 var b = Ui.Button(row, names[i], go[i], 16, on ? Palette.Amber : Palette.Muted,
                     on ? new Color(Palette.Amber.r, Palette.Amber.g, Palette.Amber.b, 0.1f) : new Color(0, 0, 0, 0), on ? Palette.Amber : Palette.Line);
                 b.GetComponent<RectTransform>().Place(new Vector2(0, 1), new Vector2(i * 156, 0), new Vector2(148, 40), new Vector2(0, 1));
@@ -221,6 +240,8 @@ namespace RiftWard.Client
             var p = app.Profile;
             int selected = Mathf.Clamp(app.SelectedRegion, 0, Mathf.Max(0, p.Unlocked));
             var region = Defs.Regions[selected];
+            int tierIndex = Mathf.Clamp(app.SelectedDifficulty, 0, Defs.Difficulties.Length - 1);
+            var tier = Defs.Difficulty(tierIndex);
 
             var body = Page(r, "missions");
             var column = Ui.Box(body, new Color(0.063f, 0.067f, 0.075f, 0.96f), "Column").rectTransform;
@@ -236,21 +257,52 @@ namespace RiftWard.Client
             {
                 int index = i;
                 bool locked = i > p.Unlocked, current = i == selected;
-                var b = Ui.Button(stack, "", () => { app.SelectRegion(index); }, 15, null, current ? new Color(Palette.Amber.r, Palette.Amber.g, Palette.Amber.b, 0.1f) : new Color(0, 0, 0, 0), current ? Palette.Amber : new Color(0, 0, 0, 0)).Sized(70);
+                var b = Ui.Button(stack, "", () => { app.SelectRegion(index); }, 15, null, current ? new Color(Palette.Amber.r, Palette.Amber.g, Palette.Amber.b, 0.1f) : new Color(0, 0, 0, 0), current ? Palette.Amber : new Color(0, 0, 0, 0)).Sized(64);
                 b.interactable = !locked;
                 var t = b.GetComponentInChildren<Text>();
                 t.text = "";
                 var num = Ui.Label(b.transform, $"0{i + 1}", 14, current ? Palette.Amber : Palette.Muted, TextAnchor.UpperLeft);
-                num.rectTransform.Place(new Vector2(0, 1), new Vector2(18, -18), new Vector2(40, 20), new Vector2(0, 1));
+                num.rectTransform.Place(new Vector2(0, 1), new Vector2(18, -15), new Vector2(40, 20), new Vector2(0, 1));
                 var name = Ui.Label(b.transform, Defs.Regions[i].Name, 22, current ? Palette.Bone : Palette.Hex("c9c5bb"), TextAnchor.UpperLeft, current);
-                name.rectTransform.Place(new Vector2(0, 1), new Vector2(64, -12), new Vector2(300, 30), new Vector2(0, 1));
+                name.rectTransform.Place(new Vector2(0, 1), new Vector2(64, -9), new Vector2(300, 30), new Vector2(0, 1));
                 var sub = Ui.Label(b.transform, locked ? "完成前一區域後解鎖" : "20 波 · 第 10、20 波 Boss", 13, Palette.Muted, TextAnchor.UpperLeft);
-                sub.rectTransform.Place(new Vector2(0, 1), new Vector2(64, -44), new Vector2(300, 20), new Vector2(0, 1));
-                if (current) Ui.Box(b.transform, Palette.Amber, "Mark").rectTransform.Place(new Vector2(0, 0.5f), Vector2.zero, new Vector2(3, 70), new Vector2(0, 0.5f));
+                sub.rectTransform.Place(new Vector2(0, 1), new Vector2(64, -40), new Vector2(300, 20), new Vector2(0, 1));
+                int best = i < p.Cleared.Count ? p.Cleared[i] : -1;
+                if (!locked && best >= 0)
+                {
+                    var mark = Defs.Difficulty(best);
+                    Ui.Label(b.transform, "已通關 " + mark.Name, 12, mark.Accent, TextAnchor.UpperRight, true).rectTransform
+                        .Place(new Vector2(1, 1), new Vector2(-16, -15), new Vector2(120, 18), new Vector2(1, 1));
+                }
+                if (current) Ui.Box(b.transform, Palette.Amber, "Mark").rectTransform.Place(new Vector2(0, 0.5f), Vector2.zero, new Vector2(3, 64), new Vector2(0, 0.5f));
             }
-            Ui.Rect(stack, "Gap").Sized(24);
+            Ui.Rect(stack, "Gap").Sized(14);
+            Widgets.Section(stack, "難度").Sized(26);
+            var tiers = Ui.HStack(stack, 8).Sized(54);
+            for (int t = 0; t < Defs.Difficulties.Length; t++)
+            {
+                int pick = t;
+                var def = Defs.Difficulties[t];
+                bool open = p.DifficultyOpen(selected, t), on = t == tierIndex;
+                Color accent = def.Accent;
+                var tb = Ui.Button(tiers, "", () => app.SelectDifficulty(pick), 15, null,
+                    on ? new Color(accent.r, accent.g, accent.b, 0.14f) : new Color(1, 1, 1, open ? 0.05f : 0.02f), on ? accent : Palette.Line);
+                tb.interactable = open && app.CanDeploy;
+                tb.GetComponentInChildren<Text>().text = "";
+                Ui.Label(tb.transform, def.Name, 18, open ? (on ? accent : Palette.Bone) : Palette.Hex("6a6d71"), TextAnchor.UpperCenter, on).rectTransform
+                    .Place(new Vector2(0.5f, 1), new Vector2(0, -7), new Vector2(120, 24), new Vector2(0.5f, 1));
+                Ui.Label(tb.transform, open ? def.Code : "未解鎖", 11, open ? (on ? accent : Palette.Muted) : Palette.Muted, TextAnchor.UpperCenter).rectTransform
+                    .Place(new Vector2(0.5f, 1), new Vector2(0, -32), new Vector2(120, 14), new Vector2(0.5f, 1));
+            }
+            string tierNote = tier.Summary;
+            int nextTier = tierIndex + 1;
+            if (nextTier < Defs.Difficulties.Length && !p.DifficultyOpen(selected, nextTier))
+                tierNote += $"在此區域通關{tier.Name}即可解鎖{Defs.Difficulty(nextTier).Name}。";
+            if (app.InRoom && !app.IsLeader) tierNote = "難度由隊長選擇：" + tier.Name;
+            Ui.Label(stack, tierNote, 12, Palette.Muted).Sized(34);
+            Ui.Rect(stack, "Gap").Sized(10);
             var deploy = PrimaryButton(stack, "", app.Deploy).Sized(64);
-            deploy.SetCaption($"部署          0{selected + 1} {region.Name}");
+            deploy.SetCaption(tierIndex > 0 ? $"部署          0{selected + 1} {region.Name} · {tier.Name}" : $"部署          0{selected + 1} {region.Name}");
             deploy.interactable = app.CanDeploy;
             Ui.Rect(stack, "Gap").Sized(12);
             Ui.Button(stack, "故事與教學", () => ShowStory(0), 14, Palette.Muted).Sized(40);
@@ -778,6 +830,701 @@ namespace RiftWard.Client
 
         // ------------------------------------------------------------ 商城 (supply depot)
 
+        // ------------------------------------------------------------ daily missions
+
+        Text dailyStatus;
+
+        public void ShowDaily()
+        {
+            var r = Begin("daily");
+            var p = app.Profile;
+            var daily = p.Daily;
+            var pad = Page(r, "daily");
+            pad.offsetMin = new Vector2(48, 36); pad.offsetMax = new Vector2(-48, -NavHeight - 28);
+            MissionTabs(pad, 0);
+            int left = Mathf.Max(0, daily.ResetsIn - (int)(Time.realtimeSinceStartup - daily.FetchedAt));
+            Ui.Label(pad, $"每天 00:00（台灣時間）更換 · 距離更新 {left / 3600} 小時 {left % 3600 / 60} 分 · 進度在連線任務結算時計入", 13, Palette.Muted, TextAnchor.MiddleLeft)
+                .rectTransform.Place(new Vector2(0, 1), new Vector2(336, 0), new Vector2(560, 40), new Vector2(0, 1));
+            dailyStatus = Ui.Label(pad, "", 14, Palette.Amber, TextAnchor.UpperRight);
+            dailyStatus.rectTransform.Place(new Vector2(1, 1), new Vector2(0, -10), new Vector2(420, 20), new Vector2(1, 1));
+
+            // Task list on the left, difficulty guide on the right.
+            var list = Ui.VStack(pad, 12);
+            list.anchorMin = new Vector2(0, 0); list.anchorMax = new Vector2(0.64f, 1);
+            list.offsetMin = Vector2.zero; list.offsetMax = new Vector2(-12, -60);
+            if (daily.Tasks.Count == 0) Ui.Label(list, "目前無法取得每日任務，請確認已連線到帳號伺服器。", 16, Palette.Muted).Sized(40);
+            else
+            {
+                for (int i = 0; i < daily.Tasks.Count; i++) TaskCard(list, daily.Tasks[i], i);
+                Ui.Rect(list, "Gap").Sized(4);
+                BonusCard(list, daily);
+            }
+
+            var guide = Ui.Box(pad, Palette.Sheet, "Guide").rectTransform;
+            guide.anchorMin = new Vector2(0.64f, 0); guide.anchorMax = new Vector2(1, 1);
+            guide.offsetMin = new Vector2(12, 0); guide.offsetMax = new Vector2(0, -60);
+            TopRule(guide, Palette.Amber);
+            var g = Ui.VStack(guide, 10);
+            g.Fill();
+            g.GetComponent<VerticalLayoutGroup>().padding = new RectOffset(28, 28, 24, 22);
+            Caps(g, "DIFFICULTY", Palette.Amber).Sized(16);
+            Ui.Label(g, "難度與通關紀錄", 24, Palette.Bone, TextAnchor.UpperLeft, true).Sized(32);
+            Ui.Label(g, "在區域通關後，該區域會開放下一級難度。難度越高，金幣與經驗越多。", 13, Palette.Muted).Sized(38);
+            foreach (var def in Defs.Difficulties)
+            {
+                var row = Ui.Rect(g, "Tier").Sized(58);
+                Ui.Box(row, def.Accent, "Mark").rectTransform.Place(new Vector2(0, 1), new Vector2(0, -2), new Vector2(3, 50), new Vector2(0, 1));
+                Ui.Label(row, def.Name, 17, def.Accent, TextAnchor.UpperLeft, true).rectTransform.Place(new Vector2(0, 1), new Vector2(14, 0), new Vector2(120, 22), new Vector2(0, 1));
+                var text = Ui.Label(row, def.Summary, 12, Palette.Hex("c9c5bb")).rectTransform;
+                text.anchorMin = Vector2.zero; text.anchorMax = Vector2.one; text.offsetMin = new Vector2(14, 0); text.offsetMax = new Vector2(0, -24);
+            }
+            Ui.Box(g, Palette.Line, "Rule").Sized(1);
+            Caps(g, "各區域最高通關").Sized(18);
+            for (int i = 0; i < Defs.Regions.Length; i++)
+            {
+                var row = Ui.Rect(g, "Cleared").Sized(22);
+                bool reachable = i <= p.Unlocked;
+                Ui.Label(row, $"0{i + 1}  {Defs.Regions[i].Name}", 14, reachable ? Palette.Bone : Palette.Muted, TextAnchor.MiddleLeft).rectTransform.Fill();
+                int best = i < p.Cleared.Count ? p.Cleared[i] : -1;
+                Color mark = best >= 0 ? (Color)Defs.Difficulty(best).Accent : Palette.Muted;
+                Ui.Label(row, best >= 0 ? Defs.Difficulty(best).Name : reachable ? "尚未通關" : "未解鎖", 14, mark, TextAnchor.MiddleRight, best >= 0).rectTransform.Fill();
+            }
+        }
+
+        void TaskCard(Transform parent, DailyTask task, int index)
+        {
+            bool ready = task.Done && !task.Claimed;
+            var card = Ui.Box(parent, ready ? new Color(Palette.Amber.r, Palette.Amber.g, Palette.Amber.b, 0.08f) : Palette.Sheet, "Task").Sized(104);
+            var outline = card.gameObject.AddComponent<Outline>();
+            outline.effectColor = ready ? Palette.Amber : Palette.Line;
+            var c = card.rectTransform;
+            Ui.Label(c, $"0{index + 1}", 14, task.Done ? Palette.Amber : Palette.Muted).rectTransform.Place(new Vector2(0, 1), new Vector2(22, -20), new Vector2(30, 20), new Vector2(0, 1));
+            Ui.Label(c, task.Text, 20, task.Claimed ? Palette.Muted : Palette.Bone, TextAnchor.UpperLeft, true)
+                .rectTransform.Place(new Vector2(0, 1), new Vector2(60, -16), new Vector2(460, 28), new Vector2(0, 1));
+            // Progress bar with the count beside it.
+            var track = Ui.Box(c, new Color(1, 1, 1, 0.08f), "Track").rectTransform;
+            track.Place(new Vector2(0, 1), new Vector2(60, -56), new Vector2(330, 6), new Vector2(0, 1));
+            var fill = Ui.Box(track, task.Done ? Palette.Amber : Palette.Bone, "Fill").rectTransform;
+            fill.anchorMin = Vector2.zero; fill.anchorMax = new Vector2(Mathf.Clamp01((float)task.Progress / task.Goal), 1); fill.offsetMin = fill.offsetMax = Vector2.zero;
+            Ui.Label(c, $"{task.Progress} / {task.Goal}", 14, task.Done ? Palette.Amber : Palette.Muted, TextAnchor.MiddleLeft, task.Done)
+                .rectTransform.Place(new Vector2(0, 1), new Vector2(402, -49), new Vector2(110, 20), new Vector2(0, 1));
+            RewardRow(c, task.Reward, new Vector2(60, -72), task.Claimed);
+            var button = ready ? PrimaryButton(c, "領取", () => Claim(task.Id), 18)
+                : Ui.Button(c, task.Claimed ? "已領取" : "進行中", null, 16, Palette.Muted, new Color(0, 0, 0, 0), Palette.Line);
+            button.interactable = ready;
+            button.GetComponent<RectTransform>().Place(new Vector2(1, 0.5f), new Vector2(-22, 0), new Vector2(124, 48), new Vector2(1, 0.5f));
+        }
+
+        void BonusCard(Transform parent, DailyMissions daily)
+        {
+            bool ready = daily.BonusReady && !daily.BonusClaimed;
+            var accent = Gear.RarityColors[3];
+            var card = Ui.Box(parent, ready ? new Color(accent.r, accent.g, accent.b, 0.1f) : Palette.Sheet, "Bonus").Sized(96);
+            var outline = card.gameObject.AddComponent<Outline>();
+            outline.effectColor = ready ? accent : Palette.Line;
+            var c = card.rectTransform;
+            Ui.Box(c, accent, "Mark").rectTransform.Place(new Vector2(0, 0.5f), Vector2.zero, new Vector2(3, 96), new Vector2(0, 0.5f));
+            Caps(c, "DAILY BONUS", accent).rectTransform.Place(new Vector2(0, 1), new Vector2(22, -14), new Vector2(200, 16), new Vector2(0, 1));
+            Ui.Label(c, $"全部完成獎勵  ·  已領 {daily.ClaimedCount} / {daily.Tasks.Count}", 19, daily.BonusClaimed ? Palette.Muted : Palette.Bone, TextAnchor.UpperLeft, true)
+                .rectTransform.Place(new Vector2(0, 1), new Vector2(22, -32), new Vector2(460, 26), new Vector2(0, 1));
+            RewardRow(c, daily.Bonus, new Vector2(22, -66), daily.BonusClaimed);
+            var button = ready ? Ui.Button(c, "領取", () => Claim("bonus"), 18, Palette.Ink, accent, accent)
+                : Ui.Button(c, daily.BonusClaimed ? "已領取" : "未完成", null, 16, Palette.Muted, new Color(0, 0, 0, 0), Palette.Line);
+            button.interactable = ready;
+            button.GetComponent<RectTransform>().Place(new Vector2(1, 0.5f), new Vector2(-22, 0), new Vector2(124, 48), new Vector2(1, 0.5f));
+        }
+
+        /// Gold / gear key / weapon key amounts in a row, icons in their resource colours.
+        static void RewardRow(RectTransform parent, DailyReward reward, Vector2 at, bool dim, int size = 14, string extra = null)
+        {
+            float x = at.x, icon = size + 4, gap = size >= 14 ? 20 : 10;
+            void Item(Image mark, string text, Color color)
+            {
+                if (mark != null)
+                {
+                    mark.rectTransform.Place(new Vector2(0, 1), new Vector2(x, at.y), new Vector2(icon, icon), new Vector2(0, 1));
+                    if (dim) mark.color = new Color(mark.color.r, mark.color.g, mark.color.b, 0.4f);
+                    x += icon + 4;
+                }
+                var label = Ui.Label(parent, text, size, dim ? Palette.Muted : color, TextAnchor.MiddleLeft, true);
+                label.rectTransform.Place(new Vector2(0, 1), new Vector2(x, at.y + 1), new Vector2(130, icon + 2), new Vector2(0, 1));
+                x += label.preferredWidth + gap;
+            }
+            bool compact = size < 14;
+            if (reward.Gold > 0) Item(Icons.Coin(parent, icon), compact ? $"+{reward.Gold}" : $"+{reward.Gold} 金幣", Palette.Amber);
+            if (reward.Keys > 0) Item(Icons.Key(parent, icon, Gear.GearKeyColor), compact ? $"+{reward.Keys}" : $"+{reward.Keys} 裝備鑰匙", Gear.GearKeyColor);
+            if (reward.WeaponKeys > 0) Item(Icons.Key(parent, icon, Gear.WeaponKeyColor), compact ? $"+{reward.WeaponKeys}" : $"+{reward.WeaponKeys} 武器鑰匙", Gear.WeaponKeyColor);
+            if (!string.IsNullOrEmpty(extra)) Item(null, "+" + extra, Palette.Bone);
+        }
+
+        void Claim(string task)
+        {
+            if (dailyStatus != null) { dailyStatus.color = Palette.Amber; dailyStatus.text = "領取中…"; }
+            app.Api.Post("/api/daily/claim", new Dictionary<string, object> { ["task"] = task }, result =>
+            {
+                if (Mode != "daily") return;
+                if (!result.Bool("ok")) { dailyStatus.color = Palette.Danger; dailyStatus.text = result.Str("error", "領取失敗"); return; }
+                app.UpdateProfile(Profile.From(result.Obj("profile")));
+                var got = DailyReward.From(result.Obj("reward"));
+                ShowDaily();
+                var parts = new List<string>();
+                if (got.Gold > 0) parts.Add($"金幣 +{got.Gold}");
+                if (got.Keys > 0) parts.Add($"裝備鑰匙 +{got.Keys}");
+                if (got.WeaponKeys > 0) parts.Add($"武器鑰匙 +{got.WeaponKeys}");
+                dailyStatus.text = "已領取  " + string.Join("、", parts);
+            });
+        }
+
+        // ------------------------------------------------------------ social: friends, mail, chat
+
+        /// Sub-navigation inside the 社交 tab, with dots for friend requests and unread mail.
+        void SocialTabs(RectTransform pad, int active)
+        {
+            SubTabs(pad, new[] { "好友", "信箱", "聊天" }, new Action[] { () => ShowFriends(), () => ShowMail(), ShowChat }, active);
+            var p = app.Profile;
+            bool[] waiting = { p.FriendRequests > 0 || app.PendingInvite != null, p.MailUnread + p.MailClaimable > 0, false };
+            for (int i = 0; i < waiting.Length; i++)
+                if (waiting[i] && i != active)
+                    Ui.Box(pad, Palette.Amber, "Badge").rectTransform.Place(new Vector2(0, 1), new Vector2(i * 156 + 134, -8), new Vector2(7, 7), new Vector2(0, 1));
+        }
+
+        RectTransform SocialPage(string mode, int tab, out RectTransform pad)
+        {
+            var r = Begin(mode);
+            pad = Page(r, "social");
+            pad.offsetMin = new Vector2(48, 36); pad.offsetMax = new Vector2(-48, -NavHeight - 28);
+            SocialTabs(pad, tab);
+            socialStatus = Ui.Label(pad, "", 14, Palette.Amber, TextAnchor.MiddleRight);
+            socialStatus.rectTransform.Place(new Vector2(1, 1), Vector2.zero, new Vector2(560, 40), new Vector2(1, 1));
+            return r;
+        }
+
+        Text socialStatus;
+
+        void SocialStatus(string text, bool error = false)
+        {
+            if (socialStatus == null) return;
+            socialStatus.color = error ? Palette.Danger : Palette.Amber;
+            socialStatus.text = text;
+        }
+
+        static RectTransform Panel(RectTransform pad, float x0, float x1, Color accent, string name)
+        {
+            var box = Ui.Box(pad, Palette.Sheet, name).rectTransform;
+            box.anchorMin = new Vector2(x0, 0); box.anchorMax = new Vector2(x1, 1);
+            box.offsetMin = new Vector2(x0 > 0 ? 8 : 0, 0); box.offsetMax = new Vector2(x1 < 1 ? -8 : 0, -60);
+            TopRule(box, accent);
+            var st = Ui.VStack(box, 8);
+            st.Fill();
+            st.GetComponent<VerticalLayoutGroup>().padding = new RectOffset(24, 24, 20, 20);
+            return st;
+        }
+
+        // ---- friends
+
+        Dictionary<string, object> friendData;
+        readonly Dictionary<int, (Text status, Image dot, Button invite)> friendRows = new Dictionary<int, (Text, Image, Button)>();
+
+        public void ShowFriends(bool fetch = true)
+        {
+            SocialPage("friends", 0, out var pad);
+            var p = app.Profile;
+            friendRows.Clear();
+            var friends = (friendData?.Arr("friends") ?? new List<object>()).OfType<Dictionary<string, object>>().ToList();
+            var incoming = (friendData?.Arr("incoming") ?? new List<object>()).OfType<Dictionary<string, object>>().ToList();
+            var outgoing = (friendData?.Arr("outgoing") ?? new List<object>()).OfType<Dictionary<string, object>>().ToList();
+
+            var left = Panel(pad, 0, 0.62f, Palette.Teammate, "Friends");
+            var head = Ui.Rect(left, "Head").Sized(30);
+            Ui.Label(head, "好友名單", 22, Palette.Bone, TextAnchor.MiddleLeft, true).rectTransform.Fill();
+            int online = friends.Count(f => FriendPresence.StateOf(f.Int("id")) != PresenceState.Offline);
+            Ui.Label(head, $"線上 {online} · 共 {friends.Count} / 100", 13, Palette.Muted, TextAnchor.MiddleRight).rectTransform.Fill();
+            Ui.Label(left, app.Net.Welcomed ? "按「邀請」會把好友拉進你的房間；你還沒有房間時會自動建立一個。" : "目前未連線到遊戲伺服器，無法顯示上線狀態或邀請好友。", 13, Palette.Muted).Sized(20);
+            var list = Widgets.ScrollList(left, out _);
+            list.parent.gameObject.AddComponent<LayoutElement>().flexibleHeight = 1;
+            if (friendData == null) Ui.Label(list, "載入中…", 14, Palette.Muted).Sized(40);
+            else if (friends.Count == 0) Ui.Label(list, "還沒有好友。在右側輸入對方的帳號送出邀請吧。", 14, Palette.Muted).Sized(40);
+            // Online friends first, then by name.
+            foreach (var f in friends.OrderBy(f => FriendPresence.StateOf(f.Int("id")) == PresenceState.Offline ? 1 : 0).ThenBy(f => f.Str("username"), StringComparer.OrdinalIgnoreCase))
+                FriendRow(list, f);
+
+            var right = Panel(pad, 0.62f, 1, Palette.Amber, "Requests");
+            if (app.PendingInvite.HasValue)
+            {
+                var (from, name, code) = app.PendingInvite.Value;
+                var card = Ui.Box(right, new Color(Palette.Teammate.r, Palette.Teammate.g, Palette.Teammate.b, 0.1f), "Invite").Sized(88);
+                card.gameObject.AddComponent<Outline>().effectColor = Palette.Teammate;
+                Ui.Label(card.transform, "組隊邀請", 12, Palette.Teammate, TextAnchor.UpperLeft, true).rectTransform.Place(new Vector2(0, 1), new Vector2(16, -10), new Vector2(200, 16), new Vector2(0, 1));
+                Ui.Label(card.transform, $"{name} 邀請你加入房間 {code}", 15, Palette.Bone, TextAnchor.UpperLeft, true).rectTransform.Place(new Vector2(0, 1), new Vector2(16, -28), new Vector2(330, 22), new Vector2(0, 1));
+                var row = Ui.HStack(card.transform, 8);
+                row.Place(new Vector2(1, 0), new Vector2(-12, 10), new Vector2(200, 30), new Vector2(1, 0));
+                Ui.Button(row, "婉拒", () => { app.DeclineInvite(from); ShowFriends(false); }, 13, Palette.Muted);
+                Ui.Button(row, "加入房間", () => app.AcceptInvite(code), 14, Palette.Ink, Palette.Teammate, Palette.Teammate);
+            }
+            Ui.Label(right, "新增好友", 18, Palette.Bone, TextAnchor.UpperLeft, true).Sized(26);
+            var add = Ui.HStack(right, 8).Sized(42);
+            add.GetComponent<HorizontalLayoutGroup>().childForceExpandWidth = false;
+            var nameInput = Widgets.Input(add, "輸入對方的帳號", false, 24);
+            nameInput.gameObject.AddComponent<LayoutElement>().flexibleWidth = 1;
+            var send = PrimaryButton(add, "送出邀請", () => FriendRequest("/api/friends/request", new Dictionary<string, object> { ["username"] = nameInput.text.Trim() }, "已送出好友邀請"), 15);
+            send.gameObject.AddComponent<LayoutElement>().preferredWidth = 110;
+            Ui.Rect(right, "Gap").Sized(6);
+            Widgets.Section(right, $"收到的邀請（{incoming.Count}）").Sized(22);
+            if (incoming.Count == 0) Ui.Label(right, "目前沒有新的好友邀請", 13, Palette.Muted).Sized(24);
+            foreach (var f in incoming)
+            {
+                string who = f.Str("username");
+                var row = Ui.Rect(right, "Incoming").Sized(38);
+                PersonLabel(row, f, 15, 200);
+                var buttons = Ui.HStack(row, 6);
+                buttons.Place(new Vector2(1, 0.5f), Vector2.zero, new Vector2(150, 32), new Vector2(1, 0.5f));
+                Ui.Button(buttons, "拒絕", () => FriendRequest("/api/friends/respond", new Dictionary<string, object> { ["username"] = who, ["accept"] = false }, $"已拒絕 {who}"), 13, Palette.Muted);
+                Ui.Button(buttons, "接受", () => FriendRequest("/api/friends/respond", new Dictionary<string, object> { ["username"] = who, ["accept"] = true }, $"{who} 已成為你的好友"), 13, Palette.Ink, Palette.Amber, Palette.Amber);
+            }
+            Widgets.Section(right, $"已送出（{outgoing.Count}）").Sized(22);
+            if (outgoing.Count == 0) Ui.Label(right, "沒有等待回應的邀請", 13, Palette.Muted).Sized(24);
+            foreach (var f in outgoing.Take(6))
+            {
+                string who = f.Str("username");
+                var row = Ui.Rect(right, "Outgoing").Sized(34);
+                PersonLabel(row, f, 14, 200);
+                Ui.Label(row, "等待回應", 12, Palette.Muted, TextAnchor.MiddleRight).rectTransform.Place(new Vector2(1, 0.5f), new Vector2(-78, 0), new Vector2(80, 30), new Vector2(1, 0.5f));
+                Ui.Button(row, "取消", () => FriendRequest("/api/friends/remove", new Dictionary<string, object> { ["username"] = who }, "已取消邀請"), 12, Palette.Muted)
+                    .GetComponent<RectTransform>().Place(new Vector2(1, 0.5f), Vector2.zero, new Vector2(64, 28), new Vector2(1, 0.5f));
+            }
+            if (fetch) LoadFriends();
+        }
+
+        /// Title (amber) + name + level in one row, as a pair of labels.
+        static void PersonLabel(RectTransform row, Dictionary<string, object> f, int size, float x)
+        {
+            string title = f.Str("title");
+            float at = 0;
+            if (title != "")
+            {
+                var t = Ui.Label(row, $"〔{title}〕", size, Palette.Amber, TextAnchor.MiddleLeft, true);
+                t.rectTransform.Place(new Vector2(0, 0.5f), Vector2.zero, new Vector2(160, 30), new Vector2(0, 0.5f));
+                at = t.preferredWidth + 2;
+            }
+            var n = Ui.Label(row, f.Str("username"), size, Palette.Bone, TextAnchor.MiddleLeft, true);
+            n.rectTransform.Place(new Vector2(0, 0.5f), new Vector2(at, 0), new Vector2(220, 30), new Vector2(0, 0.5f));
+            Ui.Label(row, $"Lv {f.Int("level", 1)}", size - 3, Palette.Muted, TextAnchor.MiddleLeft).rectTransform
+                .Place(new Vector2(0, 0.5f), new Vector2(at + n.preferredWidth + 10, 0), new Vector2(60, 30), new Vector2(0, 0.5f));
+        }
+
+        void FriendRow(RectTransform list, Dictionary<string, object> f)
+        {
+            int id = f.Int("id");
+            string who = f.Str("username");
+            var row = Ui.Box(list, new Color(1, 1, 1, 0.025f), "Friend").Sized(56);
+            var rt = row.rectTransform;
+            var dot = Ui.Box(rt, FriendPresence.ColorOf(id), "Dot");
+            dot.rectTransform.Place(new Vector2(0, 0.5f), new Vector2(16, 0), new Vector2(9, 9), new Vector2(0, 0.5f));
+            var info = Ui.Rect(rt, "Info").Place(new Vector2(0, 1), new Vector2(36, -4), new Vector2(360, 26), new Vector2(0, 1));
+            PersonLabel(info, f, 16, 0);
+            var status = Ui.Label(rt, FriendPresence.Describe(id), 12, FriendPresence.ColorOf(id), TextAnchor.UpperLeft);
+            status.rectTransform.Place(new Vector2(0, 1), new Vector2(36, -32), new Vector2(240, 18), new Vector2(0, 1));
+            Button remove = null;
+            bool armed = false;
+            remove = Ui.Button(rt, "移除", () =>
+            {
+                if (!armed) { armed = true; remove.SetCaption("確定移除？"); remove.GetComponentInChildren<Text>().color = Palette.Danger; return; }
+                FriendRequest("/api/friends/remove", new Dictionary<string, object> { ["username"] = who }, $"已將 {who} 移出好友");
+            }, 12, Palette.Muted, new Color(0, 0, 0, 0), new Color(0, 0, 0, 0));
+            remove.GetComponent<RectTransform>().Place(new Vector2(1, 0.5f), new Vector2(-12, 0), new Vector2(84, 30), new Vector2(1, 0.5f));
+            var invite = Ui.Button(rt, "邀請", () => { app.InviteFriend(id); SocialStatus($"已向 {who} 送出組隊邀請"); }, 14, Palette.Teammate, new Color(0, 0, 0, 0), Palette.Teammate);
+            invite.GetComponent<RectTransform>().Place(new Vector2(1, 0.5f), new Vector2(-104, 0), new Vector2(76, 32), new Vector2(1, 0.5f));
+            PaintInvite(invite, app.Net.Welcomed && FriendPresence.StateOf(id) != PresenceState.Offline);
+            friendRows[id] = (status, dot, invite);
+        }
+
+        static void PaintInvite(Button invite, bool can)
+        {
+            invite.interactable = can;
+            invite.GetComponentInChildren<Text>().color = can ? Palette.Teammate : Palette.Hex("5d6064");
+            invite.GetComponent<Outline>().effectColor = can ? Palette.Teammate : Palette.Line;
+        }
+
+        /// Presence arrives every few seconds: repaint the rows in place so typing in the page is not interrupted.
+        void RepaintPresence()
+        {
+            if (Mode != "friends") return;
+            foreach (var kv in friendRows)
+            {
+                if (kv.Value.status == null) continue;
+                kv.Value.status.text = FriendPresence.Describe(kv.Key);
+                kv.Value.status.color = FriendPresence.ColorOf(kv.Key);
+                kv.Value.dot.color = FriendPresence.ColorOf(kv.Key);
+                PaintInvite(kv.Value.invite, app.Net.Welcomed && FriendPresence.StateOf(kv.Key) != PresenceState.Offline);
+            }
+        }
+
+        void LoadFriends()
+        {
+            app.Api.Post("/api/friends/list", null, result =>
+            {
+                if (Mode != "friends") return;
+                if (!result.Bool("ok")) { SocialStatus(result.Str("error", "無法讀取好友名單"), true); return; }
+                friendData = result;
+                app.UpdateProfile(Profile.From(result.Obj("profile")), false);
+                ShowFriends(false);
+            });
+        }
+
+        void FriendRequest(string path, Dictionary<string, object> data, string done)
+        {
+            SocialStatus("處理中…");
+            app.Api.Post(path, data, result =>
+            {
+                if (Mode != "friends") return;
+                if (!result.Bool("ok")) { SocialStatus(result.Str("error", "操作失敗"), true); return; }
+                friendData = result;
+                app.UpdateProfile(Profile.From(result.Obj("profile")), false);
+                app.RefreshFriends();
+                ShowFriends(false);
+                SocialStatus(result.Str("status") == "accepted" ? "對方也邀請過你，已直接成為好友" : done);
+            });
+        }
+
+        // ---- mail
+
+        List<Dictionary<string, object>> mailItems;
+        int mailPick = -1;
+
+        static string Date(int unix) => DateTimeOffset.FromUnixTimeSeconds(unix).ToOffset(TimeSpan.FromHours(8)).ToString("yyyy-MM-dd");
+
+        public void ShowMail(bool fetch = true)
+        {
+            SocialPage("mail", 1, out var pad);
+            var items = mailItems ?? new List<Dictionary<string, object>>();
+            if (mailPick < 0 && items.Count > 0) mailPick = items[0].Int("id");
+            var pick = items.FirstOrDefault(m => m.Int("id") == mailPick);
+
+            var left = Panel(pad, 0, 0.4f, Palette.Amber, "Inbox");
+            var head = Ui.Rect(left, "Head").Sized(34);
+            Ui.Label(head, "信箱", 22, Palette.Bone, TextAnchor.MiddleLeft, true).rectTransform.Fill();
+            int claimable = items.Count(m => !m.Bool("claimed"));
+            var all = Ui.Button(head, claimable > 0 ? $"全部領取（{claimable}）" : "全部領取", () => MailRequest("/api/mail/claim_all", null), 13, claimable > 0 ? Palette.Amber : Palette.Muted, new Color(0, 0, 0, 0), claimable > 0 ? Palette.Amber : Palette.Line);
+            all.GetComponent<RectTransform>().Place(new Vector2(1, 0.5f), Vector2.zero, new Vector2(130, 32), new Vector2(1, 0.5f));
+            all.interactable = claimable > 0;
+            Ui.Label(left, "郵件保存 30 天，過期後連同附件一起消失。", 12, Palette.Muted).Sized(18);
+            var list = Widgets.ScrollList(left, out _);
+            list.parent.gameObject.AddComponent<LayoutElement>().flexibleHeight = 1;
+            if (mailItems == null) Ui.Label(list, "載入中…", 14, Palette.Muted).Sized(40);
+            else if (items.Count == 0) Ui.Label(list, "信箱是空的", 14, Palette.Muted).Sized(40);
+            foreach (var m in items)
+            {
+                int id = m.Int("id");
+                bool on = id == mailPick, unread = !m.Bool("read"), gift = !m.Bool("claimed");
+                var b = Ui.Button(list, "", () => { mailPick = id; if (unread) MarkRead(id); ShowMail(false); }, 14, null,
+                    on ? new Color(Palette.Amber.r, Palette.Amber.g, Palette.Amber.b, 0.1f) : new Color(1, 1, 1, 0.025f), on ? Palette.Amber : new Color(0, 0, 0, 0)).Sized(60);
+                b.GetComponentInChildren<Text>().text = "";
+                if (unread) Ui.Box(b.transform, Palette.Amber, "Unread").rectTransform.Place(new Vector2(0, 1), new Vector2(10, -16), new Vector2(6, 6), new Vector2(0, 1));
+                Ui.Label(b.transform, m.Str("title"), 15, unread ? Palette.Bone : Palette.Hex("c9c5bb"), TextAnchor.UpperLeft, unread).rectTransform
+                    .Place(new Vector2(0, 1), new Vector2(24, -9), new Vector2(250, 22), new Vector2(0, 1));
+                Ui.Label(b.transform, $"遠征軍指揮部 · {Date(m.Int("created"))}", 11, Palette.Muted).rectTransform.Place(new Vector2(0, 1), new Vector2(24, -34), new Vector2(250, 16), new Vector2(0, 1));
+                if (gift) Icons.Key(b.transform, 18, Gear.GearKeyColor).rectTransform.Place(new Vector2(1, 0.5f), new Vector2(-14, 0), new Vector2(18, 18), new Vector2(1, 0.5f));
+            }
+
+            var right = Panel(pad, 0.4f, 1, Palette.Amber, "Letter");
+            if (pick == null)
+            {
+                Ui.Label(right, mailItems == null ? "" : "選擇左側的郵件查看內容", 15, Palette.Muted).Sized(30);
+            }
+            else
+            {
+                Caps(right, "SYSTEM MAIL", Palette.Amber).Sized(16);
+                Ui.Label(right, pick.Str("title"), 26, Palette.Bone, TextAnchor.UpperLeft, true).Sized(36);
+                int daysLeft = Mathf.Max(0, Mathf.CeilToInt((pick.Int("expires") - (float)DateTimeOffset.UtcNow.ToUnixTimeSeconds()) / 86400f));
+                Ui.Label(right, $"寄件者：遠征軍指揮部 · {Date(pick.Int("created"))} · 剩 {daysLeft} 天", 12, Palette.Muted).Sized(18);
+                Ui.Box(right, Palette.Line, "Rule").Sized(1);
+                var body = Ui.Label(right, pick.Str("body"), 15, Palette.Hex("d6d1c6"));
+                body.gameObject.AddComponent<LayoutElement>().flexibleHeight = 1;
+                var reward = DailyReward.From(pick.Obj("reward"));
+                bool hasGift = reward.Gold + reward.Keys + reward.WeaponKeys > 0, claimed = pick.Bool("claimed");
+                if (hasGift)
+                {
+                    Widgets.Section(right, claimed ? "附件（已領取）" : "附件").Sized(22);
+                    var gifts = Ui.Rect(right, "Gifts").Sized(26);
+                    RewardRow(gifts, reward, new Vector2(0, -3), claimed);
+                }
+                var actions = Ui.HStack(right, 10).Sized(48);
+                int id = pick.Int("id");
+                if (hasGift && !claimed) PrimaryButton(actions, "領取附件", () => MailRequest("/api/mail/claim", new Dictionary<string, object> { ["id"] = id }), 17);
+                var delete = Ui.Button(actions, "刪除郵件", () => { MailRequest("/api/mail/delete", new Dictionary<string, object> { ["id"] = id }); mailPick = -1; }, 15, Palette.Muted);
+                delete.interactable = claimed;
+            }
+            if (fetch) MailRequest("/api/mail/list", null);
+        }
+
+        void MarkRead(int id)
+        {
+            var m = mailItems?.FirstOrDefault(x => x.Int("id") == id);
+            if (m != null) m["read"] = true;
+            app.Api.Post("/api/mail/read", new Dictionary<string, object> { ["id"] = id }, result =>
+            {
+                if (result.Bool("ok")) app.UpdateProfile(Profile.From(result.Obj("profile")), false);
+            });
+        }
+
+        void MailRequest(string path, Dictionary<string, object> data)
+        {
+            bool listing = path == "/api/mail/list";
+            if (!listing) SocialStatus("處理中…");
+            app.Api.Post(path, data, result =>
+            {
+                if (Mode != "mail") return;
+                if (!result.Bool("ok")) { SocialStatus(result.Str("error", "操作失敗"), true); return; }
+                mailItems = (result.Arr("mail") ?? new List<object>()).OfType<Dictionary<string, object>>().ToList();
+                app.UpdateProfile(Profile.From(result.Obj("profile")), false);
+                ShowMail(false);
+                var got = DailyReward.From(result.Obj("reward"));
+                var parts = new List<string>();
+                if (got.Gold > 0) parts.Add($"金幣 +{got.Gold}");
+                if (got.Keys > 0) parts.Add($"裝備鑰匙 +{got.Keys}");
+                if (got.WeaponKeys > 0) parts.Add($"武器鑰匙 +{got.WeaponKeys}");
+                if (parts.Count > 0) SocialStatus("已領取  " + string.Join("、", parts));
+                else if (path == "/api/mail/delete") SocialStatus("郵件已刪除");
+            });
+        }
+
+        // ---- chat
+
+        RectTransform chatList;
+        ScrollRect chatScroll;
+        byte chatChannel = ChatChannel.World;
+
+        public void ShowChat()
+        {
+            SocialPage("chat", 2, out var pad);
+            var left = Panel(pad, 0, 0.7f, Palette.Amber, "Chat");
+            var head = Ui.Rect(left, "Head").Sized(30);
+            Ui.Label(head, "聊天室", 22, Palette.Bone, TextAnchor.MiddleLeft, true).rectTransform.Fill();
+            Ui.Label(head, app.Net.Welcomed ? (app.InRoom ? $"房間 {app.RoomCode} · {app.PartySize} 人" : "未加入房間") : "未連線", 13, Palette.Muted, TextAnchor.MiddleRight).rectTransform.Fill();
+            chatList = Widgets.ScrollList(left, out chatScroll);
+            chatList.GetComponent<VerticalLayoutGroup>().padding = new RectOffset(12, 12, 10, 10);
+            chatList.parent.gameObject.AddComponent<LayoutElement>().flexibleHeight = 1;
+            if (ChatLog.Lines.Count == 0) Ui.Label(chatList, app.Net.Welcomed ? "還沒有訊息，打聲招呼吧！" : "連線到遊戲伺服器後才能聊天。", 14, Palette.Muted).Sized(30);
+            foreach (var line in ChatLog.Lines) ChatRow(line);
+            var send = Ui.HStack(left, 8).Sized(44);
+            send.GetComponent<HorizontalLayoutGroup>().childForceExpandWidth = false;
+            Button channelButton = null;
+            void PaintChannel()
+            {
+                channelButton.SetCaption(chatChannel == ChatChannel.Room ? "房間" : "全頻");
+                channelButton.GetComponentInChildren<Text>().color = chatChannel == ChatChannel.Room ? Palette.Teammate : Palette.Bone;
+                channelButton.GetComponent<Outline>().effectColor = chatChannel == ChatChannel.Room ? Palette.Teammate : Palette.Line;
+            }
+            channelButton = Ui.Button(send, "", () => { chatChannel = chatChannel == ChatChannel.Room ? ChatChannel.World : ChatChannel.Room; PaintChannel(); }, 15);
+            channelButton.gameObject.AddComponent<LayoutElement>().preferredWidth = 76;
+            PaintChannel();
+            var input = Widgets.Input(send, app.Net.Welcomed ? "輸入訊息，按 Enter 送出" : "未連線，無法發言", false, ChatChannel.MaxLength);
+            input.gameObject.AddComponent<LayoutElement>().flexibleWidth = 1;
+            input.interactable = app.Net.Welcomed;
+            void Submit()
+            {
+                string text = input.text.Trim();
+                if (text == "") return;
+                app.SendChat(chatChannel, text);
+                input.text = "";
+                input.ActivateInputField();
+            }
+            input.onEndEdit.AddListener(_ => { if (Input.GetKeyDown(KeyCode.Return) || Input.GetKeyDown(KeyCode.KeypadEnter)) Submit(); });
+            var go = PrimaryButton(send, "送出", Submit, 16);
+            go.gameObject.AddComponent<LayoutElement>().preferredWidth = 96;
+            go.interactable = app.Net.Welcomed;
+            ScrollChatToEnd();
+
+            var right = Panel(pad, 0.7f, 1, Palette.Line, "Rules");
+            Ui.Label(right, "頻道說明", 18, Palette.Bone, TextAnchor.UpperLeft, true).Sized(26);
+            Ui.Label(right, "全頻：所有線上玩家都看得到。\n房間：只有同房間的隊友看得到。\n\n戰鬥中按 Enter 開啟聊天，Tab 切換頻道。", 13, Palette.Hex("c9c5bb")).Sized(100);
+            Widgets.Section(right, "聊天規範").Sized(22);
+            Ui.Label(right, "每 10 秒最多 5 則訊息，每則最多 100 字。不當字詞會自動遮蔽，違規者可能被禁言。", 13, Palette.Muted).Sized(60);
+            if (app.Profile.Admin)
+            {
+                Widgets.Section(right, "管理員指令").Sized(22);
+                Ui.Label(right, "/mute 帳號 分鐘 — 禁言（預設 10 分鐘）\n/unmute 帳號 — 解除禁言\n過濾字詞：server-data/chat-filter.txt", 12, Palette.Danger).Sized(64);
+            }
+        }
+
+        void ChatRow(ChatLog.Line line)
+        {
+            var label = Ui.Label(chatList, ChatLog.Format(line), 15, Palette.Bone);
+            label.supportRichText = true;
+            label.gameObject.AddComponent<ContentSizeFitter>().verticalFit = ContentSizeFitter.FitMode.PreferredSize;
+        }
+
+        void OnChatLine(ChatLog.Line line)
+        {
+            if (Mode != "chat" || chatList == null) return;
+            if (ChatLog.Lines.Count == 1) foreach (Transform child in chatList) UnityEngine.Object.Destroy(child.gameObject);
+            bool atEnd = chatScroll == null || chatScroll.verticalNormalizedPosition < 0.02f;
+            ChatRow(line);
+            if (chatList.childCount > ChatLog.Capacity) UnityEngine.Object.Destroy(chatList.GetChild(0).gameObject);
+            if (atEnd) ScrollChatToEnd();
+        }
+
+        void ScrollChatToEnd()
+        {
+            if (chatScroll == null) return;
+            Canvas.ForceUpdateCanvases();
+            chatScroll.verticalNormalizedPosition = 0f;
+        }
+
+        // ------------------------------------------------------------ achievements
+
+        static readonly (string id, string name)[] AchievementCategories = { ("combat", "戰鬥"), ("clear", "通關"), ("support", "支援與成長"), ("collect", "收集") };
+        static readonly Color[] TierColors = { Palette.Hex("cd8a4f"), Palette.Hex("c4ccd4"), Palette.Hex("ffcf4a") };
+        Text achievementStatus;
+
+        public void ShowAchievements()
+        {
+            var r = Begin("achievements");
+            var p = app.Profile;
+            var pad = Page(r, "daily");
+            pad.offsetMin = new Vector2(48, 36); pad.offsetMax = new Vector2(-48, -NavHeight - 28);
+            MissionTabs(pad, 1);
+            int done = p.Achievements.Sum(a => a.Claimed), total = p.Achievements.Count * 3;
+            Ui.Label(pad, $"已完成 {done} / {total} 階 · 每階都有獎勵，部分成就的金階附贈稱號", 13, Palette.Muted, TextAnchor.MiddleLeft)
+                .rectTransform.Place(new Vector2(0, 1), new Vector2(336, 0), new Vector2(420, 40), new Vector2(0, 1));
+
+            // Worn title and the button that changes it, top right.
+            var titleBox = Ui.Rect(pad, "Title").Place(new Vector2(1, 1), Vector2.zero, new Vector2(330, 40), new Vector2(1, 1));
+            Ui.Label(titleBox, "目前稱號", 12, Palette.Muted, TextAnchor.MiddleLeft).rectTransform.Place(new Vector2(0, 0.5f), Vector2.zero, new Vector2(60, 40), new Vector2(0, 0.5f));
+            Ui.Label(titleBox, string.IsNullOrEmpty(p.Title) ? "未配戴" : $"〔{p.Title}〕", 17, string.IsNullOrEmpty(p.Title) ? Palette.Muted : Palette.Amber, TextAnchor.MiddleLeft, true)
+                .rectTransform.Place(new Vector2(0, 0.5f), new Vector2(62, 0), new Vector2(140, 40), new Vector2(0, 0.5f));
+            Ui.Button(titleBox, "更換稱號", ShowTitlePicker, 14, Palette.Amber, new Color(0, 0, 0, 0), Palette.Amber)
+                .GetComponent<RectTransform>().Place(new Vector2(1, 0.5f), Vector2.zero, new Vector2(110, 36), new Vector2(1, 0.5f));
+            achievementStatus = Ui.Label(pad, "", 14, Palette.Amber, TextAnchor.MiddleRight);
+            achievementStatus.rectTransform.Place(new Vector2(1, 1), new Vector2(-346, 0), new Vector2(360, 40), new Vector2(1, 1));
+
+            if (p.Achievements.Count == 0)
+            {
+                Ui.Label(pad, "目前無法取得成就資料，請確認已連線到帳號伺服器。", 16, Palette.Muted).rectTransform.Place(new Vector2(0, 1), new Vector2(0, -70), new Vector2(800, 30), new Vector2(0, 1));
+                return;
+            }
+            for (int c = 0; c < AchievementCategories.Length; c++)
+            {
+                var (cat, catName) = AchievementCategories[c];
+                var items = p.Achievements.Where(a => a.Category == cat).ToList();
+                float x0 = c / (float)AchievementCategories.Length, x1 = (c + 1) / (float)AchievementCategories.Length;
+                var col = Ui.VStack(pad, 10);
+                col.anchorMin = new Vector2(x0, 0); col.anchorMax = new Vector2(x1, 1);
+                col.offsetMin = new Vector2(c > 0 ? 8 : 0, 0); col.offsetMax = new Vector2(c < AchievementCategories.Length - 1 ? -8 : 0, -60);
+                var head = Ui.Rect(col, "Head").Sized(24);
+                Ui.Label(head, catName, 17, Palette.Bone, TextAnchor.MiddleLeft, true).rectTransform.Fill();
+                Ui.Label(head, $"{items.Sum(a => a.Claimed)} / {items.Count * 3}", 13, Palette.Muted, TextAnchor.MiddleRight).rectTransform.Fill();
+                foreach (var a in items) AchievementCard(col, a);
+            }
+        }
+
+        void AchievementCard(Transform parent, Achievement a)
+        {
+            bool ready = a.CanClaim;
+            var card = Ui.Box(parent, ready ? new Color(Palette.Amber.r, Palette.Amber.g, Palette.Amber.b, 0.08f) : Palette.Sheet, "Achievement").Sized(100);
+            var outline = card.gameObject.AddComponent<Outline>();
+            outline.effectColor = ready ? Palette.Amber : Palette.Line;
+            var c = card.rectTransform;
+            Color tierColor = a.Complete ? TierColors[2] : TierColors[Mathf.Clamp(a.Claimed, 0, 2)];
+            Ui.Label(c, a.Name, 16, a.Complete ? TierColors[2] : Palette.Bone, TextAnchor.UpperLeft, true).rectTransform.Place(new Vector2(0, 1), new Vector2(14, -9), new Vector2(170, 22), new Vector2(0, 1));
+            // Tier pips: filled once claimed.
+            for (int t = 0; t < 3; t++)
+            {
+                var pip = Ui.Box(c, t < a.Claimed ? TierColors[t] : new Color(1, 1, 1, 0.1f), "Pip").rectTransform;
+                pip.Place(new Vector2(1, 1), new Vector2(-14 - (2 - t) * 18, -15), new Vector2(14, 5), new Vector2(1, 1));
+            }
+            Ui.Label(c, a.Text, 12, Palette.Muted).rectTransform.Place(new Vector2(0, 1), new Vector2(14, -33), new Vector2(256, 18), new Vector2(0, 1));
+            if (a.Complete)
+            {
+                Ui.Label(c, string.IsNullOrEmpty(a.Title) ? "全部完成" : $"全部完成 · 稱號〔{a.Title}〕", 13, TierColors[2], TextAnchor.UpperLeft, true)
+                    .rectTransform.Place(new Vector2(0, 1), new Vector2(14, -58), new Vector2(240, 20), new Vector2(0, 1));
+                return;
+            }
+            var track = Ui.Box(c, new Color(1, 1, 1, 0.08f), "Track").rectTransform;
+            track.Place(new Vector2(0, 1), new Vector2(14, -60), new Vector2(100, 5), new Vector2(0, 1));
+            var fill = Ui.Box(track, ready ? Palette.Amber : tierColor, "Fill").rectTransform;
+            fill.anchorMin = Vector2.zero; fill.anchorMax = new Vector2(Mathf.Clamp01((float)a.Progress / a.Goal), 1); fill.offsetMin = fill.offsetMax = Vector2.zero;
+            Ui.Label(c, $"{Mathf.Min(a.Progress, a.Goal)} / {a.Goal}", 12, ready ? Palette.Amber : Palette.Muted, TextAnchor.MiddleLeft, ready)
+                .rectTransform.Place(new Vector2(0, 1), new Vector2(122, -53), new Vector2(80, 18), new Vector2(0, 1));
+            RewardRow(c, a.Reward, new Vector2(14, -76), false, 12, a.Claimed == 2 && !string.IsNullOrEmpty(a.Title) ? $"稱號〔{a.Title}〕" : null);
+            var button = ready ? PrimaryButton(c, $"領取{AchievementTier(a.Claimed)}", () => ClaimAchievement(a.Id), 14)
+                : Ui.Button(c, $"{AchievementTier(a.Claimed)}階", null, 13, tierColor, new Color(0, 0, 0, 0), Palette.Line);
+            button.interactable = ready;
+            button.GetComponent<RectTransform>().Place(new Vector2(1, 1), new Vector2(-12, -52), new Vector2(64, 32), new Vector2(1, 1));
+        }
+
+        static string AchievementTier(int claimed) => new[] { "銅", "銀", "金" }[Mathf.Clamp(claimed, 0, 2)];
+
+        void ClaimAchievement(string id)
+        {
+            if (achievementStatus != null) { achievementStatus.color = Palette.Amber; achievementStatus.text = "領取中…"; }
+            app.Api.Post("/api/achievement/claim", new Dictionary<string, object> { ["achievement"] = id }, result =>
+            {
+                if (Mode != "achievements") return;
+                if (!result.Bool("ok")) { achievementStatus.color = Palette.Danger; achievementStatus.text = result.Str("error", "領取失敗"); return; }
+                app.UpdateProfile(Profile.From(result.Obj("profile")));
+                var claim = result.Obj("claim");
+                ShowAchievements();
+                string title = claim?.Str("title") ?? "";
+                achievementStatus.text = title != "" ? $"獲得稱號〔{title}〕！" : "已領取" + AchievementTier(claim?.Int("tier") ?? 0) + "階獎勵";
+            });
+        }
+
+        public void ShowTitlePickerForCapture() => ShowTitlePicker();
+
+        // Sample data for the automated screenshots (no account service in capture mode).
+        public void DemoFriends(Dictionary<string, object> data) { friendData = data; ShowFriends(false); }
+        public void DemoMail(List<Dictionary<string, object>> items) { mailItems = items; mailPick = -1; ShowMail(false); }
+        public void DemoAudit(List<Dictionary<string, object>> entries)
+        {
+            if (auditList == null) return;
+            foreach (Transform child in auditList) UnityEngine.Object.Destroy(child.gameObject);
+            foreach (var e in entries) AuditRow(e);
+        }
+
+        /// Overlay listing every earned title plus "none".
+        void ShowTitlePicker()
+        {
+            var p = app.Profile;
+            var earned = p.Achievements.Where(a => a.Complete && !string.IsNullOrEmpty(a.Title)).ToList();
+            var scrim = Ui.Box(root, new Color(0.03f, 0.031f, 0.034f, 0.82f), "TitlePicker").rectTransform;
+            scrim.Fill();
+            scrim.gameObject.AddComponent<Button>().onClick.AddListener(() => UnityEngine.Object.Destroy(scrim.gameObject));
+            float height = 150 + Mathf.Max(1, earned.Count + 1) * 50 + (earned.Count == 0 ? 40 : 0);
+            var sheet = Ui.Box(scrim, Palette.Sheet, "Sheet").rectTransform.Place(new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(440, height));
+            sheet.gameObject.AddComponent<Button>();   // swallow clicks so they do not close the picker
+            TopRule(sheet, Palette.Amber);
+            var s = Ui.VStack(sheet, 8);
+            s.Fill();
+            s.GetComponent<VerticalLayoutGroup>().padding = new RectOffset(28, 28, 24, 22);
+            Caps(s, "TITLE", Palette.Amber).Sized(16);
+            Ui.Label(s, "更換稱號", 24, Palette.Bone, TextAnchor.UpperLeft, true).Sized(32);
+            Ui.Label(s, "稱號會顯示在你的名字前，隊友在戰鬥中也看得到。", 13, Palette.Muted).Sized(22);
+            if (earned.Count == 0) Ui.Label(s, "還沒有稱號。完成成就的金階即可獲得。", 14, Palette.Muted).Sized(36);
+            void Option(string id, string label)
+            {
+                bool on = p.TitleId == id;
+                var b = Ui.Button(s, on ? label + "   · 配戴中" : label, () => SetTitle(id, scrim.gameObject), 16, on ? Palette.Amber : Palette.Bone,
+                    on ? new Color(Palette.Amber.r, Palette.Amber.g, Palette.Amber.b, 0.1f) : new Color(1, 1, 1, 0.035f), on ? Palette.Amber : Palette.Line).Sized(42);
+                b.interactable = !on;
+            }
+            foreach (var a in earned) Option(a.Id, $"〔{a.Title}〕  {a.Name}");
+            Option("", "不顯示稱號");
+        }
+
+        void SetTitle(string id, GameObject picker)
+        {
+            app.Api.Post("/api/achievement/title", new Dictionary<string, object> { ["title"] = id }, result =>
+            {
+                if (Mode != "achievements") return;
+                if (picker != null) UnityEngine.Object.Destroy(picker);
+                if (!result.Bool("ok")) { achievementStatus.color = Palette.Danger; achievementStatus.text = result.Str("error", "更換失敗"); return; }
+                app.UpdateProfile(Profile.From(result.Obj("profile")));
+                ShowAchievements();
+                achievementStatus.text = id == "" ? "已取下稱號" : "稱號已更換";
+            });
+        }
+
         public void ShowShop()
         {
             var r = Begin("shop");
@@ -786,7 +1533,7 @@ namespace RiftWard.Client
             var pad = Page(r, "shop");
             pad.offsetMin = new Vector2(48, 36); pad.offsetMax = new Vector2(-48, -NavHeight - 28);
             Ui.Label(pad, "補給站", 34, Palette.Bone, TextAnchor.UpperLeft, true).rectTransform.Place(new Vector2(0, 1), Vector2.zero, new Vector2(400, 44), new Vector2(0, 1));
-            Ui.Label(pad, "使用鑰匙開啟高科技補給艙。裝備與武器分開抽取，鑰匙目前由管理員發放。", 14, Palette.Muted).rectTransform.Place(new Vector2(0, 1), new Vector2(0, -46), new Vector2(800, 20), new Vector2(0, 1));
+            Ui.Label(pad, "使用鑰匙開啟高科技補給艙。裝備與武器分開抽取，鑰匙可從每日任務取得。", 14, Palette.Muted).rectTransform.Place(new Vector2(0, 1), new Vector2(0, -46), new Vector2(800, 20), new Vector2(0, 1));
             characterStatus = Ui.Label(pad, "", 14, Palette.Amber, TextAnchor.UpperRight);
             characterStatus.rectTransform.Place(new Vector2(1, 1), new Vector2(0, -10), new Vector2(520, 20), new Vector2(1, 1));
             SupplyPanel(pad, 0f, 0.5f, "gear");
@@ -1080,17 +1827,21 @@ namespace RiftWard.Client
             Ui.Button(pad, "← 返回基地", app.ShowHome, 14, Palette.Muted, new Color(0, 0, 0, 0), new Color(0, 0, 0, 0))
                 .GetComponent<RectTransform>().Place(new Vector2(0, 1), new Vector2(-14, 0), new Vector2(130, 24), new Vector2(0, 1));
             Ui.Label(pad, "管理員控制台", 40, Palette.Bone, TextAnchor.UpperLeft, true).rectTransform.Place(new Vector2(0, 1), new Vector2(0, -30), new Vector2(500, 52), new Vector2(0, 1));
+            Ui.Button(pad, "管理員能力", ShowAbilityOverlay, 15, Palette.Danger, new Color(0, 0, 0, 0), Palette.Danger)
+                .GetComponent<RectTransform>().Place(new Vector2(1, 1), new Vector2(0, -38), new Vector2(140, 40), new Vector2(1, 1));
 
             var grant = Ui.Box(pad, Palette.Sheet, "Grant").rectTransform;
-            grant.anchorMin = new Vector2(0, 0); grant.anchorMax = new Vector2(0.56f, 1);
-            grant.offsetMin = Vector2.zero; grant.offsetMax = new Vector2(-10, -100);
+            grant.anchorMin = new Vector2(0, 0); grant.anchorMax = new Vector2(0.36f, 1);
+            grant.offsetMin = Vector2.zero; grant.offsetMax = new Vector2(-8, -100);
             TopRule(grant, Palette.Amber);
             var gs = Ui.VStack(grant, 10);
             gs.Fill();
             gs.GetComponent<VerticalLayoutGroup>().padding = new RectOffset(26, 26, 22, 22);
             Ui.Label(gs, "發放福利", 22, Palette.Bone, TextAnchor.UpperLeft, true).Sized(30);
-            Ui.Label(gs, "輸入玩家帳號，或從名單點選；按「發給全部玩家」即可全服發放。", 13, Palette.Muted).Sized(20);
+            Ui.Label(gs, "輸入帳號或從名單點選，也可以全服發放。立即入帳，不經過信箱。", 13, Palette.Muted).Sized(36);
             adminTarget = Widgets.Input(gs, "玩家帳號", false, 24).Sized(44);
+            var captions = Ui.HStack(gs, 10).Sized(14);
+            foreach (var caption in new[] { "金幣", "裝備鑰匙", "武器鑰匙" }) Caps(captions, caption).Sized(-1, 0);
             var row = Ui.HStack(gs, 10).Sized(44);
             var goldInput = Widgets.Input(row, "金幣數量", false, 6);
             goldInput.contentType = InputField.ContentType.IntegerNumber;
@@ -1104,7 +1855,7 @@ namespace RiftWard.Client
             int weaponPick = 0;
             string[] choices = { "不發放武器", "解鎖 AR-27 突擊步槍", "解鎖 SG-8 霰彈槍", "解鎖 LR-50 狙擊槍" };
             Button weaponButton = null;
-            weaponButton = Ui.Button(row, choices[0], () => { weaponPick = (weaponPick + 1) % choices.Length; weaponButton.SetCaption(choices[weaponPick]); }, 14);
+            weaponButton = Ui.Button(Ui.HStack(gs, 10).Sized(40), choices[0], () => { weaponPick = (weaponPick + 1) % choices.Length; weaponButton.SetCaption(choices[weaponPick]); }, 14);
             var actions = Ui.HStack(gs, 10).Sized(46);
             void Send(bool all)
             {
@@ -1133,15 +1884,130 @@ namespace RiftWard.Client
             adminList = Widgets.ScrollList(gs, out _);
             adminList.parent.gameObject.AddComponent<LayoutElement>().flexibleHeight = 1;
 
-            var self = Ui.Box(pad, Palette.Sheet, "Self").rectTransform;
-            self.anchorMin = new Vector2(0.56f, 0); self.anchorMax = new Vector2(1, 1);
-            self.offsetMin = new Vector2(10, 0); self.offsetMax = new Vector2(0, -100);
-            TopRule(self, Palette.Danger);
-            var ss = Ui.VStack(self, 12);
+            AdminMailPanel(pad);
+            AuditPanel(pad);
+            LoadPlayers();
+            LoadAudit();
+        }
+
+        RectTransform AdminColumn(RectTransform pad, float x0, float x1, Color accent, string name)
+        {
+            var box = Ui.Box(pad, Palette.Sheet, name).rectTransform;
+            box.anchorMin = new Vector2(x0, 0); box.anchorMax = new Vector2(x1, 1);
+            box.offsetMin = new Vector2(8, 0); box.offsetMax = new Vector2(x1 < 1 ? -8 : 0, -100);
+            TopRule(box, accent);
+            var st = Ui.VStack(box, 10);
+            st.Fill();
+            st.GetComponent<VerticalLayoutGroup>().padding = new RectOffset(24, 24, 22, 22);
+            return st;
+        }
+
+        /// System mail to one player or everyone, with optional attachments collected from the 信箱.
+        void AdminMailPanel(RectTransform pad)
+        {
+            var ms = AdminColumn(pad, 0.36f, 0.68f, Palette.Amber, "Mail");
+            Ui.Label(ms, "系統郵件", 22, Palette.Bone, TextAnchor.UpperLeft, true).Sized(30);
+            Ui.Label(ms, "寄到玩家信箱，附件需由玩家自行領取。適合維護補償與活動公告。", 13, Palette.Muted).Sized(36);
+            var target = Widgets.Input(ms, "收件帳號（留空＝全部玩家）", false, 24).Sized(44);
+            var title = Widgets.Input(ms, "標題（最多 40 字）", false, 40).Sized(44);
+            var body = Widgets.Input(ms, "內容（最多 500 字）", false, 500);
+            body.lineType = InputField.LineType.MultiLineNewline;
+            body.textComponent.alignment = TextAnchor.UpperLeft;
+            body.textComponent.horizontalOverflow = HorizontalWrapMode.Wrap;
+            ((Text)body.placeholder).alignment = TextAnchor.UpperLeft;
+            body.textComponent.rectTransform.offsetMin = new Vector2(16, 10); body.textComponent.rectTransform.offsetMax = new Vector2(-16, -10);
+            body.placeholder.rectTransform.offsetMin = new Vector2(16, 10); body.placeholder.rectTransform.offsetMax = new Vector2(-16, -10);
+            body.gameObject.AddComponent<LayoutElement>().flexibleHeight = 1;
+            Caps(ms, "附件（可留空）").Sized(18);
+            var gifts = Ui.HStack(ms, 8).Sized(44);
+            InputField Number(string hint)
+            {
+                var f = Widgets.Input(gifts, hint, false, 6);
+                f.contentType = InputField.ContentType.IntegerNumber;
+                ((Text)f.placeholder).fontSize = 14;
+                return f;
+            }
+            var gold = Number("金幣");
+            var keys = Number("裝備鑰匙");
+            var wkeys = Number("武器鑰匙");
+            var status = Ui.Label(ms, "", 14, Palette.Amber).Sized(22);
+            PrimaryButton(ms, "寄出郵件", () =>
+            {
+                string who = target.text.Trim();
+                int Parse(InputField f) => int.TryParse(f.text, out var v) ? v : 0;
+                status.color = Palette.Amber;
+                status.text = "寄送中…";
+                app.Api.Post("/api/admin/mail", new Dictionary<string, object>
+                {
+                    ["username"] = who == "" ? "*" : who, ["title"] = title.text, ["body"] = body.text,
+                    ["gold"] = Parse(gold), ["keys"] = Parse(keys), ["weapon_keys"] = Parse(wkeys), ["days"] = 30,
+                }, result =>
+                {
+                    if (Mode != "admin") return;
+                    if (!result.Bool("ok")) { status.color = Palette.Danger; status.text = result.Str("error", "寄送失敗"); return; }
+                    app.UpdateProfile(Profile.From(result.Obj("profile")), false);
+                    status.text = $"已寄給 {result.Int("count")} 位玩家";
+                    title.text = body.text = gold.text = keys.text = wkeys.text = "";
+                });
+            }, 17).Sized(50);
+        }
+
+        RectTransform auditList;
+
+        /// Anti-cheat log: rejected mission reports (red) and suspicious but paid ones (amber), newest first.
+        void AuditPanel(RectTransform pad)
+        {
+            var au = AdminColumn(pad, 0.68f, 1f, Palette.Danger, "Audit");
+            var head = Ui.Rect(au, "Head").Sized(30);
+            Ui.Label(head, "稽核記錄", 22, Palette.Bone, TextAnchor.MiddleLeft, true).rectTransform.Fill();
+            Ui.Button(head, "重新整理", LoadAudit, 12, Palette.Muted, new Color(0, 0, 0, 0), Palette.Line)
+                .GetComponent<RectTransform>().Place(new Vector2(1, 0.5f), Vector2.zero, new Vector2(84, 28), new Vector2(1, 0.5f));
+            Ui.Label(au, "伺服器會檢查每場結算。紅色＝不合理，已拒絕發放；黃色＝數據可疑，已發放但請留意。", 13, Palette.Muted).Sized(54);
+            auditList = Widgets.ScrollList(au, out _);
+            auditList.parent.gameObject.AddComponent<LayoutElement>().flexibleHeight = 1;
+            Ui.Label(auditList, "載入中…", 13, Palette.Muted).Sized(30);
+        }
+
+        void LoadAudit()
+        {
+            app.Api.Post("/api/admin/audit", null, result =>
+            {
+                if (Mode != "admin" || auditList == null) return;
+                foreach (Transform child in auditList) UnityEngine.Object.Destroy(child.gameObject);
+                if (!result.Bool("ok")) { Ui.Label(auditList, result.Str("error", "無法讀取稽核記錄"), 13, Palette.Danger).Sized(30); return; }
+                var entries = (result.Arr("entries") ?? new List<object>()).OfType<Dictionary<string, object>>().ToList();
+                if (entries.Count == 0) { Ui.Label(auditList, "目前沒有任何異常紀錄", 13, Palette.Muted).Sized(30); return; }
+                foreach (var e in entries) AuditRow(e);
+            });
+        }
+
+        void AuditRow(Dictionary<string, object> e)
+        {
+            bool rejected = e.Int("rejected") == 1;
+            Color accent = rejected ? Palette.Danger : Palette.Amber;
+            var row = Ui.Box(auditList, new Color(1, 1, 1, 0.025f), "Entry");
+            var mark = Ui.Box(row.transform, accent, "Mark").rectTransform;
+            mark.anchorMin = Vector2.zero; mark.anchorMax = new Vector2(0, 1); mark.pivot = new Vector2(0, 0.5f); mark.offsetMin = Vector2.zero; mark.offsetMax = new Vector2(3, 0);
+            string when = DateTimeOffset.FromUnixTimeSeconds(e.Int("created")).ToOffset(TimeSpan.FromHours(8)).ToString("MM-dd HH:mm");
+            Ui.Label(row.transform, e.Str("username"), 14, Palette.Bone, TextAnchor.UpperLeft, true).rectTransform.Place(new Vector2(0, 1), new Vector2(14, -8), new Vector2(200, 18), new Vector2(0, 1));
+            Ui.Label(row.transform, (rejected ? "已拒絕 · " : "可疑 · ") + when, 11, accent, TextAnchor.UpperRight).rectTransform.Place(new Vector2(1, 1), new Vector2(-10, -9), new Vector2(160, 16), new Vector2(1, 1));
+            var reason = Ui.Label(row.transform, e.Str("reason"), 12, Palette.Hex("c9c5bb"));
+            var rt = reason.rectTransform;
+            rt.anchorMin = Vector2.zero; rt.anchorMax = Vector2.one; rt.offsetMin = new Vector2(14, 8); rt.offsetMax = new Vector2(-10, -30);
+            row.gameObject.AddComponent<LayoutElement>().preferredHeight = 40 + Mathf.Max(18, Mathf.Ceil(reason.text.Length / 22f) * 17);
+        }
+
+        void ShowAbilityOverlay()
+        {
+            var scrim = Ui.Box(root, new Color(0.03f, 0.031f, 0.034f, 0.82f), "Abilities").rectTransform;
+            scrim.Fill();
+            var sheet = Ui.Box(scrim, Palette.Sheet, "Sheet").rectTransform.Place(new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(500, 520));
+            TopRule(sheet, Palette.Danger);
+            var ss = Ui.VStack(sheet, 12);
             ss.Fill();
             ss.GetComponent<VerticalLayoutGroup>().padding = new RectOffset(26, 26, 22, 22);
             AbilityPanel(ss);
-            LoadPlayers();
+            Ui.Button(ss, "關閉", () => UnityEngine.Object.Destroy(scrim.gameObject), 16).Sized(44);
         }
 
         /// Admin self-abilities; shared by the console and the in-mission pause menu.
@@ -1190,6 +2056,10 @@ namespace RiftWard.Client
                     var t = b.GetComponentInChildren<Text>();
                     t.alignment = TextAnchor.MiddleLeft;
                     t.rectTransform.offsetMin = new Vector2(14, 0);
+                    int flags = player.Int("flags");
+                    if (flags > 0)
+                        Ui.Label(b.transform, $"異常 {flags}", 12, Palette.Danger, TextAnchor.MiddleRight, true).rectTransform
+                            .Place(new Vector2(1, 0.5f), new Vector2(-12, 0), new Vector2(80, 30), new Vector2(1, 0.5f));
                 }
             });
         }

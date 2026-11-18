@@ -27,6 +27,7 @@ def main():
         (releases / (digest + ".pck")).write_bytes(payload)
         (releases / "manifest.json").write_text(json.dumps({"version": VERSION, "sha256": digest, "size": len(payload)}))
         store = service.Store(temp / "data")
+        store.min_wave_seconds = 0   # RIFTWARD_TEST_FAST clears waves instantly
         api = service.BetaServer(("127.0.0.1", 0), store, releases)
         api.game_online = lambda: True
         threading.Thread(target=api.serve_forever, daemon=True).start()

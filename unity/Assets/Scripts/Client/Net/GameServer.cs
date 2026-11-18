@@ -23,8 +23,14 @@ namespace RiftWard.Client
             public float LastInput;
             public AdminSettings Admin = new AdminSettings();
             public Room Room;
-            /// Region picked while playing alone (no room).
-            public int SoloRegion;
+            /// Region and difficulty picked while playing alone (no room).
+            public int SoloRegion, SoloDifficulty;
+            /// Account ids of this player's friends (from the account service).
+            public List<int> Friends = new List<int>();
+            /// Send times of recent chat messages, for the rate limit.
+            public readonly Queue<float> ChatTimes = new Queue<float>();
+            public int AccountId => Profile?.Id ?? 0;
+            public string ChatName => Profile == null ? "" : Profile.Username;
         }
 
         /// A party with its own leader, mission and snapshots. Players outside a room are alone.
@@ -34,11 +40,13 @@ namespace RiftWard.Client
             public readonly List<int> Members = new List<int>();
             public bool Private;
             public GameSim Sim;
-            public int Selected, Leader = -1;
+            public int Selected, Difficulty, Leader = -1;
             public string Mode = "lobby";
             public float SnapshotTimer;
             public bool Finishing;
             public int FastWave = -1;
+            /// Account ids invited by a member: they may join even when the room is private.
+            public readonly HashSet<int> Invited = new HashSet<int>();
         }
 
         const int MaxPlayers = 64, RoomSize = 4;
@@ -51,7 +59,15 @@ namespace RiftWard.Client
         int nextId = 1;
         AccountApi api;
         bool testFast;
-        float clock;
+        float clock, presenceTimer;
+        string dataDir = ".";
+
+        // Chat: recent world messages replayed to newcomers, temporary mutes and a word filter.
+        const int ChatHistory = 40, ChatBurst = 5;
+        const float ChatWindow = 10f;
+        readonly List<byte[]> chatHistory = new List<byte[]>();
+        readonly Dictionary<int, float> mutedUntil = new Dictionary<int, float>();
+        string[] chatFilter = new string[0];
 
         static string Env(string name, string fallback) { var v = Environment.GetEnvironmentVariable(name); return string.IsNullOrEmpty(v) ? fallback : v; }
 
@@ -64,7 +80,8 @@ namespace RiftWard.Client
                 Host = Env("RIFTWARD_API_HOST", "192.168.213.100"),
                 Port = int.Parse(Env("RIFTWARD_API_PORT", "24771")),
             };
-            string dataDir = Env("RIFTWARD_SERVER_DATA", Path.Combine(Path.GetDirectoryName(Application.dataPath) ?? ".", "server-data"));
+            dataDir = Env("RIFTWARD_SERVER_DATA", Path.Combine(Path.GetDirectoryName(Application.dataPath) ?? ".", "server-data"));
+            LoadChatFilter();
             string keyPath = Path.Combine(dataDir, "server.key");
             api.ServerKey = File.Exists(keyPath) ? File.ReadAllText(keyPath).Trim() : "";
             if (api.ServerKey == "")
@@ -122,6 +139,12 @@ namespace RiftWard.Client
                 if (p.Conn.Closed) Drop(p.Conn.Id);
             }
             foreach (var room in rooms.Values.ToList()) TickRoom(room);
+            presenceTimer += Time.fixedDeltaTime;
+            if (presenceTimer >= 2f)
+            {
+                presenceTimer = 0;
+                foreach (var p in players.Values) if (p.Profile != null && p.Friends.Count > 0) SendPresence(p);
+            }
         }
 
         IEnumerable<KeyValuePair<int, Player>> MembersOf(Room room) =>
@@ -210,7 +233,7 @@ namespace RiftWard.Client
                 SendLobby(test);
                 return;
             }
-            if (!rooms.TryGetValue(code, out var room) || room.Private) { Notice(p, "找不到房號 " + code); return; }
+            if (!rooms.TryGetValue(code, out var room) || room.Private && !room.Invited.Contains(p.AccountId)) { Notice(p, "找不到房號 " + code); return; }
             if (room == p.Room) return;
             if (room.Members.Count >= RoomSize) { Notice(p, "房間已滿（最多 4 人）"); return; }
             if (room.Mode == "result") { Notice(p, "房間正在結算，請稍後再試"); return; }
@@ -218,7 +241,9 @@ namespace RiftWard.Client
             room.Members.Add(p.Conn.Id);
             p.Room = room;
             Debug.Log($"ROOM_JOINED {code} id={p.Conn.Id}");
+            room.Invited.Remove(p.AccountId);
             SendLobby(room);
+            RoomNotice(room, $"{p.ChatName} 加入了房間");
             if (room.Mode == "playing") JoinMission(room, p.Conn.Id);
         }
 
@@ -237,6 +262,7 @@ namespace RiftWard.Client
             if (room.Members.Count == 0) { rooms.Remove(room.Code); Debug.Log("ROOM_CLOSED " + room.Code); }
             else
             {
+                RoomNotice(room, $"{p.ChatName} 離開了房間");
                 if (room.Leader == id) room.Leader = room.Members[0];
                 if (room.Mode == "playing" && room.Sim != null && room.Sim.Actors.Count == 0) EndToLobby(room);
                 else SendLobby(room);
@@ -251,13 +277,21 @@ namespace RiftWard.Client
             int unlocked = players.TryGetValue(room.Leader, out var l) && l.Profile != null ? l.Profile.Unlocked : 0;
             int count = MembersOf(room).Count(kv => kv.Value.Profile != null);
             string code = room.Private ? "" : room.Code;
-            Broadcast(room, Protocol.Frame(Msg.Lobby, w => { w.Write(room.Selected); w.Write(unlocked); w.Write(room.Leader); w.Write(count); w.Write(room.Mode); w.Write(code); }));
+            Broadcast(room, Protocol.Frame(Msg.Lobby, w => { w.Write(room.Selected); w.Write(unlocked); w.Write(room.Leader); w.Write(count); w.Write(room.Mode); w.Write(code); w.Write(room.Difficulty); }));
         }
 
         /// A player outside any room is the leader of a party of one.
         void SendSoloLobby(Player p)
         {
-            p.Conn.Send(Protocol.Frame(Msg.Lobby, w => { w.Write(p.SoloRegion); w.Write(p.Profile.Unlocked); w.Write(p.Conn.Id); w.Write(1); w.Write("lobby"); w.Write(""); }));
+            p.Conn.Send(Protocol.Frame(Msg.Lobby, w => { w.Write(p.SoloRegion); w.Write(p.Profile.Unlocked); w.Write(p.Conn.Id); w.Write(1); w.Write("lobby"); w.Write(""); w.Write(p.SoloDifficulty); }));
+        }
+
+        /// The requested tier, lowered until it is open for this player in the region.
+        static int OpenTier(Profile profile, int region, int tier)
+        {
+            tier = Mathf.Clamp(tier, 0, Defs.Difficulties.Length - 1);
+            while (tier > 0 && !profile.DifficultyOpen(region, tier)) tier--;
+            return tier;
         }
 
         // ------------------------------------------------------------ messages
@@ -306,14 +340,24 @@ namespace RiftWard.Client
                         sim?.SetAdmin(id, settings);
                         break;
                     case Msg.SelectRegion:
-                        int region = r.ReadInt32();
-                        if (room == null) { p.SoloRegion = Mathf.Clamp(region, 0, p.Profile.Unlocked); SendSoloLobby(p); }
-                        else if (id == room.Leader && mode != "playing") { room.Selected = Mathf.Clamp(region, 0, p.Profile.Unlocked); SendLobby(room); }
+                        int region = r.ReadInt32(), tier = r.ReadInt32();
+                        if (room == null)
+                        {
+                            p.SoloRegion = Mathf.Clamp(region, 0, p.Profile.Unlocked);
+                            p.SoloDifficulty = OpenTier(p.Profile, p.SoloRegion, tier);
+                            SendSoloLobby(p);
+                        }
+                        else if (id == room.Leader && mode != "playing")
+                        {
+                            room.Selected = Mathf.Clamp(region, 0, p.Profile.Unlocked);
+                            room.Difficulty = OpenTier(p.Profile, room.Selected, tier);
+                            SendLobby(room);
+                        }
                         break;
                     case Msg.RequestDeploy:
-                        int target = r.ReadInt32();
+                        int target = r.ReadInt32(), targetTier = r.ReadInt32();
                         if (room == null) room = CreateRoom(p, true);
-                        if (id == room.Leader && room.Mode == "lobby") StartMission(room, target);
+                        if (id == room.Leader && room.Mode == "lobby") StartMission(room, target, targetTier);
                         break;
                     case Msg.LeaveMission:
                         if (mode == "playing" && sim != null && sim.Actors.ContainsKey(id))
@@ -328,6 +372,26 @@ namespace RiftWard.Client
                         break;
                     case Msg.RefreshProfile:
                         RefreshProfile(p);
+                        break;
+                    case Msg.Chat:
+                        byte channel = r.ReadByte();
+                        HandleChat(p, channel, r.ReadString());
+                        break;
+                    case Msg.RefreshFriends:
+                        FetchFriends(p);
+                        break;
+                    case Msg.InviteFriend:
+                        int invitee = r.ReadInt32();
+                        if (mode != "result") Invite(p, invitee);
+                        break;
+                    case Msg.DeclineInvite:
+                        int inviter = r.ReadInt32();
+                        var host = Online(inviter);
+                        if (host != null && host.Friends.Contains(p.AccountId))
+                        {
+                            Notice(host, $"{p.ChatName} 婉拒了你的邀請");
+                            SystemLine(host, $"{p.ChatName} 婉拒了你的組隊邀請");
+                        }
                         break;
                 }
             }
@@ -351,6 +415,8 @@ namespace RiftWard.Client
                 p.Conn.Send(Protocol.Frame(Msg.Welcome, w => w.Write(id)));
                 Debug.Log("ACCOUNT_PEER_VERIFIED id=" + id);
                 SendSoloLobby(p);
+                foreach (var line in chatHistory) p.Conn.Send(line);
+                FetchFriends(p);
             });
         }
 
@@ -375,9 +441,139 @@ namespace RiftWard.Client
             });
         }
 
+        // ------------------------------------------------------------ social
+
+        Player Online(int accountId) => players.Values.FirstOrDefault(o => o.Profile != null && o.AccountId == accountId);
+
+        void FetchFriends(Player p)
+        {
+            api.Post("/api/server/friends", new Dictionary<string, object> { ["account_id"] = p.AccountId }, result =>
+            {
+                if (!result.Bool("ok") || !players.ContainsValue(p)) return;
+                p.Friends = (result.Arr("friends") ?? new List<object>()).Select(o => o is double d ? (int)d : 0).Where(i => i > 0).ToList();
+                SendPresence(p);
+            });
+        }
+
+        void SendPresence(Player p)
+        {
+            var friends = p.Friends.ToList();
+            p.Conn.Send(Protocol.Frame(Msg.Presence, w =>
+            {
+                w.Write(friends.Count);
+                foreach (int fid in friends)
+                {
+                    var f = Online(fid);
+                    byte state = f == null ? PresenceState.Offline : f.Room == null ? PresenceState.Lobby : f.Room.Mode == "playing" ? PresenceState.InMission : PresenceState.InRoom;
+                    w.Write(fid); w.Write(state);
+                    // Only rooms anyone can join show their code; private ones are reached by invitation.
+                    w.Write(f?.Room != null && !f.Room.Private ? f.Room.Code : "");
+                }
+            }));
+        }
+
+        void Invite(Player p, int accountId)
+        {
+            if (!p.Friends.Contains(accountId)) { Notice(p, "只能邀請好友"); return; }
+            var friend = Online(accountId);
+            if (friend == null) { Notice(p, "好友目前不在線上"); return; }
+            if (friend.Room != null && friend.Room == p.Room) { Notice(p, $"{friend.ChatName} 已經在你的房間"); return; }
+            var room = p.Room ?? CreateRoom(p, false);
+            if (room.Members.Count >= RoomSize) { Notice(p, "房間已滿（最多 4 人）"); return; }
+            room.Invited.Add(accountId);
+            friend.Conn.Send(Protocol.Frame(Msg.Invite, w => { w.Write(p.AccountId); w.Write(p.ChatName); w.Write(room.Code); }));
+            Notice(p, $"已邀請 {friend.ChatName}");
+            Debug.Log($"INVITE from={p.AccountId} to={accountId} room={room.Code}");
+        }
+
+        void LoadChatFilter()
+        {
+            try
+            {
+                string path = Path.Combine(dataDir, "chat-filter.txt");
+                if (!File.Exists(path))
+                {
+                    Directory.CreateDirectory(dataDir);
+                    File.WriteAllText(path, "# 聊天過濾字詞，每行一個（不分大小寫），出現時會被替換成 ＊\n");
+                }
+                chatFilter = File.ReadAllLines(path).Select(l => l.Trim()).Where(l => l.Length > 0 && !l.StartsWith("#")).ToArray();
+            }
+            catch (Exception e) { Debug.LogWarning("chat filter: " + e.Message); }
+        }
+
+        /// Trims, removes control characters and masks filtered words.
+        string CleanChat(string text)
+        {
+            string clean = new string((text ?? "").Where(c => !char.IsControl(c)).ToArray()).Trim();
+            if (clean.Length > ChatChannel.MaxLength) clean = clean.Substring(0, ChatChannel.MaxLength);
+            foreach (var word in chatFilter)
+            {
+                int at;
+                while ((at = clean.IndexOf(word, StringComparison.OrdinalIgnoreCase)) >= 0)
+                    clean = clean.Substring(0, at) + new string('＊', word.Length) + clean.Substring(at + word.Length);
+            }
+            return clean;
+        }
+
+        void HandleChat(Player p, byte channel, string text)
+        {
+            text = CleanChat(text);
+            if (text.Length == 0) return;
+            if (p.Profile.Admin && text.StartsWith("/") && AdminCommand(p, text)) return;
+            if (mutedUntil.TryGetValue(p.AccountId, out var until) && clock < until)
+            {
+                SystemLine(p, $"你已被禁言，{Mathf.CeilToInt((until - clock) / 60f)} 分鐘後解除");
+                return;
+            }
+            while (p.ChatTimes.Count > 0 && clock - p.ChatTimes.Peek() > ChatWindow) p.ChatTimes.Dequeue();
+            if (p.ChatTimes.Count >= ChatBurst) { SystemLine(p, "發言太頻繁，請稍候再試"); return; }
+            p.ChatTimes.Enqueue(clock);
+            string title = p.Profile.Title ?? "";
+            if (channel == ChatChannel.Room)
+            {
+                if (p.Room == null) { SystemLine(p, "你不在房間中，訊息未送出（可改用全頻）"); return; }
+                Broadcast(p.Room, Protocol.Frame(Msg.ChatLine, w => WriteLine(w, ChatChannel.Room, p.AccountId, p.ChatName, title, text, p.Profile.Admin)));
+                return;
+            }
+            var frame = Protocol.Frame(Msg.ChatLine, w => WriteLine(w, ChatChannel.World, p.AccountId, p.ChatName, title, text, p.Profile.Admin));
+            chatHistory.Add(frame);
+            if (chatHistory.Count > ChatHistory) chatHistory.RemoveAt(0);
+            foreach (var o in players.Values) if (o.Profile != null) o.Conn.Send(frame);
+        }
+
+        /// Admin chat commands: /mute 帳號 [分鐘], /unmute 帳號. Returns false for anything else (sent as a message).
+        bool AdminCommand(Player p, string text)
+        {
+            var parts = text.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+            string cmd = parts[0].ToLowerInvariant();
+            if (cmd != "/mute" && cmd != "/unmute") return false;
+            var target = parts.Length > 1 ? players.Values.FirstOrDefault(o => o.Profile != null && string.Equals(o.ChatName, parts[1], StringComparison.OrdinalIgnoreCase)) : null;
+            if (target == null) { SystemLine(p, "找不到線上玩家：" + (parts.Length > 1 ? parts[1] : "")); return true; }
+            if (cmd == "/unmute") { mutedUntil.Remove(target.AccountId); SystemLine(p, $"已解除 {target.ChatName} 的禁言"); SystemLine(target, "你的禁言已解除"); return true; }
+            int minutes = parts.Length > 2 && int.TryParse(parts[2], out var m) ? Mathf.Clamp(m, 1, 1440) : 10;
+            mutedUntil[target.AccountId] = clock + minutes * 60f;
+            SystemLine(p, $"已禁言 {target.ChatName} {minutes} 分鐘");
+            SystemLine(target, $"你已被管理員禁言 {minutes} 分鐘");
+            Debug.Log($"CHAT_MUTE by={p.AccountId} target={target.AccountId} minutes={minutes}");
+            return true;
+        }
+
+        static void WriteLine(BinaryWriter w, byte channel, int accountId, string name, string title, string text, bool admin)
+        {
+            w.Write(channel); w.Write(accountId); w.Write(name ?? ""); w.Write(title ?? ""); w.Write(text ?? ""); w.Write(admin);
+        }
+
+        void SystemLine(Player p, string text) => p.Conn.Send(Protocol.Frame(Msg.ChatLine, w => WriteLine(w, ChatChannel.System, 0, "", "", text, false)));
+
+        void RoomNotice(Room room, string text)
+        {
+            if (room.Private && room.Members.Count <= 1) return;
+            Broadcast(room, Protocol.Frame(Msg.ChatLine, w => WriteLine(w, ChatChannel.System, 0, "", "", text, false)));
+        }
+
         // ------------------------------------------------------------ missions
 
-        void StartMission(Room room, int region)
+        void StartMission(Room room, int region, int difficulty)
         {
             var ready = MembersOf(room).Where(kv => kv.Value.Profile != null).ToList();
             if (ready.Count == 0) return;
@@ -386,17 +582,24 @@ namespace RiftWard.Client
                 Notice(players[room.Leader], "隊友尚未解鎖此區域，請先完成前一區域");
                 return;
             }
+            difficulty = Mathf.Clamp(difficulty, 0, Defs.Difficulties.Length - 1);
+            if (ready.Any(kv => !kv.Value.Profile.DifficultyOpen(region, difficulty)))
+            {
+                Notice(players[room.Leader], ready.Count > 1 ? $"有隊員尚未解鎖{Defs.Difficulty(difficulty).Name}難度，請先在此區域通關前一難度" : $"{Defs.Difficulty(difficulty).Name}難度尚未解鎖");
+                return;
+            }
             room.Selected = region;
+            room.Difficulty = difficulty;
             var sim = room.Sim = new GameSim();
             foreach (var kv in ready) AddToSim(sim, kv.Key, kv.Value);
-            sim.StartMission(region);
+            sim.StartMission(region, difficulty);
             foreach (var kv in ready) sim.SetAdmin(kv.Key, kv.Value.Admin);
             room.Mode = "playing";
             room.Finishing = false;
             room.FastWave = -1;
-            Broadcast(room, Protocol.Frame(Msg.Deploy, w => w.Write(region)));
+            Broadcast(room, Protocol.Frame(Msg.Deploy, w => { w.Write(region); w.Write(difficulty); }));
             SendLobby(room);
-            Debug.Log($"MISSION_START room={room.Code} region={region} players={ready.Count}");
+            Debug.Log($"MISSION_START room={room.Code} region={region} difficulty={difficulty} players={ready.Count}");
         }
 
         void AddToSim(GameSim sim, int id, Player p)
@@ -404,7 +607,7 @@ namespace RiftWard.Client
             var lo = new Loadout { Owned = new List<string>(p.Profile.Loadout.Owned), Equipped = new List<string>(p.Profile.Loadout.Equipped) };
             foreach (var kv in p.Profile.Loadout.Levels) lo.Levels[kv.Key] = new Dictionary<string, int>(kv.Value);
             lo.Rarity = new Dictionary<string, int>(p.Profile.Loadout.Rarity);
-            sim.AddActor(id, lo, p.Profile.Admin).Name = p.Profile.Username;
+            sim.AddActor(id, lo, p.Profile.Admin).Name = string.IsNullOrEmpty(p.Profile.Title) ? p.Profile.Username : $"〔{p.Profile.Title}〕{p.Profile.Username}";
             var b = p.Profile;
             sim.ApplyProfileBonus(id, b.BonusOf("hp"), b.BonusOf("damage"), b.BonusOf("speed"), b.BonusOf("reload"), b.BonusOf("crit"));
             p.OfferSent = null;
@@ -416,7 +619,7 @@ namespace RiftWard.Client
             var sim = room.Sim;
             AddToSim(sim, id, players[id]);
             sim.SetAdmin(id, players[id].Admin);
-            players[id].Conn.Send(Protocol.Frame(Msg.Deploy, w => w.Write(sim.Region)));
+            players[id].Conn.Send(Protocol.Frame(Msg.Deploy, w => { w.Write(sim.Region); w.Write(sim.Difficulty); }));
         }
 
         void EndToLobby(Room room)
@@ -439,11 +642,16 @@ namespace RiftWard.Client
             var sim = room.Sim;
             bool success = sim.State == MissionState.Victory;
             int gold = sim.MissionGold();
-            int region = sim.Region, kills = sim.Kills, wave = sim.Wave;
+            int region = sim.Region, kills = sim.Kills, wave = sim.Wave, difficulty = sim.Difficulty;
             float elapsed = sim.Elapsed;
             string grade = sim.MissionGrade();
             var records = new Dictionary<int, int[]>();
-            foreach (var a in sim.Actors.Values) records[a.Id] = new[] { a.StatKills, a.StatHeadshots, a.StatShots, a.StatHits };
+            var feats = new Dictionary<int, int[]>();
+            foreach (var a in sim.Actors.Values)
+            {
+                records[a.Id] = new[] { a.StatKills, a.StatHeadshots, a.StatShots, a.StatHits };
+                feats[a.Id] = new[] { a.StatDowns, a.StatRevives, a.StatBossKills, a.StatEliteKills, a.AimFlags };
+            }
             Broadcast(room, Protocol.Frame(Msg.Snapshot, w => Protocol.WriteSnapshot(w, sim)));
             foreach (var kv in MembersOf(room).Where(kv => kv.Value.Profile != null).ToList())
             {
@@ -451,7 +659,16 @@ namespace RiftWard.Client
                 bool done = false;
                 var reward = new Dictionary<string, object> { ["account_id"] = p.Profile.Id, ["gold"] = gold };
                 if (records.TryGetValue(kv.Key, out var rec))
-                    reward["stats"] = new Dictionary<string, object> { ["kills"] = rec[0], ["headshots"] = rec[1], ["shots"] = rec[2], ["hits"] = rec[3], ["wave"] = wave, ["victory"] = success };
+                {
+                    var feat = feats[kv.Key];
+                    reward["stats"] = new Dictionary<string, object>
+                    {
+                        ["kills"] = rec[0], ["headshots"] = rec[1], ["shots"] = rec[2], ["hits"] = rec[3], ["wave"] = wave, ["victory"] = success, ["difficulty"] = difficulty,
+                        ["downs"] = feat[0], ["revives"] = feat[1], ["boss_kills"] = Mathf.Min(2, feat[2]), ["elite_kills"] = Mathf.Min(20, feat[3]), ["grade"] = grade,
+                        // Mission summary for the account service's anti-cheat cross-check.
+                        ["team_kills"] = kills, ["level"] = sim.Level, ["region"] = region, ["elapsed"] = (double)elapsed, ["aim_flags"] = feat[4],
+                    };
+                }
                 api.Post("/api/server/reward", reward, result =>
                 {
                     if (result.Bool("ok")) p.Profile = Profile.From(result.Obj("profile")) ?? p.Profile;
@@ -461,7 +678,7 @@ namespace RiftWard.Client
                 if (success)
                 {
                     done = false;
-                    api.Post("/api/server/progress", new Dictionary<string, object> { ["account_id"] = p.Profile.Id, ["mission"] = region }, result =>
+                    api.Post("/api/server/progress", new Dictionary<string, object> { ["account_id"] = p.Profile.Id, ["mission"] = region, ["difficulty"] = difficulty }, result =>
                     {
                         if (result.Bool("ok")) p.Profile = Profile.From(result.Obj("profile")) ?? p.Profile;
                         done = true;
@@ -478,9 +695,14 @@ namespace RiftWard.Client
                 {
                     w.Write(success); w.Write(region); w.Write(kills); w.Write(elapsed); w.Write(gold); w.Write(grade);
                     foreach (var v in rec) w.Write(v);
+                    w.Write(difficulty);
                 }));
             }
-            if (players.TryGetValue(room.Leader, out var l) && l.Profile != null) room.Selected = Mathf.Min(room.Selected, l.Profile.Unlocked);
+            if (players.TryGetValue(room.Leader, out var l) && l.Profile != null)
+            {
+                room.Selected = Mathf.Min(room.Selected, l.Profile.Unlocked);
+                room.Difficulty = OpenTier(l.Profile, room.Selected, room.Difficulty);
+            }
             SendLobby(room);
             Debug.Log($"MISSION_RESULT success={success} region={region} kills={kills} gold={gold}");
         }

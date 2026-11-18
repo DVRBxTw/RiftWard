@@ -23,6 +23,8 @@ namespace RiftWard.Sim
 
         public MissionState State = MissionState.Idle;
         public int Region;
+        /// Difficulty tier (index into Defs.Difficulties): scales enemy health, damage, count and the gold reward.
+        public int Difficulty;
         public int Wave;
         public float WaveDelay = 1.8f;
         public float Elapsed;
@@ -78,15 +80,17 @@ namespace RiftWard.Sim
             a.MagBonus = 0; a.Regen = 0; a.Critical = 0; a.Lifesteal = 0; a.Explode = 0;
             a.SkillCooldown = 0; a.Revive = 0; a.Slot = 0; a.Reload = 0;
             a.StatKills = 0; a.StatHeadshots = 0; a.StatShots = 0; a.StatHits = 0;
+            a.StatDowns = 0; a.StatRevives = 0; a.StatBossKills = 0; a.StatEliteKills = 0; a.WasAlive = true; a.AimFlags = 0;
             a.AmmoByWeapon.Clear();
             RefreshWeapon(a);
             a.Ammo = a.Mag;
             ApplyAdmin(a);
         }
 
-        public void StartMission(int region)
+        public void StartMission(int region, int difficulty = 0)
         {
             Region = Mathf.Clamp(region, 0, Defs.Regions.Length - 1);
+            Difficulty = Mathf.Clamp(difficulty, 0, Defs.Difficulties.Length - 1);
             Enemies.Clear(); Bullets.Clear(); Pickups.Clear(); Inputs.Clear(); BuffOffers.Clear();
             Wave = 0; WaveDelay = 1.8f; Elapsed = 0; Kills = 0;
             Level = 1; Xp = 0; XpNeed = Defs.XpForLevel(1); PendingLevels = 0; BuffPending = false;
@@ -301,7 +305,7 @@ namespace RiftWard.Sim
                         // P-9 perk: faster fire for a moment after a kill.
                         a.FireCooldown = a.FireInterval / (a.PerkHaste > 0 ? 1f + PerkStrength(a, 0.4f) : 1f);
                         a.Ammo--;
-                        Vector3 aim = input.Aim == Vector3.zero ? a.Position + Vector3.up + LookDirection(a.Yaw, 0) * 30f : input.Aim;
+                        Vector3 aim = input.Aim == Vector3.zero ? a.Position + Vector3.up + LookDirection(a.Yaw, 0) * 30f : CheckedAim(a, input);
                         Fire(a.Id, aim);
                         if (a.Ammo <= 0) StartReload(a);
                     }
@@ -367,6 +371,22 @@ namespace RiftWard.Sim
             waveScores.Add(score);
             WaveGrades.Add(grade);
             Announcements.Add($"第 {Wave} 波完成 · 評分 {grade}");
+        }
+
+        /// Largest angle allowed between the reported aim point (seen from the eyes) and the view direction. Third-person
+        /// aims from the camera behind the shoulder, which at the 65 m aim distance is only a few degrees off.
+        public const float AimTolerance = 12f;
+
+        /// The client's aim point, unless it points somewhere the player is not looking (an aim hack sending targets
+        /// directly): then the shot follows the view and the actor's AimFlags record counts it.
+        Vector3 CheckedAim(Actor a, PlayerInput input)
+        {
+            Vector3 eye = a.Position + Vector3.up * Defs.EyeHeight;
+            Vector3 look = LookDirection(input.Yaw, input.Pitch);
+            Vector3 toAim = input.Aim - eye;
+            if (toAim.sqrMagnitude > 0.01f && Vector3.Angle(toAim, look) <= AimTolerance) return input.Aim;
+            a.AimFlags++;
+            return eye + look * Defs.ShotRange;
         }
 
         public static string Grade(float score) => score >= 85 ? "S" : score >= 65 ? "A" : score >= 40 ? "B" : "C";
@@ -470,7 +490,8 @@ namespace RiftWard.Sim
         public void SpawnWave()
         {
             int players = Mathf.Max(1, Actors.Count);
-            int count = Mathf.Min(24, Defs.Regions[Region].BaseEnemies + Mathf.CeilToInt(Wave / 2f) + (players - 1) * 2);
+            var tier = Defs.Difficulty(Difficulty);
+            int count = Mathf.Min(24 + tier.ExtraEnemies, Defs.Regions[Region].BaseEnemies + Mathf.CeilToInt(Wave / 2f) + (players - 1) * 2 + tier.ExtraEnemies);
             int elapsedWaves = Mathf.Max(0, Wave - 1);
             float region = Region;
             float partyScale = 1f + 0.6f * (players - 1);
@@ -509,6 +530,8 @@ namespace RiftWard.Sim
                     if (EnemyVariety && pool.Count > 0 && Rand01() < 0.55f) kind = pool[rng.Next(pool.Count)];
                     ApplyKind(e, kind);
                 }
+                e.Hp *= tier.Hp;
+                e.Damage *= tier.Damage;
                 e.MaxHp = e.Hp;
                 e.Wave = Wave;
                 Enemies[e.Id] = e;
@@ -554,10 +577,11 @@ namespace RiftWard.Sim
         Enemy NewEnemy(Vector3 position)
         {
             float region = Region;
+            var tier = Defs.Difficulty(Difficulty);
             return new Enemy
             {
-                Id = nextEnemy++, Position = position, Hp = (55f + 10f * region) * LevelScale, Speed = 2.1f + 0.3f * region,
-                Damage = (10f + 2f * region) * (1f + 0.05f * (Level - 1)), ShotCooldown = Rand(1.5f, 3f),
+                Id = nextEnemy++, Position = position, Hp = (55f + 10f * region) * LevelScale * tier.Hp, Speed = 2.1f + 0.3f * region,
+                Damage = (10f + 2f * region) * (1f + 0.05f * (Level - 1)) * tier.Damage, ShotCooldown = Rand(1.5f, 3f),
             };
         }
 
@@ -674,6 +698,9 @@ namespace RiftWard.Sim
                 Pickups[crystal.Id] = crystal;
             }
             if (e.Elite) SpawnPickup(e.Position + new Vector3(0.8f, 0, 0), PickupKind.Chest);
+            // Bosses and elites are team victories: everyone in the mission gets the record.
+            if (e.Boss || e.Elite)
+                foreach (var member in Actors.Values) { if (e.Boss) member.StatBossKills++; else member.StatEliteKills++; }
             if (Actors.TryGetValue(shooter, out var a) && a.Alive)
             {
                 a.StatKills++;
@@ -1008,12 +1035,19 @@ namespace RiftWard.Sim
                 a.SkillCooldown = Mathf.Max(0, a.SkillCooldown - dt);
                 if (a.IsAdmin && a.Admin.God) a.Hp = a.MaxHp;
                 if (a.IsAdmin && a.Admin.InfiniteAmmo && a.Alive) { a.Ammo = a.Mag; a.Reload = 0; }
+                if (a.WasAlive && !a.Alive) a.StatDowns++;
+                a.WasAlive = a.Alive;
                 if (!a.Alive)
                 {
-                    bool helped = Actors.Values.Any(o => o.Id != a.Id && o.Alive && Vector3.Distance(o.Position, a.Position) < 2.4f &&
-                                                         Inputs.TryGetValue(o.Id, out var oi) && oi.Interact);
+                    bool Helping(Actor o) => o.Id != a.Id && o.Alive && Vector3.Distance(o.Position, a.Position) < 2.4f &&
+                                             Inputs.TryGetValue(o.Id, out var oi) && oi.Interact;
+                    bool helped = Actors.Values.Any(Helping);
                     a.Revive = Mathf.Clamp(a.Revive + (helped ? dt : -dt * 0.5f), 0, Defs.ReviveTime);
-                    if (a.Revive >= Defs.ReviveTime) { a.Hp = a.MaxHp * 0.4f; a.Revive = 0; }
+                    if (a.Revive >= Defs.ReviveTime)
+                    {
+                        foreach (var o in Actors.Values.Where(Helping).ToList()) o.StatRevives++;
+                        a.Hp = a.MaxHp * 0.4f; a.Revive = 0; a.WasAlive = true;
+                    }
                     continue;
                 }
                 a.Revive = 0;
@@ -1222,7 +1256,10 @@ namespace RiftWard.Sim
 
         // ------------------------------------------------------------ rewards
 
+        /// Upper bound of one mission's gold; mirrors MAX_REWARD in server/service.py.
+        public const int MaxMissionGold = 8000;
+
         public int MissionGold() =>
-            Mathf.Clamp(Kills * 3 + Wave * 12 + (Level - 1) * 15 + (State == MissionState.Victory ? 200 + 150 * Region : 0), 0, 3000);
+            Mathf.Clamp(Mathf.RoundToInt((Kills * 3 + Wave * 12 + (Level - 1) * 15 + (State == MissionState.Victory ? 200 + 150 * Region : 0)) * Defs.Difficulty(Difficulty).Gold), 0, MaxMissionGold);
     }
 }

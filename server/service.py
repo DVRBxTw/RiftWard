@@ -30,7 +30,90 @@ VERSION = "0.4.2-beta.1"
 WEAPON_PRICES = {"pistol": 0, "rifle": 400, "shotgun": 600, "sniper": 800}
 UPGRADE_STATS = ("damage", "mag", "reload")
 MAX_UPGRADE = 5
-MAX_REWARD = 3000
+MAX_REWARD = 8000   # mirrors GameSim.MaxMissionGold (噩夢 multiplies the gold of a cleared mission)
+
+# Difficulty tiers (普通, 困難, 噩夢); mirrors Defs.Difficulties in the game client.
+DIFFICULTY_NAMES = ["普通", "困難", "噩夢"]
+DIFFICULTY_XP = [1.0, 1.25, 1.5]
+REGION_COUNT = 3
+
+
+DIFFICULTY_GOLD = [1.0, 1.6, 2.4]
+
+
+def mission_gold(team_kills, wave, level, victory, region, tier) -> int:
+    """Gold a mission pays; mirrors GameSim.MissionGold (the anti-cheat check compares the report against it)."""
+    base = team_kills * 3 + wave * 12 + (level - 1) * 15 + (200 + 150 * region if victory else 0)
+    return max(0, min(MAX_REWARD, int(round(base * DIFFICULTY_GOLD[tier]))))
+
+
+WELCOME_MAIL = ("歡迎加入裂隙守衛",
+                "士兵，歡迎報到！\n\n這是指揮部準備的見面禮：3 把裝備鑰匙和 1 把武器鑰匙，領取後到「商城」的補給站開啟吧。\n"
+                "每天記得完成「任務」分頁的每日任務，可以持續獲得鑰匙。\n\n祝武運昌隆。\n—— 遠征軍指揮部",
+                {"keys": 3, "weapon_keys": 1})
+
+
+def difficulty_open(cleared, region, tier) -> bool:
+    """A tier opens in a region once the tier below it has been cleared there (普通 is always open)."""
+    return tier == 0 or cleared[region] >= tier - 1
+
+
+# ---- daily missions: three tasks a day (Taiwan time), progress counted from the combat records the game
+# server reports, rewards claimed by the player. Finishing all three unlocks a bonus.
+DAILY_UTC_OFFSET = 8 * 3600
+DAILY_COUNT = 3
+DAILY_TASKS = {
+    "kills":     {"text": "擊殺 {goal} 名敵人",            "goal": 150, "reward": {"gold": 300}},
+    "headshots": {"text": "爆頭命中 {goal} 次",            "goal": 40,  "reward": {"gold": 250, "keys": 1}},
+    "missions":  {"text": "出擊 {goal} 場任務",            "goal": 3,   "reward": {"keys": 2}},
+    "waves":     {"text": "累計推進 {goal} 波",            "goal": 30,  "reward": {"gold": 350}},
+    "victories": {"text": "成功完成 {goal} 場任務",        "goal": 1,   "reward": {"gold": 200, "keys": 1}},
+    "deep":      {"text": "單場任務到達第 {goal} 波",      "goal": 10,  "reward": {"gold": 250, "keys": 1}},
+    "hard":      {"text": "在困難以上難度完成 {goal} 場任務", "goal": 1, "reward": {"weapon_keys": 1}},
+}
+DAILY_BONUS = {"keys": 2, "weapon_keys": 1}
+
+
+# ---- achievements: lifetime goals in three tiers (銅 / 銀 / 金). Progress is derived from the account's records,
+# each reached tier is claimed once for its reward, and the 金 tier of some achievements grants a title.
+ACHIEVEMENT_TIER_NAMES = ["銅", "銀", "金"]
+ACHIEVEMENT_REWARDS = [{"gold": 300}, {"gold": 600, "keys": 2}, {"keys": 3, "weapon_keys": 2}]
+ACHIEVEMENTS = [
+    # id, category, name, description ({goal} = tier goal), progress source, tier goals, title at 金 (or None)
+    ("kills",       "combat",  "殲滅行動",   "累計擊殺 {goal} 名敵人",            "kills",               [500, 2500, 10000], "殲滅者"),
+    ("headshots",   "combat",  "一槍入魂",   "累計爆頭命中 {goal} 次",            "headshots",           [200, 1000, 4000],  "神射手"),
+    ("bosses",      "combat",  "巨人殺手",   "擊倒 {goal} 名 Boss",               "boss_kills",          [5, 25, 100],       "巨人殺手"),
+    ("elites",      "combat",  "精英獵人",   "擊敗 {goal} 名精英敵人",            "elite_kills",         [10, 50, 200],      None),
+    ("victories",   "clear",   "百戰老兵",   "完成 {goal} 場任務",                "victories",           [5, 25, 100],       "老兵"),
+    ("hard",        "clear",   "迎難而上",   "在困難以上難度完成 {goal} 場任務",  "hard_victories",      [1, 10, 50],        None),
+    ("nightmare",   "clear",   "裂隙征服者", "在 {goal} 個區域通關噩夢",          "nightmare_regions",   [1, 2, 3],          "裂隙征服者"),
+    ("flawless",    "clear",   "不死之身",   "零倒地完成 {goal} 場任務",          "flawless",            [1, 5, 20],         "不死之身"),
+    ("grades",      "clear",   "完美評價",   "以 S 評分完成 {goal} 場任務",       "s_grades",            [1, 10, 30],        None),
+    ("revives",     "support", "戰地天使",   "救援隊友 {goal} 次",                "revives",             [5, 30, 100],       "戰地天使"),
+    ("daily",       "support", "勤務兵",     "領取 {goal} 項每日任務獎勵",        "daily_claimed",       [10, 50, 200],      "勤務兵"),
+    ("level",       "support", "步步高升",   "帳號等級達到 {goal}",               "level",               [10, 25, 50],       "指揮官"),
+    ("legends",     "collect", "軍火大亨",   "擁有 {goal} 種傳奇以上武器",        "legend_weapons",      [1, 2, 4],          "軍火大亨"),
+    ("mythic",      "collect", "神話收藏家", "持有 {goal} 件神話武器或裝備",      "mythic_items",        [1, 3, 8],          None),
+    ("forged",      "collect", "千錘百鍊",   "將 {goal} 件裝備強化到 +5",         "maxed_gear",          [1, 3, 8],          None),
+    ("draws",       "collect", "補給常客",   "開啟補給 {goal} 次",                "draws",               [10, 100, 500],     None),
+]
+ACHIEVEMENT_IDS = {a[0]: a for a in ACHIEVEMENTS}
+TITLES = {a[0]: a[6] for a in ACHIEVEMENTS if a[6]}
+
+
+def daily_day(now=None) -> str:
+    return time.strftime("%Y-%m-%d", time.gmtime((time.time() if now is None else now) + DAILY_UTC_OFFSET))
+
+
+def daily_resets_in(now=None) -> int:
+    local = (time.time() if now is None else now) + DAILY_UTC_OFFSET
+    return int(86400 - local % 86400)
+
+
+def roll_daily(account_id, day, veteran):
+    """The day's tasks, the same for one account all day. 困難 tasks are only offered once 普通 has been cleared."""
+    pool = [k for k in DAILY_TASKS if k != "hard" or veteran]
+    return random.Random(f"{account_id}:{day}").sample(pool, DAILY_COUNT)
 
 
 # Upgrade prices scale with rarity (劣質 .. 神話): better items cost more to improve.
@@ -74,10 +157,13 @@ INVENTORY_LIMIT = 200
 
 def mission_xp(stats):
     """Account XP for one mission. Tuned down from kills*3 + wave*15 + 200, which let a single cleared region
-    jump several levels; the level curve itself is unchanged so existing accounts keep their level and talents."""
+    jump several levels; the level curve itself is unchanged so existing accounts keep their level and talents.
+    Higher difficulty multiplies it (mirrors Defs.MissionXp)."""
     kills = stats.get("kills", 0) if isinstance(stats.get("kills"), int) else 0
     wave = stats.get("wave", 0) if isinstance(stats.get("wave"), int) else 0
-    return max(0, kills) * 1 + max(0, wave) * 5 + (100 if stats.get("victory") is True else 0)
+    tier = stats.get("difficulty", 0)
+    tier = tier if isinstance(tier, int) and not isinstance(tier, bool) and 0 <= tier < len(DIFFICULTY_XP) else 0
+    return int(round((max(0, kills) * 1 + max(0, wave) * 5 + (100 if stats.get("victory") is True else 0)) * DIFFICULTY_XP[tier]))
 
 
 def level_for(xp: int):
@@ -144,8 +230,13 @@ def _locked(method):
 
 
 class Store:
+    # Anti-cheat: the shortest believable time per wave, and the shortest gap between two rewards of one account.
+    # Tests and the fast integration run lower these.
+    min_wave_seconds = 4.0
+
     def __init__(self, directory: Path):
         self.lock = threading.RLock()
+        self.last_reward = {}
         directory.mkdir(parents=True, exist_ok=True)
         self.path = directory / "players.sqlite3"
         keyfile = directory / "server.key"
@@ -174,6 +265,22 @@ class Store:
                     expires INTEGER NOT NULL
                 );
                 CREATE INDEX IF NOT EXISTS session_account ON sessions(account_id);
+                CREATE TABLE IF NOT EXISTS mail (
+                    id INTEGER PRIMARY KEY, account_id INTEGER NOT NULL REFERENCES accounts(id),
+                    title TEXT NOT NULL, body TEXT NOT NULL, gold INTEGER NOT NULL DEFAULT 0, keys INTEGER NOT NULL DEFAULT 0,
+                    weapon_keys INTEGER NOT NULL DEFAULT 0, created INTEGER NOT NULL, expires INTEGER NOT NULL,
+                    read INTEGER NOT NULL DEFAULT 0, claimed INTEGER NOT NULL DEFAULT 0, deleted INTEGER NOT NULL DEFAULT 0
+                );
+                CREATE INDEX IF NOT EXISTS mail_account ON mail(account_id, deleted);
+                CREATE TABLE IF NOT EXISTS friendships (
+                    requester INTEGER NOT NULL REFERENCES accounts(id), addressee INTEGER NOT NULL REFERENCES accounts(id),
+                    status TEXT NOT NULL, created INTEGER NOT NULL, PRIMARY KEY (requester, addressee)
+                );
+                CREATE INDEX IF NOT EXISTS friendship_addressee ON friendships(addressee);
+                CREATE TABLE IF NOT EXISTS audit (
+                    id INTEGER PRIMARY KEY, account_id INTEGER NOT NULL, created INTEGER NOT NULL,
+                    reason TEXT NOT NULL, detail TEXT NOT NULL, rejected INTEGER NOT NULL DEFAULT 0
+                );
             """)
             columns = {row[1] for row in db.execute("PRAGMA table_info(progress)")}
             if "gold" not in columns:
@@ -183,7 +290,9 @@ class Store:
             if "stats" not in columns:
                 db.execute("ALTER TABLE progress ADD COLUMN stats TEXT NOT NULL DEFAULT '{}'")
             for column, ddl in (("xp", "INTEGER NOT NULL DEFAULT 0"), ("keys", "INTEGER NOT NULL DEFAULT 0"), ("weapon_keys", "INTEGER NOT NULL DEFAULT 0"),
-                                ("talents", "TEXT NOT NULL DEFAULT '{}'"), ("gear", "TEXT NOT NULL DEFAULT '{}'"), ("pity", "TEXT NOT NULL DEFAULT '{}'")):
+                                ("talents", "TEXT NOT NULL DEFAULT '{}'"), ("gear", "TEXT NOT NULL DEFAULT '{}'"), ("pity", "TEXT NOT NULL DEFAULT '{}'"),
+                                ("cleared", "TEXT NOT NULL DEFAULT '[]'"), ("daily", "TEXT NOT NULL DEFAULT '{}'"),
+                                ("achievements", "TEXT NOT NULL DEFAULT '{}'")):
                 if column not in columns:
                     db.execute(f"ALTER TABLE progress ADD COLUMN {column} {ddl}")
 
@@ -205,7 +314,7 @@ class Store:
     def profile(self, account_id: int):
         with self.connect() as db:
             row = db.execute(
-                "SELECT a.id,a.username,p.unlocked,p.tutorial_complete,p.gold,p.loadout,p.stats,p.xp,p.keys,p.weapon_keys,p.talents,p.gear FROM accounts a "
+                "SELECT a.id,a.username,p.unlocked,p.tutorial_complete,p.gold,p.loadout,p.stats,p.xp,p.keys,p.weapon_keys,p.talents,p.gear,p.cleared FROM accounts a "
                 "JOIN progress p ON p.account_id=a.id WHERE a.id=?", (account_id,)
             ).fetchone()
         if row is None:
@@ -231,7 +340,214 @@ class Store:
                 for k, v in gear_stats(item).items():
                     bonus[k] = bonus.get(k, 0) + v
         result["bonus"] = {k: round(v, 2) for k, v in bonus.items()}
+        cleared = self._parse_cleared(result.pop("cleared"), result["unlocked"])
+        result["cleared"] = cleared
+        result["daily"] = self._daily_view(self._daily(account_id, cleared))
+        state = self._achievement_state(account_id)
+        progress = self._achievement_progress(result, gear)
+        result["achievements"] = self._achievement_view(state, progress)
+        title = state["title"] if state["title"] in TITLES and self._title_earned(state, state["title"], progress) else ""
+        result["title"] = {"id": title, "text": TITLES.get(title, "")}
+        result["mail"] = self.mail_counts(account_id)
+        with self.connect() as db:
+            result["friend_requests"] = db.execute("SELECT COUNT(*) FROM friendships WHERE addressee=? AND status='pending'", (account_id,)).fetchone()[0]
         return result
+
+    # ---- achievements
+
+    def _achievement_state(self, account_id):
+        with self.connect() as db:
+            row = db.execute("SELECT achievements FROM progress WHERE account_id=?", (account_id,)).fetchone()
+        try:
+            data = json.loads(row[0]) if row else {}
+        except (TypeError, ValueError):
+            data = {}
+        data = data if isinstance(data, dict) else {}
+        claimed = data.get("claimed") if isinstance(data.get("claimed"), dict) else {}
+        claimed = {k: max(0, min(3, v)) for k, v in claimed.items() if k in ACHIEVEMENT_IDS and isinstance(v, int) and not isinstance(v, bool)}
+        title = data.get("title") if isinstance(data.get("title"), str) else ""
+        return {"claimed": claimed, "title": title}
+
+    def _save_achievements(self, account_id, state):
+        with self.connect() as db:
+            db.execute("UPDATE progress SET achievements=? WHERE account_id=?", (json.dumps(state), account_id))
+
+    @staticmethod
+    def _achievement_progress(profile, gear):
+        """Current value of every progress source, from the profile's records, collection and level."""
+        stats = profile["stats"]
+        loadout = profile["loadout"]
+        values = {k: stats.get(k, 0) for k in Store.STAT_KEYS}
+        values["level"] = profile["level"]
+        values["nightmare_regions"] = sum(1 for c in profile["cleared"] if c >= 2)
+        values["legend_weapons"] = sum(1 for w in loadout["owned"] if max(loadout["copies"].get(w, [0])) >= 3)
+        values["mythic_items"] = sum(1 for w in loadout["owned"] for r in loadout["copies"].get(w, []) if r >= 4) + \
+            sum(1 for i in gear["inventory"] if i["rarity"] >= 4)
+        values["maxed_gear"] = sum(1 for i in gear["inventory"] if i.get("level", 0) >= GEAR_MAX_LEVEL)
+        return values
+
+    @staticmethod
+    def _reached(spec, progress):
+        return sum(1 for goal in spec[5] if progress.get(spec[4], 0) >= goal)
+
+    @staticmethod
+    def _title_earned(state, title, progress):
+        # A title stays earned once its 金 tier is claimed, even if the collection behind it later shrinks.
+        return state["claimed"].get(title, 0) >= 3
+
+    @classmethod
+    def _achievement_view(cls, state, progress):
+        items = []
+        for spec in ACHIEVEMENTS:
+            aid, category, name, text, source, goals, title = spec
+            claimed = state["claimed"].get(aid, 0)
+            reached = cls._reached(spec, progress)
+            shown = min(claimed, 2)   # the tier being worked on (or the last one once all are claimed)
+            items.append({"id": aid, "category": category, "name": name, "text": text.format(goal=goals[shown]),
+                          "progress": progress.get(source, 0), "goals": goals, "reached": reached, "claimed": claimed,
+                          "title": title or "", "reward": ACHIEVEMENT_REWARDS[claimed] if claimed < 3 else {}})
+        return items
+
+    @_locked
+    def claim_achievement(self, account_id: int, achievement):
+        """Pays out the next reached, unclaimed tier of one achievement."""
+        if achievement not in ACHIEVEMENT_IDS:
+            raise ValueError("找不到此成就")
+        profile = self.profile(account_id)
+        if profile is None:
+            raise ValueError("找不到帳號")
+        state = self._achievement_state(account_id)
+        progress = self._achievement_progress(profile, self._raw_gear(account_id))
+        spec = ACHIEVEMENT_IDS[achievement]
+        claimed = state["claimed"].get(achievement, 0)
+        if claimed >= 3:
+            raise ValueError("此成就已全部完成")
+        if self._reached(spec, progress) <= claimed:
+            raise ValueError("尚未達成下一階段")
+        reward = ACHIEVEMENT_REWARDS[claimed]
+        state["claimed"][achievement] = claimed + 1
+        title = spec[6] if claimed + 1 == 3 else None
+        if title and not state["title"]:
+            state["title"] = achievement   # the first title earned is worn automatically
+        self._save_achievements(account_id, state)
+        with self.connect() as db:
+            db.execute("UPDATE progress SET gold=gold+?, keys=keys+?, weapon_keys=weapon_keys+? WHERE account_id=?",
+                       (reward.get("gold", 0), reward.get("keys", 0), reward.get("weapon_keys", 0), account_id))
+        return {"tier": claimed, "reward": reward, "title": title or ""}, self.profile(account_id)
+
+    @_locked
+    def set_title(self, account_id: int, title):
+        """Wears an earned title, or none with an empty string."""
+        if not isinstance(title, str) or (title and title not in TITLES):
+            raise ValueError("找不到此稱號")
+        state = self._achievement_state(account_id)
+        if title and state["claimed"].get(title, 0) < 3:
+            raise ValueError("尚未獲得此稱號")
+        state["title"] = title
+        self._save_achievements(account_id, state)
+        return self.profile(account_id)
+
+    def _bump_stats(self, account_id, **amounts):
+        """Adds to lifetime counters kept outside missions (supply draws, daily rewards)."""
+        with self.connect() as db:
+            row = db.execute("SELECT stats FROM progress WHERE account_id=?", (account_id,)).fetchone()
+            total = self._parse_stats(row[0] if row else "{}")
+            for key, value in amounts.items():
+                total[key] += value
+            db.execute("UPDATE progress SET stats=? WHERE account_id=?", (json.dumps(total), account_id))
+
+    @staticmethod
+    def _parse_cleared(raw, unlocked=0):
+        """Highest difficulty cleared per region (-1 = never). Accounts from before difficulties count every region
+        they have moved past as cleared on 普通."""
+        try:
+            data = json.loads(raw or "[]")
+        except ValueError:
+            data = []
+        data = data if isinstance(data, list) else []
+        cleared = [max(-1, min(len(DIFFICULTY_NAMES) - 1, v)) if isinstance(v, int) and not isinstance(v, bool) else -1 for v in data[:REGION_COUNT]]
+        cleared += [-1] * (REGION_COUNT - len(cleared))
+        for region in range(min(REGION_COUNT, unlocked)):
+            cleared[region] = max(cleared[region], 0)
+        return cleared
+
+    # ---- daily missions
+
+    def _daily(self, account_id, cleared):
+        """Today's daily state, rolled over (and saved) when the day has changed."""
+        with self.lock:
+            with self.connect() as db:
+                row = db.execute("SELECT daily FROM progress WHERE account_id=?", (account_id,)).fetchone()
+            try:
+                data = json.loads(row[0]) if row else {}
+            except (TypeError, ValueError):
+                data = {}
+            data = data if isinstance(data, dict) else {}
+            day = daily_day()
+            tasks = data.get("tasks")
+            if data.get("day") != day or not isinstance(tasks, list) or len(tasks) != DAILY_COUNT or not all(t in DAILY_TASKS for t in tasks):
+                data = {"day": day, "tasks": roll_daily(account_id, day, max(cleared) >= 0), "progress": {}, "claimed": [], "bonus": False}
+                self._save_daily(account_id, data)
+            progress = data.get("progress") if isinstance(data.get("progress"), dict) else {}
+            data["progress"] = {t: min(DAILY_TASKS[t]["goal"], progress[t]) if isinstance(progress.get(t), int) and progress[t] > 0 else 0 for t in data["tasks"]}
+            claimed = data.get("claimed") if isinstance(data.get("claimed"), list) else []
+            data["claimed"] = [t for t in data["tasks"] if t in claimed]
+            data["bonus"] = data.get("bonus") is True
+            return data
+
+    def _save_daily(self, account_id, data):
+        with self.connect() as db:
+            db.execute("UPDATE progress SET daily=? WHERE account_id=?", (json.dumps(data), account_id))
+
+    @staticmethod
+    def _daily_view(data):
+        tasks = []
+        for t in data["tasks"]:
+            spec = DAILY_TASKS[t]
+            tasks.append({"id": t, "text": spec["text"].format(goal=spec["goal"]), "goal": spec["goal"], "progress": data["progress"][t],
+                          "reward": spec["reward"], "done": data["progress"][t] >= spec["goal"], "claimed": t in data["claimed"]})
+        return {"day": data["day"], "resets_in": daily_resets_in(), "tasks": tasks,
+                "bonus": {"reward": DAILY_BONUS, "ready": len(data["claimed"]) == DAILY_COUNT, "claimed": data["bonus"]}}
+
+    def _advance_daily(self, account_id, cleared, record):
+        """Adds one mission's record to today's task progress."""
+        data = self._daily(account_id, cleared)
+        for t in data["tasks"]:
+            if t == "deep":
+                data["progress"][t] = max(data["progress"][t], record["wave"])
+            else:
+                data["progress"][t] += record[t]
+            data["progress"][t] = min(DAILY_TASKS[t]["goal"], data["progress"][t])
+        self._save_daily(account_id, data)
+
+    @_locked
+    def claim_daily(self, account_id: int, task):
+        """Pays out one finished task, or the all-tasks bonus (task == "bonus")."""
+        profile = self.profile(account_id)
+        if profile is None:
+            raise ValueError("找不到帳號")
+        data = self._daily(account_id, profile["cleared"])
+        if task == "bonus":
+            if len(data["claimed"]) < DAILY_COUNT:
+                raise ValueError("請先領取今天全部任務的獎勵")
+            if data["bonus"]:
+                raise ValueError("今天的額外獎勵已領取")
+            reward, data["bonus"] = DAILY_BONUS, True
+        else:
+            if task not in data["tasks"]:
+                raise ValueError("找不到此任務，可能已換日")
+            if task in data["claimed"]:
+                raise ValueError("此任務獎勵已領取")
+            if data["progress"][task] < DAILY_TASKS[task]["goal"]:
+                raise ValueError("任務尚未完成")
+            reward = DAILY_TASKS[task]["reward"]
+            data["claimed"].append(task)
+            self._bump_stats(account_id, daily_claimed=1)
+        self._save_daily(account_id, data)
+        with self.connect() as db:
+            db.execute("UPDATE progress SET gold=gold+?, keys=keys+?, weapon_keys=weapon_keys+? WHERE account_id=?",
+                       (reward.get("gold", 0), reward.get("keys", 0), reward.get("weapon_keys", 0), account_id))
+        return reward, self.profile(account_id)
 
     @staticmethod
     def _parse_talents(raw):
@@ -323,6 +639,7 @@ class Store:
         gear["inventory"].extend(items)
         self._save_gear(account_id, gear)
         self._save_pity(account_id, pity)
+        self._bump_stats(account_id, draws=count)
         return items, self.profile(account_id)
 
     @_locked
@@ -358,6 +675,7 @@ class Store:
         sync_rarity(loadout)
         with self.connect() as db:
             db.execute("UPDATE progress SET loadout=?, gold=gold+?, pity=? WHERE account_id=?", (json.dumps(loadout), gold, json.dumps(pity), account_id))
+        self._bump_stats(account_id, draws=count)
         return results, self.profile(account_id)
 
     def _weapon_copy(self, account_id, weapon, index, rarity=None):
@@ -486,7 +804,8 @@ class Store:
         with self.connect() as db:
             db.execute("UPDATE progress SET xp=xp+? WHERE account_id=?", (max(0, min(5000, xp)), account_id))
 
-    STAT_KEYS = ("kills", "headshots", "shots", "hits", "missions", "victories", "best_wave")
+    STAT_KEYS = ("kills", "headshots", "shots", "hits", "missions", "victories", "best_wave",
+                 "boss_kills", "elite_kills", "revives", "flawless", "s_grades", "hard_victories", "draws", "daily_claimed")
 
     @classmethod
     def _parse_stats(cls, raw):
@@ -511,7 +830,19 @@ class Store:
             values[key] = value
         if values["hits"] > values["shots"] or values["headshots"] > values["hits"] * 7:
             raise ValueError("戰績數值不合法")
+        # Achievement records (optional: older game servers do not send them).
+        for key, limit in (("downs", 1000), ("revives", 1000), ("boss_kills", 2), ("elite_kills", 20)):
+            value = stats.get(key, 0)
+            if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= limit:
+                raise ValueError("戰績數值不合法")
+            values[key] = value
+        grade = stats.get("grade", "")
+        if grade not in ("", "S", "A", "B", "C"):
+            raise ValueError("戰績數值不合法")
         victory = stats.get("victory") is True
+        tier = stats.get("difficulty", 0)
+        if isinstance(tier, bool) or not isinstance(tier, int) or not 0 <= tier < len(DIFFICULTY_NAMES):
+            raise ValueError("難度不合法")
         profile = self.profile(account_id)
         if profile is None:
             raise ValueError("找不到帳號")
@@ -521,8 +852,262 @@ class Store:
         total["missions"] += 1
         total["victories"] += 1 if victory else 0
         total["best_wave"] = max(total["best_wave"], values["wave"])
+        for key in ("boss_kills", "elite_kills", "revives"):
+            total[key] += values[key]
+        total["flawless"] += 1 if victory and values["downs"] == 0 and "downs" in stats else 0
+        total["s_grades"] += 1 if victory and grade == "S" else 0
+        total["hard_victories"] += 1 if victory and tier >= 1 else 0
         with self.connect() as db:
             db.execute("UPDATE progress SET stats=? WHERE account_id=?", (json.dumps(total), account_id))
+        self._advance_daily(account_id, profile["cleared"], {
+            "kills": values["kills"], "headshots": values["headshots"], "missions": 1, "waves": values["wave"], "wave": values["wave"],
+            "victories": 1 if victory else 0, "hard": 1 if victory and tier >= 1 else 0})
+
+    # ---- anti-cheat
+
+    def audit(self, account_id, reason, detail, rejected=False):
+        with self.connect() as db:
+            db.execute("INSERT INTO audit(account_id,created,reason,detail,rejected) VALUES(?,?,?,?,?)",
+                       (account_id, int(time.time()), reason, json.dumps(detail, ensure_ascii=False)[:2000], 1 if rejected else 0))
+            db.execute("DELETE FROM audit WHERE id <= (SELECT MAX(id) FROM audit) - 5000")   # keep the log bounded
+
+    @_locked
+    def verify_reward(self, account_id: int, gold, stats):
+        """Cross-checks a mission report from the game server before anything is paid out. Impossible reports are
+        rejected and logged; merely unusual ones (inhuman accuracy, aim corrections) are logged for the admins."""
+        if not isinstance(stats, dict) or not isinstance(gold, int) or isinstance(gold, bool):
+            raise ValueError("戰績格式錯誤")
+        def number(key, low, high, default=None, kind=int):
+            value = stats.get(key, default)
+            if value is None:
+                return None
+            if isinstance(value, bool) or not isinstance(value, (int, float) if kind is float else int) or not low <= value <= high:
+                raise ValueError("戰績數值不合法")
+            return value
+        wave = number("wave", 0, 20, 0)
+        kills = number("kills", 0, 5000, 0)
+        team = number("team_kills", 0, 5000)
+        level = number("level", 1, 300)
+        elapsed = number("elapsed", 0, 86400, None, float)
+        region = number("region", 0, REGION_COUNT - 1)
+        tier = number("difficulty", 0, len(DIFFICULTY_NAMES) - 1, 0)
+        aim = number("aim_flags", 0, 1_000_000, 0)
+        victory = stats.get("victory") is True
+        problems = []
+        if victory and wave != 20:
+            problems.append("勝利但未完成 20 波")
+        if team is not None and kills > team:
+            problems.append("個人擊殺多於全隊擊殺")
+        if team is not None and team > 90 * max(1, wave):
+            problems.append("全隊擊殺數超出波次上限")
+        if elapsed is not None and elapsed < max(0, wave - 1) * self.min_wave_seconds:
+            problems.append(f"作戰時間過短（{elapsed:.0f} 秒到達第 {wave} 波）")
+        if None not in (team, level, region):
+            expected = mission_gold(team, wave, level, victory, region, tier)
+            if gold > expected + 1:
+                problems.append(f"金幣 {gold} 超過可得上限 {expected}")
+        now = time.monotonic()
+        last = self.last_reward.get(account_id)
+        if last is not None and self.min_wave_seconds > 0 and now - last < max(1.0, max(0, wave - 1) * self.min_wave_seconds * 0.5):
+            problems.append("結算過於頻繁")
+        detail = {k: stats.get(k) for k in ("kills", "team_kills", "wave", "elapsed", "level", "region", "difficulty", "victory", "shots", "hits", "headshots", "aim_flags")}
+        detail["gold"] = gold
+        if problems:
+            self.audit(account_id, "；".join(problems), detail, rejected=True)
+            raise ValueError("結算資料異常，已記錄並暫停發放")
+        shots, hits, heads = stats.get("shots", 0), stats.get("hits", 0), stats.get("headshots", 0)
+        flags = []
+        if aim > 30:
+            flags.append(f"瞄準方向與視角不符 {aim} 次")
+        if isinstance(shots, int) and isinstance(hits, int) and shots >= 300 and hits > shots * 0.97:
+            flags.append(f"命中率異常（{hits}/{shots}）")
+        if isinstance(hits, int) and isinstance(heads, int) and hits >= 200 and heads > hits * 0.9:
+            flags.append(f"爆頭率異常（{heads}/{hits}）")
+        if flags:
+            self.audit(account_id, "；".join(flags), detail)
+        self.last_reward[account_id] = now
+
+    def audit_log(self, limit=100):
+        with self.connect() as db:
+            rows = db.execute("SELECT a.username, l.created, l.reason, l.rejected FROM audit l JOIN accounts a ON a.id=l.account_id "
+                              "ORDER BY l.id DESC LIMIT ?", (limit,)).fetchall()
+        return [dict(row) for row in rows]
+
+    # ---- system mail
+
+    MAIL_LIMIT = 100
+
+    def send_mail(self, account_ids, title, body, reward=None, days=30):
+        reward = reward or {}
+        now = int(time.time())
+        with self.connect() as db:
+            db.executemany("INSERT INTO mail(account_id,title,body,gold,keys,weapon_keys,created,expires) VALUES(?,?,?,?,?,?,?,?)",
+                           [(aid, title, body, reward.get("gold", 0), reward.get("keys", 0), reward.get("weapon_keys", 0), now, now + days * 86400)
+                            for aid in account_ids])
+
+    def _mail_rows(self, account_id, mail_id=None):
+        query = "SELECT * FROM mail WHERE account_id=? AND deleted=0 AND expires>?"
+        args = [account_id, int(time.time())]
+        if mail_id is not None:
+            query += " AND id=?"
+            args.append(mail_id)
+        with self.connect() as db:
+            return [dict(r) for r in db.execute(query + " ORDER BY id DESC LIMIT ?", (*args, self.MAIL_LIMIT)).fetchall()]
+
+    @staticmethod
+    def _mail_view(row):
+        reward = {k: row[k] for k in ("gold", "keys", "weapon_keys") if row[k]}
+        return {"id": row["id"], "title": row["title"], "body": row["body"], "reward": reward, "created": row["created"],
+                "expires": row["expires"], "read": bool(row["read"]), "claimed": bool(row["claimed"]) or not reward}
+
+    def mail_list(self, account_id):
+        return [self._mail_view(r) for r in self._mail_rows(account_id)]
+
+    def mail_counts(self, account_id):
+        rows = self._mail_rows(account_id)
+        views = [self._mail_view(r) for r in rows]
+        return {"unread": sum(1 for v in views if not v["read"]), "claimable": sum(1 for v in views if not v["claimed"])}
+
+    def _one_mail(self, account_id, mail_id):
+        if isinstance(mail_id, bool) or not isinstance(mail_id, int):
+            raise ValueError("找不到此郵件")
+        rows = self._mail_rows(account_id, mail_id)
+        if not rows:
+            raise ValueError("找不到此郵件，可能已過期")
+        return rows[0]
+
+    @_locked
+    def read_mail(self, account_id, mail_id):
+        self._one_mail(account_id, mail_id)
+        with self.connect() as db:
+            db.execute("UPDATE mail SET read=1 WHERE id=?", (mail_id,))
+
+    @_locked
+    def claim_mail(self, account_id, mail_id=None):
+        """Collects one mail's attachment, or every unclaimed attachment when mail_id is None."""
+        rows = [self._one_mail(account_id, mail_id)] if mail_id is not None else self._mail_rows(account_id)
+        rows = [r for r in rows if not r["claimed"] and (r["gold"] or r["keys"] or r["weapon_keys"])]
+        if not rows:
+            raise ValueError("沒有可領取的附件")
+        total = {k: sum(r[k] for r in rows) for k in ("gold", "keys", "weapon_keys")}
+        with self.connect() as db:
+            for r in rows:
+                if db.execute("UPDATE mail SET claimed=1, read=1 WHERE id=? AND claimed=0", (r["id"],)).rowcount != 1:
+                    raise ValueError("附件已領取")
+            db.execute("UPDATE progress SET gold=gold+?, keys=keys+?, weapon_keys=weapon_keys+? WHERE account_id=?",
+                       (total["gold"], total["keys"], total["weapon_keys"], account_id))
+        return {k: v for k, v in total.items() if v}, len(rows)
+
+    @_locked
+    def delete_mail(self, account_id, mail_id):
+        row = self._one_mail(account_id, mail_id)
+        if not self._mail_view(row)["claimed"]:
+            raise ValueError("請先領取附件再刪除")
+        with self.connect() as db:
+            db.execute("UPDATE mail SET deleted=1 WHERE id=?", (mail_id,))
+
+    def admin_mail(self, username, title, body, gold=0, keys=0, weapon_keys=0, days=30):
+        if not isinstance(title, str) or not 1 <= len(title.strip()) <= 40:
+            raise ValueError("標題需為 1–40 個字")
+        if not isinstance(body, str) or len(body) > 500:
+            raise ValueError("內容最多 500 個字")
+        for value, high in ((gold, 100000), (keys, 1000), (weapon_keys, 1000)):
+            if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= high:
+                raise ValueError("附件數量不正確")
+        if isinstance(days, bool) or not isinstance(days, int) or not 1 <= days <= 90:
+            raise ValueError("保存天數需為 1–90")
+        ids = self._target_ids(username)
+        self.send_mail(ids, title.strip(), body.strip(), {"gold": gold, "keys": keys, "weapon_keys": weapon_keys}, days)
+        return len(ids)
+
+    def _target_ids(self, username):
+        if not isinstance(username, str) or not (username == "*" or USERNAME.fullmatch(username)):
+            raise ValueError("請輸入正確的玩家帳號")
+        with self.connect() as db:
+            if username == "*":
+                return [row[0] for row in db.execute("SELECT id FROM accounts")]
+            row = db.execute("SELECT id FROM accounts WHERE username=?", (username,)).fetchone()
+        if row is None:
+            raise ValueError("找不到此玩家")
+        return [row[0]]
+
+    # ---- friends
+
+    FRIEND_LIMIT = 100
+    PENDING_LIMIT = 50
+
+    def _account_by_name(self, username):
+        if not isinstance(username, str) or not USERNAME.fullmatch(username):
+            raise ValueError("請輸入正確的玩家帳號")
+        with self.connect() as db:
+            row = db.execute("SELECT id, username FROM accounts WHERE username=?", (username,)).fetchone()
+        if row is None:
+            raise ValueError("找不到此玩家")
+        return row["id"], row["username"]
+
+    def friend_ids(self, account_id):
+        with self.connect() as db:
+            rows = db.execute("SELECT requester, addressee FROM friendships WHERE status='accepted' AND (requester=? OR addressee=?)",
+                              (account_id, account_id)).fetchall()
+        return [r[1] if r[0] == account_id else r[0] for r in rows]
+
+    def _brief(self, account_id):
+        profile = self.profile(account_id)
+        return {"id": account_id, "username": profile["username"], "level": profile["level"], "title": profile["title"]["text"]}
+
+    def friends(self, account_id):
+        with self.connect() as db:
+            incoming = [r[0] for r in db.execute("SELECT requester FROM friendships WHERE addressee=? AND status='pending' ORDER BY created", (account_id,))]
+            outgoing = [r[0] for r in db.execute("SELECT addressee FROM friendships WHERE requester=? AND status='pending' ORDER BY created", (account_id,))]
+        friends = sorted((self._brief(i) for i in self.friend_ids(account_id)), key=lambda f: f["username"].lower())
+        return {"friends": friends, "incoming": [self._brief(i) for i in incoming], "outgoing": [self._brief(i) for i in outgoing]}
+
+    @_locked
+    def request_friend(self, account_id, username):
+        target, name = self._account_by_name(username)
+        if target == account_id:
+            raise ValueError("不能加自己為好友")
+        with self.connect() as db:
+            mine = db.execute("SELECT status FROM friendships WHERE requester=? AND addressee=?", (account_id, target)).fetchone()
+            theirs = db.execute("SELECT status FROM friendships WHERE requester=? AND addressee=?", (target, account_id)).fetchone()
+            if (mine and mine[0] == "accepted") or (theirs and theirs[0] == "accepted"):
+                raise ValueError(f"{name} 已經是你的好友")
+            if mine:
+                raise ValueError("已送出邀請，等待對方回應")
+            if theirs:   # they asked first: asking back accepts
+                db.execute("UPDATE friendships SET status='accepted' WHERE requester=? AND addressee=?", (target, account_id))
+                return "accepted"
+        if len(self.friend_ids(account_id)) >= self.FRIEND_LIMIT:
+            raise ValueError(f"好友已達上限（{self.FRIEND_LIMIT} 人）")
+        with self.connect() as db:
+            if db.execute("SELECT COUNT(*) FROM friendships WHERE requester=? AND status='pending'", (account_id,)).fetchone()[0] >= self.PENDING_LIMIT:
+                raise ValueError("送出的邀請太多，請等待對方回應")
+            db.execute("INSERT INTO friendships VALUES(?,?,'pending',?)", (account_id, target, int(time.time())))
+        return "pending"
+
+    @_locked
+    def respond_friend(self, account_id, username, accept):
+        requester, _ = self._account_by_name(username)
+        if accept is True and len(self.friend_ids(account_id)) >= self.FRIEND_LIMIT:
+            raise ValueError(f"好友已達上限（{self.FRIEND_LIMIT} 人）")
+        with self.connect() as db:
+            if accept is True:
+                changed = db.execute("UPDATE friendships SET status='accepted' WHERE requester=? AND addressee=? AND status='pending'",
+                                     (requester, account_id)).rowcount
+            else:
+                changed = db.execute("DELETE FROM friendships WHERE requester=? AND addressee=? AND status='pending'", (requester, account_id)).rowcount
+        if not changed:
+            raise ValueError("找不到此好友邀請")
+
+    @_locked
+    def remove_friend(self, account_id, username):
+        """Removes a friend, or cancels a request this account sent."""
+        other, _ = self._account_by_name(username)
+        with self.connect() as db:
+            changed = db.execute("DELETE FROM friendships WHERE (requester=? AND addressee=?) OR (requester=? AND addressee=? AND status='accepted')",
+                                 (account_id, other, other, account_id)).rowcount
+        if not changed:
+            raise ValueError("你們不是好友")
 
     def is_admin(self, username: str) -> bool:
         try:
@@ -534,8 +1119,8 @@ class Store:
 
     def list_players(self):
         with self.connect() as db:
-            rows = db.execute("SELECT a.username,p.gold,p.unlocked FROM accounts a JOIN progress p ON p.account_id=a.id "
-                              "ORDER BY a.username COLLATE NOCASE LIMIT 500").fetchall()
+            rows = db.execute("SELECT a.username,p.gold,p.unlocked,(SELECT COUNT(*) FROM audit l WHERE l.account_id=a.id) AS flags "
+                              "FROM accounts a JOIN progress p ON p.account_id=a.id ORDER BY a.username COLLATE NOCASE LIMIT 500").fetchall()
         return [dict(row) for row in rows]
 
     @_locked
@@ -694,6 +1279,7 @@ class Store:
                 db.execute("INSERT INTO progress(account_id) VALUES(?)", (account_id,))
         except sqlite3.IntegrityError as exc:
             raise ValueError("此帳號已被註冊") from exc
+        self.send_mail([account_id], *WELCOME_MAIL)
         return self.session(account_id)
 
     def login(self, username: str, password: str):
@@ -722,13 +1308,18 @@ class Store:
         return self.profile(account_id)
 
     @_locked
-    def complete_mission(self, account_id: int, mission: int):
+    def complete_mission(self, account_id: int, mission: int, difficulty=0):
         profile = self.profile(account_id)
         if profile is None or not isinstance(mission, int) or not 0 <= mission <= profile["unlocked"]:
             raise ValueError("關卡進度不合法")
+        if isinstance(difficulty, bool) or not isinstance(difficulty, int) or not 0 <= difficulty < len(DIFFICULTY_NAMES) \
+                or not difficulty_open(profile["cleared"], mission, difficulty):
+            raise ValueError("難度尚未解鎖")
+        cleared = profile["cleared"]
+        cleared[mission] = max(cleared[mission], difficulty)
         with self.connect() as db:
-            db.execute("UPDATE progress SET unlocked=MAX(unlocked,?) WHERE account_id=?",
-                       (min(2, mission + 1), account_id))
+            db.execute("UPDATE progress SET unlocked=MAX(unlocked,?), cleared=? WHERE account_id=?",
+                       (min(REGION_COUNT - 1, mission + 1), json.dumps(cleared), account_id))
         return self.profile(account_id)
 
 
@@ -915,16 +1506,24 @@ class Handler(BaseHTTPRequestHandler):
                 return
             if self.path == "/api/server/progress":
                 try:
-                    profile = store.complete_mission(data.get("account_id"), data.get("mission"))
+                    profile = store.complete_mission(data.get("account_id"), data.get("mission"), data.get("difficulty", 0))
                 except ValueError as exc:
                     self._json(400, {"ok": False, "error": str(exc)})
                     return
                 self._json(200, {"ok": True, "profile": profile})
                 return
+            if self.path == "/api/server/friends":
+                account_id = data.get("account_id")
+                if isinstance(account_id, bool) or not isinstance(account_id, int):
+                    self._json(400, {"ok": False, "error": "找不到帳號"})
+                    return
+                self._json(200, {"ok": True, "friends": store.friend_ids(account_id)})
+                return
             if self.path in ("/api/server/reward", "/api/server/profile"):
                 try:
                     if self.path.endswith("reward"):
                         if "stats" in data:
+                            store.verify_reward(data.get("account_id"), data.get("gold"), data.get("stats"))
                             store.record_stats(data.get("account_id"), data.get("stats"))
                             st = data["stats"]
                             store.add_xp(data.get("account_id"), mission_xp(st))
@@ -950,12 +1549,73 @@ class Handler(BaseHTTPRequestHandler):
             self._json(200, {"ok": True, "profile": profile, "game_online": bool(self.server.game_online())})
         elif self.path == "/api/tutorial":
             self._json(200, {"ok": True, "profile": store.tutorial(profile["id"])})
+        elif self.path.startswith("/api/mail/") or self.path.startswith("/api/friends/"):
+            pid = profile["id"]
+            try:
+                extra = {}
+                if self.path == "/api/mail/list":
+                    extra["mail"] = store.mail_list(pid)
+                elif self.path == "/api/mail/read":
+                    store.read_mail(pid, data.get("id"))
+                elif self.path == "/api/mail/claim":
+                    extra["reward"], extra["count"] = store.claim_mail(pid, data.get("id"))
+                elif self.path == "/api/mail/claim_all":
+                    extra["reward"], extra["count"] = store.claim_mail(pid, None)
+                elif self.path == "/api/mail/delete":
+                    store.delete_mail(pid, data.get("id"))
+                elif self.path == "/api/friends/list":
+                    pass
+                elif self.path == "/api/friends/request":
+                    extra["status"] = store.request_friend(pid, data.get("username"))
+                elif self.path == "/api/friends/respond":
+                    store.respond_friend(pid, data.get("username"), data.get("accept"))
+                elif self.path == "/api/friends/remove":
+                    store.remove_friend(pid, data.get("username"))
+                else:
+                    self._json(404, {"ok": False, "error": "找不到此服務"})
+                    return
+                if self.path.startswith("/api/mail/") and "mail" not in extra:
+                    extra["mail"] = store.mail_list(pid)
+                if self.path.startswith("/api/friends/"):
+                    extra.update(store.friends(pid))
+            except ValueError as exc:
+                self._json(400, {"ok": False, "error": str(exc)})
+                return
+            self._json(200, {"ok": True, "profile": store.profile(pid), **extra})
+        elif self.path in ("/api/achievement/claim", "/api/achievement/title"):
+            try:
+                if self.path.endswith("claim"):
+                    outcome, result = store.claim_achievement(profile["id"], data.get("achievement"))
+                    extra = {"claim": outcome}
+                else:
+                    result, extra = store.set_title(profile["id"], data.get("title")), {}
+            except ValueError as exc:
+                self._json(400, {"ok": False, "error": str(exc)})
+                return
+            self._json(200, {"ok": True, "profile": result, **extra})
+        elif self.path == "/api/daily/claim":
+            try:
+                reward, result = store.claim_daily(profile["id"], data.get("task"))
+            except ValueError as exc:
+                self._json(400, {"ok": False, "error": str(exc)})
+                return
+            self._json(200, {"ok": True, "reward": reward, "profile": result})
         elif self.path.startswith("/api/admin/"):
             if not profile.get("admin"):
                 self._json(403, {"ok": False, "error": "需要管理員權限"})
                 return
             if self.path == "/api/admin/players":
                 self._json(200, {"ok": True, "players": store.list_players()})
+            elif self.path == "/api/admin/audit":
+                self._json(200, {"ok": True, "entries": store.audit_log()})
+            elif self.path == "/api/admin/mail":
+                try:
+                    count = store.admin_mail(data.get("username"), data.get("title"), data.get("body", ""), data.get("gold", 0),
+                                             data.get("keys", 0), data.get("weapon_keys", 0), data.get("days", 30))
+                except ValueError as exc:
+                    self._json(400, {"ok": False, "error": str(exc)})
+                    return
+                self._json(200, {"ok": True, "count": count, "profile": store.profile(profile["id"])})
             elif self.path == "/api/admin/grant":
                 try:
                     count = store.admin_grant(data.get("username"), data.get("gold", 0), data.get("weapon"), data.get("keys", 0), data.get("weapon_keys", 0))

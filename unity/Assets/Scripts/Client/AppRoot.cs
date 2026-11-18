@@ -17,6 +17,8 @@ namespace RiftWard.Client
         public Profile Profile { get; private set; }
         public AdminSettings AdminSettings { get; } = new AdminSettings();
         public int SelectedRegion { get; private set; }
+        /// Difficulty tier for the next deployment (the room leader's choice when in a room).
+        public int SelectedDifficulty { get; private set; }
         public bool CanDeploy => Profile != null && (!Net.Welcomed || leaderId == Net.LocalId);
         public NetClient Net { get; } = new NetClient();
         /// Room code shown to the party; empty when playing alone.
@@ -25,10 +27,39 @@ namespace RiftWard.Client
         public bool IsLeader => leaderId == Net.LocalId;
         public int PartySize => partySize;
 
+        public SocialOverlay Overlay { get; private set; }
+        public ChatHud Chat { get; private set; }
+        /// The latest invitation that arrived during a mission, offered again on the 社交 page.
+        public (int from, string name, string code)? PendingInvite { get; private set; }
+
+        public void SendChat(byte channel, string text)
+        {
+            if (!Net.Welcomed) { ChatLog.Notice("離線模式無法聊天，請連線到遊戲伺服器"); return; }
+            Net.Send(Msg.Chat, w => { w.Write(channel); w.Write(text); });
+        }
+
+        public void InviteFriend(int accountId) { if (Net.Welcomed) Net.Send(Msg.InviteFriend, w => w.Write(accountId)); else Overlay.Toast("離線模式無法邀請好友"); }
+        public void RefreshFriends() { if (Net.Welcomed) Net.Send(Msg.RefreshFriends); }
+
+        public void AcceptInvite(string code)
+        {
+            PendingInvite = null;
+            if (inNetMission) { Overlay.Toast("請先結束目前的任務再加入房間"); return; }
+            JoinRoom(code);
+        }
+
+        public void DeclineInvite(int from)
+        {
+            PendingInvite = null;
+            if (Net.Welcomed) Net.Send(Msg.DeclineInvite, w => w.Write(from));
+        }
+
         public void CreateRoom() { if (Net.Welcomed) Net.Send(Msg.CreateRoom); }
         public void JoinRoom(string code) { if (Net.Welcomed && !string.IsNullOrWhiteSpace(code)) Net.Send(Msg.JoinRoom, w => w.Write(code.Trim().ToUpperInvariant())); }
         public void LeaveRoom() { if (Net.Welcomed) Net.Send(Msg.LeaveRoom); }
         int leaderId = -1, partySize, gamePort = Protocol.DefaultPort;
+        /// Highest tier cleared in the deployed region when the mission began; the result sheet compares against it.
+        int clearedAtDeploy = -1;
         bool inNetMission, netTest;
         string lobbyMode = "lobby";
         string homeStatus = "離線模式 · 單人任務";
@@ -56,6 +87,8 @@ namespace RiftWard.Client
             Client.Setup();
             Api = new AccountApi(this);
             Screens = new Screens(this);
+            Overlay = new SocialOverlay { Join = AcceptInvite, Decline = DeclineInvite };
+            Chat = new ChatHud { Send = SendChat };
             Net.Message += OnNetMessage;
             Net.Disconnected += OnNetDisconnected;
             var env = Environment.GetEnvironmentVariable("RIFTWARD_TEST_API_PORT");
@@ -125,7 +158,7 @@ namespace RiftWard.Client
             {
                 case Msg.Welcome:
                     Debug.Log("UNITY_CLIENT_WELCOME id=" + Net.LocalId);
-                    if (netTest) JoinRoom("TEST");
+                    if (netTest) { JoinRoom("TEST"); SendChat(ChatChannel.World, "net-test hello " + Net.LocalId); }
                     break;
                 case Msg.Lobby:
                     SelectedRegion = r.ReadInt32();
@@ -134,21 +167,25 @@ namespace RiftWard.Client
                     partySize = r.ReadInt32();
                     lobbyMode = r.ReadString();
                     RoomCode = r.ReadString();
+                    SelectedDifficulty = r.ReadInt32();
                     homeStatus = !InRoom ? "已連線 · 單人任務（建立或加入房間即可組隊）"
                         : leaderId == Net.LocalId ? $"房號 {RoomCode} · 隊長 · {partySize} / 4" : $"房號 {RoomCode} · 等待隊長部署 · {partySize} / 4";
                     if (Screens.Mode == "home" || Screens.Mode == "connecting") ShowHome();
-                    if (netTest && leaderId == Net.LocalId && partySize >= 2 && lobbyMode == "lobby" && !inNetMission && !testDone) Net.Send(Msg.RequestDeploy, w => w.Write(0));
+                    if (netTest && leaderId == Net.LocalId && partySize >= 2 && lobbyMode == "lobby" && !inNetMission && !testDone) Net.Send(Msg.RequestDeploy, w => { w.Write(0); w.Write(0); });
                     break;
                 case Msg.Deploy:
-                    int region = r.ReadInt32();
+                    int region = r.ReadInt32(), difficulty = r.ReadInt32();
+                    clearedAtDeploy = Profile != null && region >= 0 && region < Profile.Cleared.Count ? Profile.Cleared[region] : -1;
                     Screens.Clear();
                     Client.Menus.HideAll();
                     Client.Objective = "";
                     training = false;
                     inNetMission = true;
-                    Client.StartNetworked(region, Net.LocalId, Net);
+                    Client.StartNetworked(region, difficulty, Net.LocalId, Net);
+                    Chat.Show(true);
+                    Overlay.HideInvite();
                     PushAdmin();
-                    Debug.Log("UNITY_CLIENT_DEPLOY region=" + region);
+                    Debug.Log($"UNITY_CLIENT_DEPLOY region={region} difficulty={difficulty}");
                     break;
                 case Msg.Snapshot: Client.ApplySnapshot(r); break;
                 case Msg.Events: Client.ApplyEvents(r); break;
@@ -166,19 +203,41 @@ namespace RiftWard.Client
                     int gold = r.ReadInt32();
                     string grade = r.ReadString();
                     var record = new[] { r.ReadInt32(), r.ReadInt32(), r.ReadInt32(), r.ReadInt32() };
+                    int finishedTier = r.ReadInt32();
                     Client.MarkFinished(success);
                     int finishedWave = Client.Sim?.Wave ?? 0;
                     var progress = Profile == null ? null : new Menus.ResultProgress
                     {
-                        Xp = Defs.MissionXp(record[0], finishedWave, success), Level = Profile.Level, LevelXp = Profile.LevelXp,
+                        Xp = Defs.MissionXp(record[0], finishedWave, success, finishedTier), Level = Profile.Level, LevelXp = Profile.LevelXp,
                         Wave = finishedWave, BestWave = Profile.BestWave,
+                        Unlocked = success && finishedTier > clearedAtDeploy && finishedTier + 1 < Defs.Difficulties.Length ? finishedTier + 1 : -1,
                     };
-                    Client.Menus.ShowResult(success, finishedRegion, kills, elapsed, gold, (Profile?.Gold ?? 0) + gold, grade, record, progress);
+                    Client.Menus.ShowResult(success, finishedRegion, kills, elapsed, gold, (Profile?.Gold ?? 0) + gold, grade, record, progress, finishedTier);
                     Debug.Log($"UNITY_CLIENT_RESULT success={success} gold={gold} picks={testPicks}");
                     if (netTest) StartCoroutine(TestFinish(success, gold));
                     break;
                 case Msg.ProfileSync: RefreshMe(); break;
-                case Msg.Notice: homeStatus = r.ReadString(); if (Screens.Mode == "home") ShowHome(); break;
+                case Msg.Notice:
+                    homeStatus = r.ReadString();
+                    if (Screens.Mode == "home") ShowHome();
+                    else if (!inNetMission) Overlay.Toast(homeStatus);
+                    break;
+                case Msg.ChatLine:
+                    var chatLine = ChatLog.Read(r);
+                    ChatLog.Add(chatLine);
+                    if (netTest && chatLine.Channel == ChatChannel.World && Profile != null && chatLine.AccountId != Profile.Id) testChats++;
+                    break;
+                case Msg.Presence: FriendPresence.Read(r); break;
+                case Msg.Invite:
+                    int from = r.ReadInt32();
+                    string fromName = r.ReadString(), code = r.ReadString();
+                    if (inNetMission)
+                    {
+                        PendingInvite = (from, fromName, code);
+                        ChatLog.Notice($"{fromName} 邀請你加入房間 {code}，任務結束後可到「社交」頁接受");
+                    }
+                    else Overlay.ShowInvite(from, fromName, code);
+                    break;
                 case Msg.Error:
                     string message = r.ReadString();
                     Net.Close();
@@ -193,15 +252,15 @@ namespace RiftWard.Client
             }
         }
 
-        int testPicks;
+        int testPicks, testChats;
         bool testDone;
 
         IEnumerator TestFinish(bool success, int gold)
         {
             yield return new WaitForSecondsRealtime(1.5f);
-            Debug.Log(success && gold > 0 && testPicks == Defs.WavesPerMission && Profile.Gold > 0
-                ? $"UNITY_CLIENT_PASS gold={gold} picks={testPicks} total={Profile.Gold}"
-                : $"UNITY_CLIENT_FAIL success={success} gold={gold} picks={testPicks} total={Profile?.Gold}");
+            Debug.Log(success && gold > 0 && testPicks == Defs.WavesPerMission && Profile.Gold > 0 && testChats > 0
+                ? $"UNITY_CLIENT_PASS gold={gold} picks={testPicks} total={Profile.Gold} chats={testChats}"
+                : $"UNITY_CLIENT_FAIL success={success} gold={gold} picks={testPicks} total={Profile?.Gold} chats={testChats}");
             testDone = true;
             Net.Send(Msg.RequestHome);
             yield return new WaitForSecondsRealtime(10f);
@@ -210,6 +269,9 @@ namespace RiftWard.Client
 
         void OnNetDisconnected(string reason)
         {
+            FriendPresence.Clear();
+            Overlay.HideInvite();
+            PendingInvite = null;
             homeStatus = "與遊戲伺服器中斷連線 · 離線單人任務";
             if (inNetMission) { LeaveNetMission(); ShowHome(); }
             else if (Screens.Mode == "home" || Screens.Mode == "connecting") ShowHome();
@@ -219,6 +281,7 @@ namespace RiftWard.Client
         {
             if (!inNetMission) return;
             inNetMission = false;
+            Chat.Show(false);
             Client.Menus.HideAll();
             Client.LeaveMission();
         }
@@ -255,15 +318,30 @@ namespace RiftWard.Client
             Screens.ShowHome(homeStatus);
         }
 
-        public void SelectRegion(int region)
+        public void SelectRegion(int region) => SelectMission(region, SelectedDifficulty);
+
+        public void SelectDifficulty(int tier) => SelectMission(SelectedRegion, tier);
+
+        /// The requested tier, lowered until it is open in the region (the server applies the same rule).
+        int OpenTier(int region, int tier)
         {
+            tier = Mathf.Clamp(tier, 0, Defs.Difficulties.Length - 1);
+            while (tier > 0 && !Profile.DifficultyOpen(region, tier)) tier--;
+            return tier;
+        }
+
+        void SelectMission(int region, int tier)
+        {
+            region = Mathf.Clamp(region, 0, Profile.Unlocked);
+            tier = OpenTier(region, tier);
             if (Net.Welcomed)
             {
-                if (leaderId == Net.LocalId) Net.Send(Msg.SelectRegion, w => w.Write(region));
-                if (!InRoom) { SelectedRegion = Mathf.Clamp(region, 0, Profile.Unlocked); ShowHome(); }
+                if (leaderId == Net.LocalId) Net.Send(Msg.SelectRegion, w => { w.Write(region); w.Write(tier); });
+                if (!InRoom) { SelectedRegion = region; SelectedDifficulty = tier; ShowHome(); }
                 return;
             }
-            SelectedRegion = Mathf.Clamp(region, 0, Profile.Unlocked);
+            SelectedRegion = region;
+            SelectedDifficulty = tier;
             ShowHome();
         }
 
@@ -272,7 +350,7 @@ namespace RiftWard.Client
             if (Net.Welcomed)
             {
                 Client.Menus.HideAll();
-                if (leaderId == Net.LocalId) Net.Send(Msg.RequestDeploy, w => w.Write(SelectedRegion));
+                if (leaderId == Net.LocalId) Net.Send(Msg.RequestDeploy, w => { w.Write(SelectedRegion); w.Write(SelectedDifficulty); });
                 else if (inNetMission) { LeaveNetMission(); ShowHome(); }
                 return;
             }
@@ -280,7 +358,8 @@ namespace RiftWard.Client
             Screens.Clear();
             training = false;
             Client.Objective = "";
-            Client.StartOffline(Mathf.Clamp(SelectedRegion, 0, Profile.Unlocked), Profile.Loadout, Profile.Admin, AdminSettings);
+            int offlineRegion = Mathf.Clamp(SelectedRegion, 0, Profile.Unlocked);
+            Client.StartOffline(offlineRegion, Profile.Loadout, Profile.Admin, AdminSettings, OpenTier(offlineRegion, SelectedDifficulty));
             Client.Sim?.ApplyProfileBonus(Client.LocalId, Profile.BonusOf("hp"), Profile.BonusOf("damage"), Profile.BonusOf("speed"), Profile.BonusOf("reload"), Profile.BonusOf("crit"));
         }
 
@@ -306,7 +385,7 @@ namespace RiftWard.Client
             bool success = sim.State == MissionState.Victory;
             sim.Actors.TryGetValue(Client.LocalId, out var me);
             var record = me == null ? new int[4] : new[] { me.StatKills, me.StatHeadshots, me.StatShots, me.StatHits };
-            Client.Menus.ShowResult(success, sim.Region, sim.Kills, sim.Elapsed, -1, Profile?.Gold ?? 0, sim.MissionGrade(), record);
+            Client.Menus.ShowResult(success, sim.Region, sim.Kills, sim.Elapsed, -1, Profile?.Gold ?? 0, sim.MissionGrade(), record, null, sim.Difficulty);
         }
 
         public void PushAdmin()
@@ -353,6 +432,8 @@ namespace RiftWard.Client
         {
             UpdateMusic();
             Net.Poll();
+            Overlay.Update();
+            Chat.Update(inNetMission, Client.Sim != null && Client.Sim.State == MissionState.Playing && !Client.Paused && !Client.Sim.BuffPending);
             if (!training || Client.Sim == null) return;
             var me = Client.Sim.Actors[Client.LocalId];
             me.Hp = me.MaxHp;
@@ -451,6 +532,18 @@ namespace RiftWard.Client
                     new Dictionary<string, object> { ["id"] = "f", ["slot"] = "armor", ["rarity"] = 2.0, ["level"] = 1.0, ["stats"] = new Dictionary<string, object> { ["hp"] = 14.0, ["speed"] = 2.0 } },
                 },
                 ["equipment"] = new Dictionary<string, object> { ["armor"] = "a", ["module"] = "b" },
+                ["cleared"] = new List<object> { 1.0, -1.0, -1.0 },
+                ["daily"] = new Dictionary<string, object>
+                {
+                    ["resets_in"] = 18720.0,
+                    ["tasks"] = new List<object>
+                    {
+                        new Dictionary<string, object> { ["id"] = "kills", ["text"] = "擊殺 150 名敵人", ["goal"] = 150.0, ["progress"] = 150.0, ["done"] = true, ["claimed"] = true, ["reward"] = new Dictionary<string, object> { ["gold"] = 300.0 } },
+                        new Dictionary<string, object> { ["id"] = "headshots", ["text"] = "爆頭命中 40 次", ["goal"] = 40.0, ["progress"] = 40.0, ["done"] = true, ["claimed"] = false, ["reward"] = new Dictionary<string, object> { ["gold"] = 250.0, ["keys"] = 1.0 } },
+                        new Dictionary<string, object> { ["id"] = "hard", ["text"] = "在困難以上難度完成 1 場任務", ["goal"] = 1.0, ["progress"] = 0.0, ["done"] = false, ["claimed"] = false, ["reward"] = new Dictionary<string, object> { ["weapon_keys"] = 1.0 } },
+                    },
+                    ["bonus"] = new Dictionary<string, object> { ["reward"] = new Dictionary<string, object> { ["keys"] = 2.0, ["weapon_keys"] = 1.0 }, ["ready"] = false, ["claimed"] = false },
+                },
                 ["bonus"] = new Dictionary<string, object> { ["hp"] = 42.0, ["damage"] = 22.0, ["speed"] = 6.0, ["crit"] = 5.0 },
                 ["loadout"] = new Dictionary<string, object>
                 {
@@ -460,6 +553,34 @@ namespace RiftWard.Client
                     ["active"] = new Dictionary<string, object> { ["pistol"] = 1.0, ["rifle"] = 0.0, ["sniper"] = 0.0 },
                 },
             });
+            // Achievements in every state: unclaimed tiers, partial progress, finished with a title.
+            var specs = new[]
+            {
+                ("kills", "combat", "殲滅行動", "累計擊殺 {0} 名敵人", 3120, new[] { 500, 2500, 10000 }, 1, "殲滅者"),
+                ("headshots", "combat", "一槍入魂", "累計爆頭命中 {0} 次", 4210, new[] { 200, 1000, 4000 }, 3, "神射手"),
+                ("bosses", "combat", "巨人殺手", "擊倒 {0} 名 Boss", 7, new[] { 5, 25, 100 }, 1, "巨人殺手"),
+                ("elites", "combat", "精英獵人", "擊敗 {0} 名精英敵人", 4, new[] { 10, 50, 200 }, 0, ""),
+                ("victories", "clear", "百戰老兵", "完成 {0} 場任務", 18, new[] { 5, 25, 100 }, 1, "老兵"),
+                ("hard", "clear", "迎難而上", "在困難以上難度完成 {0} 場任務", 2, new[] { 1, 10, 50 }, 0, ""),
+                ("nightmare", "clear", "裂隙征服者", "在 {0} 個區域通關噩夢", 0, new[] { 1, 2, 3 }, 0, "裂隙征服者"),
+                ("flawless", "clear", "不死之身", "零倒地完成 {0} 場任務", 1, new[] { 1, 5, 20 }, 1, "不死之身"),
+                ("grades", "clear", "完美評價", "以 S 評分完成 {0} 場任務", 0, new[] { 1, 10, 30 }, 0, ""),
+                ("revives", "support", "戰地天使", "救援隊友 {0} 次", 12, new[] { 5, 30, 100 }, 1, "戰地天使"),
+                ("daily", "support", "勤務兵", "領取 {0} 項每日任務獎勵", 9, new[] { 10, 50, 200 }, 0, "勤務兵"),
+                ("level", "support", "步步高升", "帳號等級達到 {0}", 7, new[] { 10, 25, 50 }, 0, "指揮官"),
+                ("legends", "collect", "軍火大亨", "擁有 {0} 種傳奇以上武器", 2, new[] { 1, 2, 4 }, 2, "軍火大亨"),
+                ("mythic", "collect", "神話收藏家", "持有 {0} 件神話武器或裝備", 2, new[] { 1, 3, 8 }, 1, ""),
+                ("forged", "collect", "千錘百鍊", "將 {0} 件裝備強化到 +5", 1, new[] { 1, 3, 8 }, 0, ""),
+                ("draws", "collect", "補給常客", "開啟補給 {0} 次", 64, new[] { 10, 100, 500 }, 1, ""),
+            };
+            DailyReward[] tierRewards = { new DailyReward { Gold = 300 }, new DailyReward { Gold = 600, Keys = 2 }, new DailyReward { Keys = 3, WeaponKeys = 2 } };
+            foreach (var (id, cat, name, text, progress, goals, claimed, title) in specs)
+                demo.Achievements.Add(new Achievement
+                {
+                    Id = id, Category = cat, Name = name, Text = string.Format(text, goals[Mathf.Min(claimed, 2)]), Title = title, Progress = progress, Goals = goals,
+                    Claimed = claimed, Reached = goals.Count(g => progress >= g), Reward = claimed < 3 ? tierRewards[claimed] : default,
+                });
+            demo.TitleId = "headshots"; demo.Title = "神射手";
             UpdateProfile(demo);
             Screens.ShowCharacter();
             yield return Settle(0.4f);
@@ -471,6 +592,68 @@ namespace RiftWard.Client
             Screens.ShowShop();
             yield return Settle(0.4f);
             yield return Shot(folder, "unity-shop");
+            Screens.ShowDaily();
+            yield return Settle(0.4f);
+            yield return Shot(folder, "unity-daily");
+            Screens.ShowAchievements();
+            yield return Settle(0.4f);
+            yield return Shot(folder, "unity-achievements");
+            Screens.ShowTitlePickerForCapture();
+            yield return Settle(0.3f);
+            yield return Shot(folder, "unity-titles");
+            // Social pages with sample friends, mail and chat.
+            Dictionary<string, object> Person(int id, string name, int level, string title) =>
+                new Dictionary<string, object> { ["id"] = (double)id, ["username"] = name, ["level"] = (double)level, ["title"] = title };
+            FriendPresence.States[11] = (PresenceState.InMission, "");
+            FriendPresence.States[12] = (PresenceState.InRoom, "K7QM");
+            FriendPresence.States[13] = (PresenceState.Lobby, "");
+            Screens.DemoFriends(new Dictionary<string, object>
+            {
+                ["friends"] = new List<object> { Person(11, "NightOwl", 23, "神射手"), Person(12, "Kairo_77", 15, ""), Person(13, "LunaFrost", 31, "戰地天使"), Person(14, "IronMoss", 8, ""), Person(15, "Rex_Tw", 12, "") },
+                ["incoming"] = new List<object> { Person(21, "SkyRunner", 6, "") },
+                ["outgoing"] = new List<object> { Person(22, "ZeroPoint", 19, "老兵") },
+            });
+            yield return Settle(0.4f);
+            yield return Shot(folder, "unity-friends");
+            double now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+            Dictionary<string, object> Mail(int id, string title, string body, bool read, bool claimed, double age, Dictionary<string, object> reward) =>
+                new Dictionary<string, object> { ["id"] = (double)id, ["title"] = title, ["body"] = body, ["read"] = read, ["claimed"] = claimed, ["created"] = now - age, ["expires"] = now - age + 30 * 86400, ["reward"] = reward };
+            Screens.DemoMail(new List<Dictionary<string, object>>
+            {
+                Mail(3, "11/18 維護補償", "各位士兵：\n\n感謝大家耐心等候今天的伺服器維護。指揮部準備了補償，請在 30 天內領取。\n\n本次更新新增難度分級、每日任務、成就與社交功能，祝大家玩得愉快！", false, false, 3600,
+                    new Dictionary<string, object> { ["gold"] = 1000.0, ["keys"] = 3.0, ["weapon_keys"] = 1.0 }),
+                Mail(2, "週末雙倍活動預告", "本週六、日所有任務金幣加倍，記得揪好友一起出擊。", true, true, 86400 * 2, new Dictionary<string, object>()),
+                Mail(1, "歡迎加入裂隙守衛", "士兵，歡迎報到！", true, true, 86400 * 6, new Dictionary<string, object> { ["keys"] = 3.0, ["weapon_keys"] = 1.0 }),
+            });
+            yield return Settle(0.4f);
+            yield return Shot(folder, "unity-mail");
+            ChatLog.Add(new ChatLog.Line { Channel = ChatChannel.World, AccountId = 11, Name = "NightOwl", Title = "神射手", Text = "有人要打熔核工廠噩夢嗎？缺一個" });
+            ChatLog.Add(new ChatLog.Line { Channel = ChatChannel.World, AccountId = 13, Name = "LunaFrost", Title = "戰地天使", Text = "+1 我可以補，等我換狙擊槍" });
+            ChatLog.Add(new ChatLog.Line { Channel = ChatChannel.System, Text = "Kairo_77 加入了房間" });
+            ChatLog.Add(new ChatLog.Line { Channel = ChatChannel.Room, AccountId = 12, Name = "Kairo_77", Text = "第 10 波 Boss 記得先打護盾兵" });
+            ChatLog.Add(new ChatLog.Line { Channel = ChatChannel.World, AccountId = 1, Name = "DVRBXTW", Title = "神射手", Text = "伺服器今晚 23:00 維護 30 分鐘", Admin = true });
+            ChatLog.Add(new ChatLog.Line { Channel = ChatChannel.World, AccountId = 14, Name = "IronMoss", Text = "<size=80>測試</size> 標籤不會生效" });
+            Screens.ShowChat();
+            yield return Settle(0.4f);
+            yield return Shot(folder, "unity-chat");
+            Overlay.ShowInvite(11, "NightOwl", "K7QM");
+            yield return Settle(0.3f);
+            yield return Shot(folder, "unity-invite");
+            Overlay.HideInvite();
+            Screens.ShowAdmin();
+            yield return Settle(0.3f);
+            Screens.DemoAudit(new List<Dictionary<string, object>>
+            {
+                new Dictionary<string, object> { ["username"] = "Rex_Tw", ["created"] = now - 600, ["reason"] = "金幣 4200 超過可得上限 1790；作戰時間過短（31 秒到達第 20 波）", ["rejected"] = 1.0 },
+                new Dictionary<string, object> { ["username"] = "IronMoss", ["created"] = now - 7200, ["reason"] = "瞄準方向與視角不符 52 次；命中率異常（398/402）", ["rejected"] = 0.0 },
+            });
+            yield return Settle(0.3f);
+            yield return Shot(folder, "unity-admin-console");
+            SelectRegion(0);
+            SelectDifficulty(1);
+            yield return Settle(0.6f);
+            yield return Shot(folder, "unity-home-difficulty");
+            SelectDifficulty(0);
             Screens.ShowArmory();
             yield return Settle(0.5f);
             yield return Shot(folder, "unity-armory-rarity");
@@ -514,7 +697,7 @@ namespace RiftWard.Client
             var kit = new Loadout { Owned = new List<string> { "pistol", "rifle", "sniper" }, Equipped = new List<string> { "rifle", "sniper" } };
             kit.Rarity["rifle"] = 4; kit.Rarity["sniper"] = 3;
             Client.WeaponRarity = id => kit.RarityOf(id);
-            Client.StartOffline(0, kit, false, null);
+            Client.StartOffline(0, kit, false, null, 1);
             var sim = Client.Sim;
             sim.EnemyVariety = true;
             sim.ApplyBuff(Client.LocalId, Defs.BuffDrone + 200);
@@ -538,6 +721,11 @@ namespace RiftWard.Client
             sim.Fire(Client.LocalId, sim.Enemies.Values.First().Position + Vector3.up * Defs.HeadHeight);
             yield return Settle(0.05f);
             yield return Shot(folder, "unity-combat");
+            Chat.Show(true);
+            Chat.OpenForCapture();
+            for (int f = 0; f < 10; f++) { Chat.Update(true, false); yield return null; }
+            yield return Shot(folder, "unity-chat-hud");
+            Chat.Show(false);
             Client.Hud.ResetTransient();
             yield return Settle(0.4f);
             yield return Shot(folder, "unity-rifle");
@@ -552,7 +740,7 @@ namespace RiftWard.Client
             yield return Settle(0.2f);
             yield return Shot(folder, "unity-pause");
             Client.Menus.HideAll();
-            Client.Menus.ShowResult(true, 0, 86, 742, 740, 1980, "A", new[] { 41, 13, 290, 176 }, new Menus.ResultProgress { Xp = 241, Level = 3, LevelXp = 180, Wave = 20, BestWave = 14 });
+            Client.Menus.ShowResult(true, 0, 86, 742, 740, 1980, "A", new[] { 41, 13, 290, 176 }, new Menus.ResultProgress { Xp = 301, Level = 3, LevelXp = 180, Wave = 20, BestWave = 14, Unlocked = 2 }, 1);
             yield return Settle(0.2f);
             yield return Shot(folder, "unity-result");
             Client.Menus.HideAll();
