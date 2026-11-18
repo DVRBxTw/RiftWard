@@ -39,6 +39,7 @@ namespace RiftWard.Client
         {
             if (root != null) UnityEngine.Object.Destroy(root.gameObject);
             root = null;
+            Ui.DefaultButton = null; Ui.DefaultWhileTyping = false;
             Mode = "";
         }
 
@@ -71,7 +72,7 @@ namespace RiftWard.Client
             {
                 bool active = ids[i] == tab;
                 var b = Ui.Button(bar, names[i], go[i], 19, active ? Palette.Bone : Palette.Muted, new Color(0, 0, 0, 0), new Color(0, 0, 0, 0));
-                b.GetComponent<RectTransform>().Place(new Vector2(0, 0.5f), new Vector2(226 + i * 90, 0), new Vector2(84, NavHeight), new Vector2(0, 0.5f));
+                b.GetComponent<RectTransform>().Place(new Vector2(0, 0.5f), new Vector2(226 + i * 84, 0), new Vector2(80, NavHeight), new Vector2(0, 0.5f));
                 if (active)
                 {
                     b.GetComponentInChildren<Text>().fontStyle = FontStyle.Bold;
@@ -102,17 +103,25 @@ namespace RiftWard.Client
             }
             if (worn != null)
                 worn.rectTransform.Place(new Vector2(1, 1), new Vector2(-who.preferredWidth - 2, 0), new Vector2(160, 22), new Vector2(1, 1));
-            var links = Ui.HStack(account, 4);
-            links.Place(new Vector2(1, 0), Vector2.zero, new Vector2(p.Admin ? 250 : 190, 24), new Vector2(1, 0));
-            if (p.Admin) Ui.Button(links, "管理員", ShowAdmin, 12, Palette.Danger, new Color(0, 0, 0, 0), new Color(0, 0, 0, 0));
-            Ui.Button(links, "設定", ShowSettings, 12, Palette.Amber, new Color(0, 0, 0, 0), new Color(0, 0, 0, 0));
-            Ui.Button(links, "登出", app.Logout, 12, Palette.Muted, new Color(0, 0, 0, 0), new Color(0, 0, 0, 0));
-            Ui.Button(links, "離開遊戲", app.Quit, 12, Palette.Muted, new Color(0, 0, 0, 0), new Color(0, 0, 0, 0));
+            var links = Ui.HStack(account, 10);
+            links.Place(new Vector2(1, 0), Vector2.zero, new Vector2(p.Admin ? 270 : 206, 26), new Vector2(1, 0));
+            if (p.Admin) Ui.Button(links, "管理員", ShowAdmin, 13, Palette.Danger, new Color(0, 0, 0, 0), new Color(0, 0, 0, 0));
+            Ui.Button(links, "設定", ShowSettings, 13, Palette.Amber, new Color(0, 0, 0, 0), new Color(0, 0, 0, 0));
+            Ui.Button(links, "登出", app.Logout, 13, Palette.Muted, new Color(0, 0, 0, 0), new Color(0, 0, 0, 0));
+            // Leaving the game asks once: the first click arms it, the second quits (resets after 3 s).
+            Button quit = null;
+            float armedAt = -9f;
+            quit = Ui.Button(links, "離開遊戲", () =>
+            {
+                if (Time.unscaledTime - armedAt > 3f) { armedAt = Time.unscaledTime; quit.SetCaption("確定離開？"); quit.GetComponentInChildren<Text>().color = Palette.Danger; return; }
+                app.Quit();
+            }, 13, Palette.Muted, new Color(0, 0, 0, 0), new Color(0, 0, 0, 0));
+            quit.gameObject.AddComponent<RevertCaption>().Arm(() => Time.unscaledTime - armedAt > 3f, "離開遊戲", Palette.Muted);
             var chips = new[] { ("金幣", $"{p.Gold}", Palette.Amber), ("裝備鑰匙", p.Keys.ToString(), Gear.GearKeyColor), ("武器鑰匙", p.WeaponKeys.ToString(), Gear.WeaponKeyColor) };
             for (int i = 0; i < chips.Length; i++)
             {
                 var (label, value, color) = chips[chips.Length - 1 - i];
-                var chip = Ui.Rect(bar, "Chip").Place(new Vector2(1, 0.5f), new Vector2(-270 - i * 112, 0), new Vector2(100, 46), new Vector2(1, 0.5f));
+                var chip = Ui.Rect(bar, "Chip").Place(new Vector2(1, 0.5f), new Vector2(-300 - i * 112, 0), new Vector2(100, 46), new Vector2(1, 0.5f));
                 Ui.Box(chip, color, "Mark").rectTransform.Place(new Vector2(0, 0.5f), Vector2.zero, new Vector2(2, 34), new Vector2(0, 0.5f));
                 Ui.Label(chip, label, 11, Palette.Muted).rectTransform.Place(new Vector2(0, 1), new Vector2(12, -2), new Vector2(90, 16), new Vector2(0, 1));
                 var icon = i == chips.Length - 1 ? Icons.Coin(chip, 22) : Icons.Key(chip, 22, color);
@@ -188,6 +197,7 @@ namespace RiftWard.Client
                 confirm.gameObject.SetActive(registering);
                 confirmLabel.gameObject.SetActive(registering);
                 submit.SetCaption(registering ? "註冊並進入遊戲" : "登入並進入遊戲");
+                Ui.DefaultButton = submit; Ui.DefaultWhileTyping = true;   // Enter in the form submits it
                 toggle.SetCaption(registering ? "已有帳號？登入" : "還沒有帳號？註冊");
             }
             submit = PrimaryButton(stack, "", () =>
@@ -354,7 +364,7 @@ namespace RiftWard.Client
                 tb.GetComponentInChildren<Text>().text = "";
                 Ui.Label(tb.transform, def.Name, 18, open ? (on ? accent : Palette.Bone) : Palette.Hex("6a6d71"), TextAnchor.UpperCenter, on).rectTransform
                     .Place(new Vector2(0.5f, 1), new Vector2(0, -7), new Vector2(120, 24), new Vector2(0.5f, 1));
-                Ui.Label(tb.transform, open ? def.Code : "未解鎖", 11, open ? (on ? accent : Palette.Muted) : Palette.Muted, TextAnchor.UpperCenter).rectTransform
+                Ui.Label(tb.transform, open ? def.Code : "未解鎖", 12, open ? (on ? accent : Palette.Muted) : Palette.Muted, TextAnchor.UpperCenter).rectTransform
                     .Place(new Vector2(0.5f, 1), new Vector2(0, -32), new Vector2(120, 14), new Vector2(0.5f, 1));
             }
             string tierNote = tier.Summary;
@@ -362,11 +372,12 @@ namespace RiftWard.Client
             if (nextTier < Defs.Difficulties.Length && !p.DifficultyOpen(selected, nextTier))
                 tierNote += $"在此區域通關{tier.Name}即可解鎖{Defs.Difficulty(nextTier).Name}。";
             if (app.InRoom && !app.IsLeader) tierNote = "難度由隊長選擇：" + tier.Name;
-            Ui.Label(stack, tierNote, 12, Palette.Muted).Sized(34);
+            Ui.Label(stack, tierNote, 13, Palette.Muted).Sized(36);
             Ui.Rect(stack, "Gap").Sized(10);
             var deploy = PrimaryButton(stack, "", app.Deploy).Sized(64);
             deploy.SetCaption(tierIndex > 0 ? $"部署          0{selected + 1} {region.Name} · {tier.Name}" : $"部署          0{selected + 1} {region.Name}");
             deploy.interactable = app.CanDeploy;
+            Ui.DefaultButton = deploy;   // Enter deploys
             Ui.Rect(stack, "Gap").Sized(12);
             Ui.Button(stack, chapter == 0 ? "故事與教學" : "第二章劇情回顧", () => { if (chapter == 0) ShowStory(0); else ShowPages(ChapterTwo, 0, "返回基地", app.ShowHome); }, 14, Palette.Muted).Sized(40);
             if (app.Net.Welcomed)
@@ -396,7 +407,8 @@ namespace RiftWard.Client
 
             // Briefing sheet over the live region backdrop.
             var brief = Ui.Box(body, new Color(0.063f, 0.067f, 0.075f, 0.92f), "Briefing").rectTransform;
-            brief.Place(new Vector2(1, 0), new Vector2(-40, 40), new Vector2(520, 500), new Vector2(1, 0));
+            // Top-aligned with the left column's title, so the two read as one layout.
+            brief.Place(new Vector2(1, 1), new Vector2(-40, -32), new Vector2(520, 500), new Vector2(1, 1));
             Ui.Box(brief, region.Accent, "Rule").rectTransform.Place(new Vector2(0.5f, 1), Vector2.zero, new Vector2(520, 2), new Vector2(0.5f, 1));
             var b2 = Ui.VStack(brief, 12);
             b2.Fill();
@@ -423,12 +435,17 @@ namespace RiftWard.Client
                 Ui.Label(cell.transform, $"{st.Mag} 發 · 換彈 {st.Reload:0.0} 秒", 12, Palette.Muted).rectTransform.Place(new Vector2(0, 1), new Vector2(14, -52), new Vector2(210, 18), new Vector2(0, 1));
             }
             Caps(b2, "生涯戰績").Sized(18);
+            if (p.Missions == 0)
+                Ui.Label(b2, "完成第一場任務後，這裡會顯示你的擊殺、最高波次與命中率。", 14, Palette.Muted).Sized(52);
+            else
+            {
             var record = Ui.HStack(b2, 10).Sized(52);
             foreach (var (label, value) in new[] { ("總擊殺", p.Kills.ToString()), ("最高波次", p.BestWave.ToString()), ("命中率", $"{p.Accuracy * 100:0}%"), ("勝場", $"{p.Victories} / {p.Missions}") })
             {
                 var cell = Ui.VStack(record, 2);
                 Ui.Label(cell, label, 12, Palette.Muted).Sized(18);
                 Ui.Label(cell, value, 22, Palette.Bone, TextAnchor.UpperLeft, true).Sized(28);
+            }
             }
             Caps(b2, Bindings.Summary()).Sized(40);
         }
@@ -1157,7 +1174,7 @@ namespace RiftWard.Client
                 PersonLabel(row, f, 15, 200);
                 var buttons = Ui.HStack(row, 6);
                 buttons.Place(new Vector2(1, 0.5f), Vector2.zero, new Vector2(150, 32), new Vector2(1, 0.5f));
-                Ui.Button(buttons, "拒絕", () => FriendRequest("/api/friends/respond", new Dictionary<string, object> { ["username"] = who, ["accept"] = false }, $"已拒絕 {who}"), 13, Palette.Muted);
+                Ui.DangerButton(buttons, "拒絕", () => FriendRequest("/api/friends/respond", new Dictionary<string, object> { ["username"] = who, ["accept"] = false }, $"已拒絕 {who}"), 13);
                 Ui.Button(buttons, "接受", () => FriendRequest("/api/friends/respond", new Dictionary<string, object> { ["username"] = who, ["accept"] = true }, $"{who} 已成為你的好友"), 13, Palette.Ink, Palette.Amber, Palette.Amber);
             }
             Widgets.Section(right, $"已送出（{outgoing.Count}）").Sized(22);
@@ -1168,7 +1185,7 @@ namespace RiftWard.Client
                 var row = Ui.Rect(right, "Outgoing").Sized(34);
                 PersonLabel(row, f, 14, 200);
                 Ui.Label(row, "等待回應", 12, Palette.Muted, TextAnchor.MiddleRight).rectTransform.Place(new Vector2(1, 0.5f), new Vector2(-78, 0), new Vector2(80, 30), new Vector2(1, 0.5f));
-                Ui.Button(row, "取消", () => FriendRequest("/api/friends/remove", new Dictionary<string, object> { ["username"] = who }, "已取消邀請"), 12, Palette.Muted)
+                Ui.DangerButton(row, "取消", () => FriendRequest("/api/friends/remove", new Dictionary<string, object> { ["username"] = who }, "已取消邀請"), 13)
                     .GetComponent<RectTransform>().Place(new Vector2(1, 0.5f), Vector2.zero, new Vector2(64, 28), new Vector2(1, 0.5f));
             }
             if (fetch) LoadFriends();
@@ -1205,16 +1222,16 @@ namespace RiftWard.Client
             status.rectTransform.Place(new Vector2(0, 1), new Vector2(36, -32), new Vector2(240, 18), new Vector2(0, 1));
             Button remove = null;
             bool armed = false;
-            remove = Ui.Button(rt, "移除", () =>
+            remove = Ui.DangerButton(rt, "移除", () =>
             {
-                if (!armed) { armed = true; remove.SetCaption("確定移除？"); remove.GetComponentInChildren<Text>().color = Palette.Danger; return; }
+                if (!armed) { armed = true; remove.SetCaption("確定移除？"); return; }
                 FriendRequest("/api/friends/remove", new Dictionary<string, object> { ["username"] = who }, $"已將 {who} 移出好友");
-            }, 12, Palette.Muted, new Color(0, 0, 0, 0), new Color(0, 0, 0, 0));
+            }, 13);
             remove.GetComponent<RectTransform>().Place(new Vector2(1, 0.5f), new Vector2(-12, 0), new Vector2(84, 30), new Vector2(1, 0.5f));
-            var invite = Ui.Button(rt, "邀請", () => { app.InviteFriend(id); SocialStatus($"已向 {who} 送出組隊邀請"); }, 14, Palette.Teammate, new Color(0, 0, 0, 0), Palette.Teammate);
+            var invite = Ui.Button(rt, "邀請", () => { app.InviteFriend(id); SocialStatus($"已向 {who} 送出組隊邀請"); }, 14, Palette.Teammate, null, Palette.Teammate);
             invite.GetComponent<RectTransform>().Place(new Vector2(1, 0.5f), new Vector2(-104, 0), new Vector2(76, 32), new Vector2(1, 0.5f));
             PaintInvite(invite, app.Net.Welcomed && FriendPresence.StateOf(id) != PresenceState.Offline);
-            var whisper = Ui.Button(rt, "私訊", () => ShowWhisper(who), 14, Palette.Hex("ff8fd0"), new Color(0, 0, 0, 0), Palette.Line);
+            var whisper = Ui.Button(rt, "私訊", () => ShowWhisper(who), 14, Palette.Hex("ff8fd0"));
             whisper.GetComponent<RectTransform>().Place(new Vector2(1, 0.5f), new Vector2(-188, 0), new Vector2(68, 32), new Vector2(1, 0.5f));
             friendRows[id] = (status, dot, invite, rt, who ?? "");
         }
@@ -1222,7 +1239,8 @@ namespace RiftWard.Client
         static void PaintInvite(Button invite, bool can)
         {
             invite.interactable = can;
-            invite.GetComponentInChildren<Text>().color = can ? Palette.Teammate : Palette.Hex("5d6064");
+            // Disabled dimming is ButtonFeel's job; here only the colour of an available invite.
+            invite.GetComponentInChildren<Text>().color = can ? Palette.Teammate : Palette.Muted;
             invite.GetComponent<Outline>().effectColor = can ? Palette.Teammate : Palette.Line;
         }
 
@@ -1399,6 +1417,20 @@ namespace RiftWard.Client
             chatList.parent.gameObject.AddComponent<LayoutElement>().flexibleHeight = 1;
             if (ChatLog.Lines.Count == 0) Ui.Label(chatList, app.Net.Welcomed ? "還沒有訊息，打聲招呼吧！" : "連線到遊戲伺服器後才能聊天。", 14, Palette.Muted).Sized(30);
             foreach (var line in ChatLog.Lines) ChatRow(line);
+            // Online friends, one click away from a private message.
+            var online = (friendData?.Arr("friends") ?? new List<object>()).OfType<Dictionary<string, object>>()
+                .Where(f => FriendPresence.StateOf(f.Int("id")) != PresenceState.Offline).Take(5).ToList();
+            var whisperRow = Ui.HStack(left, 6).Sized(30);
+            whisperRow.GetComponent<HorizontalLayoutGroup>().childForceExpandWidth = false;
+            Ui.Label(whisperRow, "私訊", 13, Palette.Hex("ff8fd0"), TextAnchor.MiddleLeft).gameObject.AddComponent<LayoutElement>().preferredWidth = 40;
+            if (online.Count == 0)
+                Ui.Label(whisperRow, app.Net.Welcomed ? "目前沒有在線的好友 · 也可以輸入 /w 帳號 訊息" : "連線後可私訊在線好友", 13, Palette.Muted, TextAnchor.MiddleLeft).gameObject.AddComponent<LayoutElement>().flexibleWidth = 1;
+            foreach (var f in online)
+            {
+                string who = f.Str("username");
+                var chip = Ui.Button(whisperRow, who, () => ShowWhisper(who), 13, Palette.Bone);
+                chip.gameObject.AddComponent<LayoutElement>().preferredWidth = Mathf.Max(72, who.Length * 9 + 24);
+            }
             var send = Ui.HStack(left, 8).Sized(44);
             send.GetComponent<HorizontalLayoutGroup>().childForceExpandWidth = false;
             Button channelButton = null;
@@ -1641,8 +1673,6 @@ namespace RiftWard.Client
             characterStatus.rectTransform.Place(new Vector2(1, 1), new Vector2(0, -10), new Vector2(520, 20), new Vector2(1, 1));
             SupplyPanel(pad, 0f, 0.5f, "gear");
             SupplyPanel(pad, 0.5f, 1f, "weapon");
-            var log = Ui.Button(pad, "抽卡紀錄", () => ShowGachaHistory(""), 15, Palette.Bone, new Color(0, 0, 0, 0), Palette.Line);
-            log.GetComponent<RectTransform>().Place(new Vector2(1, 1), new Vector2(0, -40), new Vector2(132, 34), new Vector2(1, 1));
         }
 
         // ---- gacha history (each account sees only its own draws; the server keeps the latest 500)
@@ -1773,7 +1803,10 @@ namespace RiftWard.Client
             var ten = Ui.Button(draws, "抽 10 次", () => { drawPool = pool; Draw(10); }, 17, Palette.Amber);
             ten.interactable = keys >= 10;
             bool mine = drawPool == pool && lastDraw.Count > 0;
-            Caps(s, mine ? "本次獲得" : "最近獲得").Sized(20);
+            var recentHead = Ui.Rect(s, "RecentHead").Sized(22);
+            Caps(recentHead, mine ? "本次獲得" : "最近獲得").rectTransform.Fill();
+            var history = Ui.Button(recentHead, "完整紀錄 →", () => ShowGachaHistory(pool), 13, Palette.Amber, new Color(0, 0, 0, 0), new Color(0, 0, 0, 0));
+            history.GetComponent<RectTransform>().Place(new Vector2(1, 0.5f), Vector2.zero, new Vector2(110, 22), new Vector2(1, 0.5f));
             if (!mine) { Ui.Label(s, "尚無紀錄", 13, Palette.Line).Sized(22); return; }
             foreach (var item in lastDraw)
             {

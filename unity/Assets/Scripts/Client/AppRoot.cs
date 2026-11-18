@@ -507,11 +507,26 @@ namespace RiftWard.Client
             music.volume = Mathf.MoveTowards(music.volume, target, Time.deltaTime * (target > 0 ? 0.25f : 0.6f));
         }
 
+        /// Enter presses the page's main action (Ui.DefaultButton) when nothing else wants the key.
+        void PressDefaultOnEnter()
+        {
+            var b = Ui.DefaultButton;
+            if (b == null || !(Input.GetKeyDown(KeyCode.Return) || Input.GetKeyDown(KeyCode.KeypadEnter))) return;
+            if (!b.isActiveAndEnabled || !b.interactable || ChatHud.Typing) return;
+            if (!Ui.DefaultWhileTyping)
+            {
+                var focused = UnityEngine.EventSystems.EventSystem.current?.currentSelectedGameObject;
+                if (focused != null && focused.GetComponent<UnityEngine.UI.InputField>() != null) return;
+            }
+            b.onClick.Invoke();
+        }
+
         void Update()
         {
             UpdateMusic();
             Net.Poll();
             Overlay.Update();
+            PressDefaultOnEnter();
             Chat.Update(inNetMission, Client.Sim != null && Client.Sim.State == MissionState.Playing && !Client.Paused && !Client.Sim.BuffPending);
             if (!training || Client.Sim == null) return;
             var me = Client.Sim.Actors[Client.LocalId];

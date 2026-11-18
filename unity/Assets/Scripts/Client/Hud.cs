@@ -91,7 +91,7 @@ namespace RiftWard.Client
                 Ui.Box(bossRoot, new Color(0.04f, 0.045f, 0.05f, 0.8f), "Tick").rectTransform.Place(new Vector2(0, 0), new Vector2(16 + 568f * i / 10f, 12), new Vector2(2, 8), new Vector2(0.5f, 0));
 
             banner = Ui.Label(root, "", 40, Palette.Bone, TextAnchor.MiddleCenter, true).Outlined();
-            banner.rectTransform.Place(new Vector2(0.5f, 1), new Vector2(0, -230), new Vector2(900, 56));
+            banner.rectTransform.Place(new Vector2(0.5f, 1), new Vector2(0, -150), new Vector2(900, 56));   // top third: clear of the crosshair, ping wheel and status line
 
             // ---- top-right radar and kill feed
             radar = Ui.Rect(root, "Radar").Place(new Vector2(1, 1), new Vector2(-36, -28), new Vector2(RadarSize, RadarSize), new Vector2(1, 1));
@@ -114,9 +114,10 @@ namespace RiftWard.Client
             var me = Ui.Box(radar, Palette.Amber, "Me");
             me.rectTransform.Place(new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(9, 9));
             me.rectTransform.localRotation = Quaternion.Euler(0, 0, 45);
-            var north = Mono(radar, "雷達 · 28m", 12, Palette.Hex("c9c5bb"));
-            north.alignment = TextAnchor.UpperCenter;
-            north.rectTransform.Place(new Vector2(0.5f, 0), new Vector2(0, -4), new Vector2(180, 18), new Vector2(0.5f, 1));
+            Ui.Box(radar, new Color(0.04f, 0.045f, 0.05f, 0.62f), "CaptionPlate").rectTransform.Place(new Vector2(0.5f, 0), new Vector2(0, -4), new Vector2(104, 20), new Vector2(0.5f, 1));
+            var north = Mono(radar, "雷達 · 28m", 13, Palette.Bone);
+            north.alignment = TextAnchor.MiddleCenter;
+            north.rectTransform.Place(new Vector2(0.5f, 0), new Vector2(0, -4), new Vector2(180, 20), new Vector2(0.5f, 1));
             killFeed = Ui.Rect(root, "KillFeed").Place(new Vector2(1, 1), new Vector2(-36, -RadarSize - 54), new Vector2(300, 200), new Vector2(1, 1));
 
             comboCaption = Mono(root, "連殺", 13, Palette.Hex("c9c5bb"));
@@ -153,7 +154,8 @@ namespace RiftWard.Client
 
             // ---- bottom-left vitals panel
             var vitals = Panel(root, new Vector2(0, 0), new Vector2(28, 24), new Vector2(392, 132), new Vector2(0, 0), Palette.Bone);
-            Ui.Label(vitals, "護盾", 12, Palette.Hex("c9c5bb")).Outlined().rectTransform.Place(new Vector2(0, 1), new Vector2(18, -14), new Vector2(60, 16), new Vector2(0, 1));
+            vitals.localScale = Vector3.one * PanelScale;   // slimmer: keeps the floor around your feet visible
+            Ui.Label(vitals, "護盾", 15, Palette.Hex("c9c5bb")).Outlined().rectTransform.Place(new Vector2(0, 1), new Vector2(18, -14), new Vector2(60, 16), new Vector2(0, 1));
             shieldValue = Mono(vitals, "100", 38, Palette.Bone);
             shieldValue.rectTransform.Place(new Vector2(0, 1), new Vector2(16, -28), new Vector2(110, 44), new Vector2(0, 1));
             shieldMax = Mono(vitals, "/ 100", 14, Palette.Hex("c9c5bb"));
@@ -162,16 +164,16 @@ namespace RiftWard.Client
             shieldBar.Root.Place(new Vector2(0, 1), new Vector2(18, -78), new Vector2(356, 7), new Vector2(0, 1));
             for (int i = 1; i < 10; i++)
                 Ui.Box(vitals, new Color(0.04f, 0.045f, 0.05f, 0.85f), "Seg").rectTransform.Place(new Vector2(0, 1), new Vector2(18 + 356f * i / 10f, -78), new Vector2(2, 7), new Vector2(0.5f, 1));
-            skillLabel = Mono(vitals, "Q  手榴彈", 12, Palette.Bone);
+            skillLabel = Mono(vitals, "Q  手榴彈", 15, Palette.Bone);
             skillLabel.rectTransform.Place(new Vector2(0, 0), new Vector2(18, 26), new Vector2(110, 16), new Vector2(0, 0));
-            skillTime = Mono(vitals, "", 12, Palette.Hex("c9c5bb"));
+            skillTime = Mono(vitals, "", 15, Palette.Hex("c9c5bb"));
             skillTime.alignment = TextAnchor.LowerRight;
             skillTime.rectTransform.Place(new Vector2(0, 0), new Vector2(186, 26), new Vector2(60, 16), new Vector2(1, 0));
             skillBar = new Ui.Bar(vitals, new Color(1, 1, 1, 0.15f), Palette.Amber);
             skillBar.Root.Place(new Vector2(0, 0), new Vector2(18, 16), new Vector2(168, 3), new Vector2(0, 0));
-            dashLabel = Mono(vitals, "Shift  衝刺", 12, Palette.Bone);
+            dashLabel = Mono(vitals, "Shift  衝刺", 15, Palette.Bone);
             dashLabel.rectTransform.Place(new Vector2(0, 0), new Vector2(206, 26), new Vector2(110, 16), new Vector2(0, 0));
-            dashTime = Mono(vitals, "", 12, Palette.Hex("c9c5bb"));
+            dashTime = Mono(vitals, "", 15, Palette.Hex("c9c5bb"));
             dashTime.alignment = TextAnchor.LowerRight;
             dashTime.rectTransform.Place(new Vector2(0, 0), new Vector2(374, 26), new Vector2(60, 16), new Vector2(1, 0));
             dashBar = new Ui.Bar(vitals, new Color(1, 1, 1, 0.15f), Palette.Hex("82aaff"));
@@ -179,17 +181,18 @@ namespace RiftWard.Client
 
             // ---- bottom-right weapon panel
             var weapon = Panel(root, new Vector2(1, 0), new Vector2(-28, 24), new Vector2(330, 132), new Vector2(1, 0), Palette.Amber);
+            weapon.localScale = Vector3.one * PanelScale;
             for (int i = 0; i < 2; i++)
             {
                 slotChips[i] = Ui.Box(weapon, new Color(1, 1, 1, 0.06f), "Slot");
                 slotChips[i].rectTransform.Place(new Vector2(0, 1), new Vector2(18 + i * 150, -12), new Vector2(144, 22), new Vector2(0, 1));
-                slotLabels[i] = Mono(slotChips[i].transform, "", 12, Palette.Bone);
+                slotLabels[i] = Mono(slotChips[i].transform, "", 15, Palette.Bone);
                 slotLabels[i].alignment = TextAnchor.MiddleLeft;
                 slotLabels[i].rectTransform.Fill().offsetMin = new Vector2(8, 0);
             }
-            weaponName = Ui.Label(weapon, "", 14, Palette.Bone, TextAnchor.UpperLeft, true).Outlined();
+            weaponName = Ui.Label(weapon, "", 16, Palette.Bone, TextAnchor.UpperLeft, true).Outlined();
             weaponName.rectTransform.Place(new Vector2(0, 1), new Vector2(18, -42), new Vector2(200, 20), new Vector2(0, 1));
-            weaponRarity = Mono(weapon, "", 13, Palette.Hex("c9c5bb"));
+            weaponRarity = Mono(weapon, "", 15, Palette.Hex("c9c5bb"));
             weaponRarity.rectTransform.Place(new Vector2(0, 1), new Vector2(18, -62), new Vector2(240, 18), new Vector2(0, 1));
             ammo = Mono(weapon, "12", 56, Palette.Bone);
             ammo.alignment = TextAnchor.LowerRight;
@@ -199,19 +202,24 @@ namespace RiftWard.Client
             ammoMax.rectTransform.Place(new Vector2(1, 0), new Vector2(-70, 22), new Vector2(60, 24), new Vector2(0, 0));
             reloadBar = new Ui.Bar(weapon, new Color(1, 1, 1, 0.15f), Palette.Bone);
             reloadBar.Root.Place(new Vector2(0, 0), new Vector2(18, 14), new Vector2(294, 3), new Vector2(0, 0));
-            hint = Mono(root, "", 13, Palette.Hex("d6d1c6"));
-            hint.alignment = TextAnchor.LowerRight;
-            hint.rectTransform.Place(new Vector2(1, 0), new Vector2(-30, 160), new Vector2(560, 18), new Vector2(1, 0));
+            hintPlate = Ui.Box(root, new Color(0.04f, 0.045f, 0.05f, 0.55f), "HintPlate").rectTransform;
+            hintPlate.Place(new Vector2(1, 0), new Vector2(-28, 146), new Vector2(300, 22), new Vector2(1, 0));
+            hint = Mono(root, "", 13, Palette.Bone);
+            hint.alignment = TextAnchor.MiddleRight;
+            hint.rectTransform.Place(new Vector2(1, 0), new Vector2(-38, 146), new Vector2(620, 22), new Vector2(1, 0));
 
             revive = Ui.Label(root, "", 20, Palette.Hex("7dff9a"), TextAnchor.MiddleCenter).Outlined();
             revive.rectTransform.Place(new Vector2(0.5f, 0), new Vector2(0, 230), new Vector2(720, 30));
             toastPill = Ui.Box(root, new Color(0.04f, 0.045f, 0.05f, 0.75f), "Toast").rectTransform;
-            toastPill.Place(new Vector2(0.5f, 0), new Vector2(0, 176), new Vector2(360, 34));
+            toastPill.Place(new Vector2(0.5f, 0), new Vector2(0, 150), new Vector2(360, 34));   // system prompts: bottom centre, between the panels
             Ui.Box(toastPill, Palette.Amber, "Mark").rectTransform.Place(new Vector2(0, 0.5f), Vector2.zero, new Vector2(3, 34), new Vector2(0, 0.5f));
             toast = Ui.Label(toastPill, "", 15, Palette.Amber, TextAnchor.MiddleCenter);
             toast.rectTransform.Fill();
             floaterLayer = Ui.Rect(root, "Floaters").Fill();
         }
+
+        const float PanelScale = 0.88f;
+        RectTransform hintPlate;
 
         static RectTransform Panel(Transform root, Vector2 anchor, Vector2 pos, Vector2 size, Vector2 pivot, Color accent)
         {
@@ -466,7 +474,7 @@ namespace RiftWard.Client
             var label = Ui.Label(row, text, 13, Palette.Bone, TextAnchor.MiddleRight);
             label.rectTransform.Fill().offsetMax = new Vector2(-10, 0);
             feed.Insert(0, (row, label, 4f));
-            while (feed.Count > 6) { Object.Destroy(feed[feed.Count - 1].row.gameObject); feed.RemoveAt(feed.Count - 1); }
+            while (feed.Count > 4) { Object.Destroy(feed[feed.Count - 1].row.gameObject); feed.RemoveAt(feed.Count - 1); }
         }
 
         void AddDamageArc(float angle)
@@ -653,6 +661,7 @@ namespace RiftWard.Client
                 if (Changed(hint, (thirdPerson ? 1 : 0) | ((long)Bindings.Key(Bindings.Action.Reload) << 1) | ((long)Bindings.Key(Bindings.Action.View) << 20) | (melee ? 1L << 40 : 0)))
                     hint.text = melee ? $"左鍵 揮砍  ·  右鍵 格擋  ·  {Bindings.Name(Bindings.Action.View)} {(thirdPerson ? "第三人稱" : "第一人稱")}  ·  Esc 選單"
                         : $"{Bindings.Name(Bindings.Action.Reload)} 換彈  ·  右鍵 瞄準  ·  {Bindings.Name(Bindings.Action.View)} {(thirdPerson ? "第三人稱" : "第一人稱")}  ·  Esc 選單";
+                hintPlate.sizeDelta = new Vector2(hint.preferredWidth + 20f, 22f);   // the plate hugs the text
                 revive.text = "";
                 if (!local.Alive && sim.Actors.Count > 1)
                     revive.text = $"你已倒地 · 等待隊友按住 {Bindings.Name(Bindings.Action.Interact)} 救援  {Mathf.RoundToInt(100 * local.Revive / Defs.ReviveTime)}%";
