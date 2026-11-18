@@ -98,6 +98,8 @@ namespace RiftWard.Sim
         public float Speed = Defs.BaseSpeed, DamageMult = 1f, RateMult = 1f, ReloadMult = 1f, SkillMult = 1f;
         public int MagBonus;
         public float Regen, Critical, Lifesteal, Explode;
+        /// Healing still available from kills and hits (refills over time, see Defs.HealPerSecond).
+        public float HealBudget;
         public float SkillCooldown, Revive;
 
         // Companion gadgets (mission upgrades)

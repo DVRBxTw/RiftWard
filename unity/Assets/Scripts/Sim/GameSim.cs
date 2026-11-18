@@ -81,7 +81,7 @@ namespace RiftWard.Sim
             a.Hp = a.MaxHp = 100f;
             a.Yaw = 0; a.VerticalVelocity = 0; a.FireCooldown = 0; a.DashCooldown = 0; a.DashLeft = 0;
             a.Speed = Defs.BaseSpeed; a.DamageMult = 1; a.RateMult = 1; a.ReloadMult = 1; a.SkillMult = 1;
-            a.MagBonus = 0; a.Regen = 0; a.Critical = 0; a.Lifesteal = 0; a.Explode = 0;
+            a.MagBonus = 0; a.Regen = 0; a.Critical = 0; a.Lifesteal = 0; a.Explode = 0; a.HealBudget = 0;
             a.SkillCooldown = 0; a.Revive = 0; a.Slot = 0; a.Reload = 0;
             a.StatKills = 0; a.StatHeadshots = 0; a.StatShots = 0; a.StatHits = 0;
             a.StatDowns = 0; a.StatRevives = 0; a.StatBossKills = 0; a.StatEliteKills = 0; a.WasAlive = true; a.AimFlags = 0;
@@ -753,7 +753,7 @@ namespace RiftWard.Sim
                 if (best.Hp <= 0)
                 {
                     KillEnemy(best, a.Id); killed = true;
-                    if (a.WeaponId == "shotgun") a.Hp = Mathf.Min(a.MaxHp, a.Hp + PerkStrength(a, 6f));
+                    if (a.WeaponId == "shotgun") Heal(a, PerkStrength(a, 6f));
                     if (a.WeaponId == "pistol" && PerkStrength(a, 1f) > 0) a.PerkHaste = 2f;
                 }
             }
@@ -799,7 +799,7 @@ namespace RiftWard.Sim
                 float dealt = damage * DamageMultiplier(e, (chest - eye).normalized, false);
                 e.Hp -= dealt;
                 bool killed = false;
-                a.Hp = Mathf.Min(a.MaxHp, a.Hp + PerkStrength(a, 2f));   // 嗜能之刃
+                Heal(a, PerkStrength(a, 2f));   // 嗜能之刃
                 if (e.Hp <= 0) { KillEnemy(e, a.Id); killed = true; }
                 Shots.Add(new ShotEvent { Shooter = a.Id, Origin = eye, End = chest, Hit = true, Dealt = dealt, Killed = killed });
             }
@@ -847,7 +847,7 @@ namespace RiftWard.Sim
             if (Actors.TryGetValue(shooter, out var a) && a.Alive)
             {
                 a.StatKills++;
-                if (a.Lifesteal > 0) a.Hp = Mathf.Min(a.MaxHp, a.Hp + a.Lifesteal);
+                if (a.Lifesteal > 0) Heal(a, a.Lifesteal);
                 if (a.Explode > 0) Explode(e.Position + Vector3.up, 3.2f, a.Explode, -1, new Color32(0xff, 0xb3, 0x47, 255));
             }
             if (e.Boss) SpawnPickup(e.Position, PickupKind.Health);
@@ -1316,11 +1316,21 @@ namespace RiftWard.Sim
 
         // ------------------------------------------------------------ players: weapons, skill, revive, admin
 
+        /// Kill / hit healing, limited by the actor's heal budget.
+        public static void Heal(Actor a, float amount)
+        {
+            float take = Mathf.Min(amount, a.HealBudget);
+            if (take <= 0) return;
+            a.HealBudget -= take;
+            a.Hp = Mathf.Min(a.MaxHp, a.Hp + take);
+        }
+
         void UpdatePlayers(float dt)
         {
             foreach (var a in Actors.Values)
             {
                 Inputs.TryGetValue(a.Id, out var input);
+                a.HealBudget = Mathf.Min(a.MaxHp * Defs.HealBank, a.HealBudget + a.MaxHp * Defs.HealPerSecond * dt);
                 a.SkillCooldown = Mathf.Max(0, a.SkillCooldown - dt);
                 if (a.IsAdmin && a.Admin.God) a.Hp = a.MaxHp;
                 if (a.IsAdmin && a.Admin.InfiniteAmmo && a.Alive) { a.Ammo = a.Mag; a.Reload = 0; }
@@ -1468,7 +1478,8 @@ namespace RiftWard.Sim
                 (i != Defs.BuffMissile || a.MissileLevel < Defs.MaxGadgetLevel) &&
                 (i != Defs.BuffLightning || a.LightningLevel < Defs.MaxGadgetLevel) &&
                 (i != Defs.BuffMagnet || a.Magnet < 10f) &&
-                (i != Defs.BuffArmor || a.Armor < Defs.MaxArmor)).OrderBy(_ => rng.Next()).Take(3).ToArray();
+                (i != Defs.BuffArmor || a.Armor < Defs.MaxArmor) &&
+                (i != 8 || a.Lifesteal < Defs.MaxLifesteal)).OrderBy(_ => rng.Next()).Take(3).ToArray();
             for (int i = 0; i < pool.Length; i++)
             {
                 float roll = Rand01();
@@ -1512,7 +1523,7 @@ namespace RiftWard.Sim
                     a.ReloadMult = Mathf.Max(0.4f, a.ReloadMult * 0.85f);
                     break;
                 case 7: a.SkillMult = Mathf.Max(0.35f, a.SkillMult * (1f - 0.2f * m)); break;
-                case 8: a.Lifesteal += Mathf.Round(4 * m); break;
+                case 8: a.Lifesteal = Mathf.Min(Defs.MaxLifesteal, a.Lifesteal + Mathf.Round(4 * m)); break;
                 case 9: a.Explode += Mathf.Round(35 * m); break;
                 case Defs.BuffDrone: a.Drones = Mathf.Min(Defs.MaxDrones, a.Drones + steps); break;
                 case Defs.BuffDroneDamage: a.DroneDamageMult += 0.35f * m; break;

@@ -182,6 +182,26 @@ namespace RiftWard.Tests
         }
 
         [Test]
+        public void LifestealIsCappedAndRateLimited()
+        {
+            var sim = NewMission();
+            var a = sim.Actors[1];
+            for (int i = 0; i < 20; i++) sim.ApplyBuff(1, 8 + 200);
+            Assert.AreEqual(Defs.MaxLifesteal, a.Lifesteal, 0.01f);
+            // Twenty kills in one instant heal at most the banked budget, not 20 x lifesteal.
+            a.Hp = 10f;
+            sim.Tick(5f);
+            float before = a.Hp;
+            for (int i = 0; i < 20; i++)
+            {
+                var e = PlaceEnemy(sim, new Vector3(0, 0, 6), 1f);
+                sim.Fire(1, e.Position + Vector3.up);
+            }
+            Assert.LessOrEqual(a.Hp - before, a.MaxHp * Defs.HealBank + 0.01f);
+            Assert.Greater(a.Hp, before);
+        }
+
+        [Test]
         public void BossWeakPointsAreChestAndLegs()
         {
             var sim = NewMission();

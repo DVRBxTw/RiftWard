@@ -208,7 +208,7 @@ namespace RiftWard.Sim
             new BuffDef("弱點分析", "{0}% 機率造成雙倍傷害", 20),
             new BuffDef("擴充彈匣", "彈匣 +{0} 發，換彈加快 15%", 4),
             new BuffDef("戰術冷卻", "手榴彈冷卻 -{0}%", 20),
-            new BuffDef("吸能模組", "每次擊殺恢復 {0} 護盾", 4),
+            new BuffDef("吸能模組", "每次擊殺恢復 {0} 護盾（回復速度有上限）", 4),
             new BuffDef("爆裂彈頭", "擊殺時爆炸，造成 {0} 範圍傷害", 35),
             new BuffDef("僚機無人機", "無人機 +{0} 架，自動射擊附近敵人", 1),
             new BuffDef("無人機火控", "無人機傷害 +{0}%", 35),
@@ -229,6 +229,9 @@ namespace RiftWard.Sim
 
         public const int BuffOrbit = 15, BuffMine = 16, BuffMissile = 17, BuffLightning = 18, BuffMagnet = 19, BuffArmor = 20;
         public const float MaxArmor = 0.6f;
+        /// Kill / hit healing (吸能模組, shotgun and saber perks) shares a budget: at most HealPerSecond of max HP per
+        /// second, banked up to HealBank, so stacked lifesteal can never outheal a late wave. 吸能模組 itself caps too.
+        public const float HealPerSecond = 0.08f, HealBank = 0.15f, MaxLifesteal = 20f;
         public const int MaxGadgetLevel = 5;
         public const float BaseMagnet = 2.5f, EliteEvery = 3;
 
