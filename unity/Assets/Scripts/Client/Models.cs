@@ -55,6 +55,12 @@ namespace RiftWard.Client
             Build.Cube(head, new Vector3(0, 0.36f, 0.02f), new Vector3(0.42f, 0.06f, 0.46f), dark);
             Build.Cube(head, new Vector3(0, 0.18f, 0.2f), new Vector3(0.32f, 0.12f, 0.02f), Palette.Hex("1a2a33"));
             Build.Cube(head, new Vector3(0, 0.2f, 0.21f), new Vector3(0.3f, 0.06f, 0.02f), color, 2f);
+            // Detail: shoulder lamps and a helmet antenna in the soldier colour, backpack vents and a belt light.
+            foreach (float x in new[] { -0.42f, 0.42f }) Build.Cube(torso, new Vector3(x, 0.63f, 0.12f), new Vector3(0.08f, 0.04f, 0.06f), color, 3f, false);
+            Build.Cube(head, new Vector3(-0.17f, 0.42f, -0.08f), new Vector3(0.02f, 0.2f, 0.02f), dark, 0f, false);
+            Build.Cube(head, new Vector3(-0.17f, 0.53f, -0.08f), new Vector3(0.04f, 0.04f, 0.04f), color, 4f, false).AddComponent<Spinner>().Blink = 1.2f;
+            for (int i = 0; i < 3; i++) Build.Cube(torso, new Vector3(0, 0.2f + i * 0.09f, -0.375f), new Vector3(0.3f, 0.025f, 0.02f), Palette.Hex("15171a"), 0f, false);
+            Build.Cube(torso, new Vector3(0.24f, 0.03f, 0.195f), new Vector3(0.06f, 0.04f, 0.02f), color, 2.5f, false);
             Joint(torso, "GunMount", new Vector3(0.1f, 0.36f, 0.3f)).localScale = Vector3.one * 1.35f;
             CharacterRig.Attach(root.gameObject, CharacterRig.Style.Soldier);
             return root.gameObject;
@@ -78,7 +84,12 @@ namespace RiftWard.Client
             }
             var torso = Joint(hips, "Torso", Vector3.zero);
             Build.Prim(PrimitiveType.Capsule, torso, new Vector3(0, 0.4f, 0), new Vector3(0.7f, 0.6f, 0.7f), shell);
-            Build.Cube(torso, new Vector3(0, 0.6f, 0.36f), new Vector3(0.12f, 0.12f, 0.03f), color, 2f);
+            // Chest core that pulses; a back vent for a heavier silhouette.
+            var core = Build.Cube(torso, new Vector3(0, 0.6f, 0.36f), new Vector3(0.16f, 0.16f, 0.04f), color, 3.5f, false);
+            core.AddComponent<Spinner>().Pulse = 0.2f;
+            Build.Cube(torso, new Vector3(0, 0.6f, 0.345f), new Vector3(0.26f, 0.26f, 0.02f), dark, 0f, false);
+            Build.Cube(torso, new Vector3(0, 0.55f, -0.37f), new Vector3(0.3f, 0.2f, 0.05f), dark, 0f, false);
+            Build.Cube(torso, new Vector3(0, 0.55f, -0.4f), new Vector3(0.2f, 0.04f, 0.02f), color, 2.5f, false);
             foreach (float x in new[] { -0.3f, 0.3f }) Build.Cube(torso, new Vector3(x, 0.5f, -0.3f), new Vector3(0.08f, 0.5f, 0.08f), Palette.Hex("2b2321"));
             var head = Joint(torso, "Head", new Vector3(0, 0.95f, 0));
             Build.Cube(head, new Vector3(0, 0.1f, 0.12f), new Vector3(0.56f, 0.38f, 0.5f), color);
@@ -98,19 +109,36 @@ namespace RiftWard.Client
                 case Defs.KindCharger:
                     foreach (float x in new[] { -0.22f, 0.22f })
                         Build.Cube(head, new Vector3(x, 0.4f, 0.1f), new Vector3(0.08f, 0.28f, 0.08f), color, 1.5f).transform.localRotation = Quaternion.Euler(25, 0, 0);
+                    // Spiked shoulders and a ram plate: built to run you down.
+                    foreach (float x in new[] { -0.5f, 0.5f })
+                        for (int i = 0; i < 3; i++)
+                            Build.Cube(torso, new Vector3(x, 0.98f, -0.12f + i * 0.12f), new Vector3(0.06f, 0.2f, 0.06f), Palette.Hex("e8d0c0"), 0f, false).transform.localRotation = Quaternion.Euler(-20, 0, x > 0 ? -25 : 25);
+                    Build.Cube(head, new Vector3(0, -0.02f, 0.4f), new Vector3(0.5f, 0.16f, 0.06f), Palette.Hex("3a2420"), 0f, false);
                     break;
                 case Defs.KindSniper:
                     Build.Cube(armR, new Vector3(0, -0.3f, 1.05f), new Vector3(0.07f, 0.07f, 0.9f), Palette.Hex("2a2140"));
+                    // Hooded head, a single glowing scope eye and a long rifle scope.
+                    Build.Cube(head, new Vector3(0, 0.22f, 0.05f), new Vector3(0.62f, 0.22f, 0.58f), Palette.Hex("2a2140"), 0f, false);
+                    Build.Cube(head, new Vector3(0.12f, 0.12f, 0.4f), new Vector3(0.1f, 0.1f, 0.04f), Palette.Hex("ff2244"), 5f, false).AddComponent<Spinner>().Pulse = 0.3f;
+                    Build.Cube(armR, new Vector3(0, -0.2f, 0.9f), new Vector3(0.09f, 0.09f, 0.3f), Palette.Hex("15121f"), 0f, false);
                     var laser = Build.Cube(armR, new Vector3(0, -0.3f, 13.5f), new Vector3(0.025f, 0.025f, 24f), Palette.Hex("ff2244"), 4f, false);
                     laser.name = "Laser";
                     laser.SetActive(false);
                     break;
                 case Defs.KindBomber:
                     Build.Sphere(torso, new Vector3(0, 0.65f, -0.35f), 0.64f, color, 1.5f);
+                    // Unstable core: a hot inner glow that flickers fast, wrapped in hazard bands.
+                    Build.Sphere(torso, new Vector3(0, 0.65f, -0.35f), 0.4f, Palette.Hex("fff1a0"), 6f, false).AddComponent<Spinner>().Blink = 5f;
+                    foreach (float y in new[] { 0.48f, 0.82f }) Build.Cube(torso, new Vector3(0, y, -0.35f), new Vector3(0.68f, 0.05f, 0.68f), Palette.Hex("1b1d20"), 0f, false);
                     break;
                 case Defs.KindShield:
                     var plate = Build.Cube(elbowL, new Vector3(0.1f, -0.1f, 0.4f), new Vector3(1.05f, 1.35f, 0.1f), color, 0.6f);
                     plate.GetComponent<MeshRenderer>().sharedMaterial = Build.Mat(color, 0.6f, 0.55f);
+                    // Frame around the energy plate and a heavy helmet.
+                    foreach (var (at, size) in new[] { (new Vector3(0.1f, 0.58f, 0.4f), new Vector3(1.1f, 0.07f, 0.13f)), (new Vector3(0.1f, -0.78f, 0.4f), new Vector3(1.1f, 0.07f, 0.13f)),
+                                                       (new Vector3(-0.43f, -0.1f, 0.4f), new Vector3(0.07f, 1.42f, 0.13f)), (new Vector3(0.63f, -0.1f, 0.4f), new Vector3(0.07f, 1.42f, 0.13f)) })
+                        Build.Cube(elbowL, at, size, Palette.Hex("2a3a55"), 0f, false);
+                    Build.Cube(head, new Vector3(0, 0.33f, 0.12f), new Vector3(0.62f, 0.12f, 0.56f), Palette.Hex("2a3a55"), 0f, false);
                     break;
                 case Defs.KindGuard:
                 {
@@ -940,6 +968,8 @@ namespace RiftWard.Client
                 Build.Cube(root, Vector3.zero, new Vector3(0.8f, 0.5f, 0.55f), Palette.Hex("7a4f22"));
                 Build.Cube(root, new Vector3(0, 0.27f, 0), new Vector3(0.84f, 0.1f, 0.6f), Palette.Hex("ffcf4a"), 2f);
                 Build.Cube(root, new Vector3(0, 0.05f, 0.28f), new Vector3(0.14f, 0.18f, 0.03f), Palette.Hex("ffcf4a"), 3f, false);
+                foreach (float x in new[] { -0.3f, 0.3f }) Build.Cube(root, new Vector3(x, 0, 0), new Vector3(0.06f, 0.52f, 0.57f), Palette.Hex("3a2a18"));   // iron bands
+                Art.Beacon(root, Palette.Hex("ffcf4a"), true);
                 return root.gameObject;
             }
             Color color = kind == PickupKind.Health ? Palette.Hex("5dff8f") : Palette.Hex("ffd166");
@@ -949,6 +979,8 @@ namespace RiftWard.Client
                 Build.Cube(root, Vector3.zero, new Vector3(0.55f, 0.14f, 0.14f), Color.white, 0.6f);
                 Build.Cube(root, Vector3.zero, new Vector3(0.14f, 0.55f, 0.14f), Color.white, 0.6f);
             }
+            else Build.Cube(root, new Vector3(0, 0.235f, 0), new Vector3(0.3f, 0.03f, 0.3f), Palette.Hex("3a2a10"));   // ammo crate lid
+            Art.Beacon(root, color, kind == PickupKind.Health);
             return root.gameObject;
         }
 
@@ -1002,9 +1034,7 @@ namespace RiftWard.Client
                 foreach (var c in missile.GetComponentsInChildren<Collider>()) Object.Destroy(c);
                 return missile.gameObject;
             }
-            Color color = kind == BulletKind.Sniper ? Palette.Hex("c78bff") : kind == BulletKind.Grenade ? Palette.Hex("7dff9a") : Palette.Hex("ff5a3c");
-            float size = kind == BulletKind.Sniper ? 0.2f : kind == BulletKind.Grenade ? 0.4f : 0.32f;
-            return Build.Sphere(null, Vector3.zero, size, color, 1.4f, false);
+            return Art.Projectile(kind);
         }
     }
 }

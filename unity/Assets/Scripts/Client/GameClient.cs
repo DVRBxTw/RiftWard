@@ -546,6 +546,7 @@ namespace RiftWard.Client
             {
                 var spark = Build.Sphere(null, shot.End, shot.Head ? 0.6f : 0.4f, shot.Head ? Palette.Amber : Palette.Hex("ff8855"), 2.5f, false);
                 effects.Add((spark, 0.12f, Vector3.zero, 0));
+                Art.HitDebris(effects, shot.End, origin, shot.Head ? Palette.Amber : Palette.Hex("ff8855"), shot.Head);
             }
             if (shot.Shooter != LocalId) return;
             Hud.OnLocalShot(shot, Camera);
@@ -824,6 +825,7 @@ namespace RiftWard.Client
             Burst.Sphere(ex.Position, color, 0.7f, 3.5f, r * 0.4f, r * 1.5f, 0.3f);
             Burst.Sphere(ex.Position, Color.Lerp(color, Color.white, 0.4f), 0.5f, 4f, r * 0.2f, r * 1.2f, 0.18f);
             Burst.Ring(new Vector3(ex.Position.x, 0.06f, ex.Position.z), color, r * 1.8f, 0.4f);
+            if (ex.Position.y < 1.5f) Art.ScorchMark(ex.Position, r);
             for (int i = 0; i < 5; i++)
             {
                 var drift = new Vector3(UnityEngine.Random.Range(-0.6f, 0.6f), UnityEngine.Random.Range(1.2f, 2.2f), UnityEngine.Random.Range(-0.6f, 0.6f));
@@ -878,7 +880,7 @@ namespace RiftWard.Client
             {
                 if (!actorViews.TryGetValue(a.Id, out var view))
                 {
-                    view = Models.Soldier(a.Id == LocalId ? Palette.Player : Palette.Teammate);
+                    view = Models.Soldier(a.Id == LocalId ? Palette.Player : Art.TeamColors[Mathf.Abs(a.Id) % Art.TeamColors.Length]);
                     view.transform.position = a.Position;
                     actorViews[a.Id] = view;
                 }
@@ -915,7 +917,8 @@ namespace RiftWard.Client
                 if (!enemyViews.TryGetValue(e.Id, out var view))
                 {
                     view = Models.Enemy(e.Kind);
-                    if (e.Elite) Models.MakeElite(view);
+                    if (e.Elite) { Models.MakeElite(view); Art.GroundRing(view.transform, Palette.Hex("ffcf4a"), 0.8f); }
+                    if (e.Boss) Art.GroundRing(view.transform, Palette.Danger, 1.0f);
                     view.transform.position = e.Position;
                     enemyViews[e.Id] = view;
                     enemyParts[e.Id] = (CharacterRig.Find(view.transform, "Laser"), view.GetComponent<CharacterRig>(), CharacterRig.Find(view.transform, "ChargeGlow"));
@@ -925,7 +928,11 @@ namespace RiftWard.Client
                 if (chargeGlow != null) chargeGlow.gameObject.SetActive(e.State == 1 || e.State == 3);
                 view.transform.position = Vector3.Lerp(view.transform.position, e.Position, 1f - Mathf.Exp(-14f * dt));
                 view.transform.rotation = Quaternion.Euler(0, e.Yaw * Mathf.Rad2Deg, 0);
-                if (enemyHp.TryGetValue(e.Id, out var lastHp) && e.Hp < lastHp - 0.5f && enemyRig != null) enemyRig.Hit();
+                if (enemyHp.TryGetValue(e.Id, out var lastHp) && e.Hp < lastHp - 0.5f)
+                {
+                    if (enemyRig != null) enemyRig.Hit();
+                    HitFlash.On(view).Flash();
+                }
                 enemyHp[e.Id] = e.Hp;
                 if (laser != null) laser.gameObject.SetActive(e.State == 1);
             }
@@ -944,7 +951,7 @@ namespace RiftWard.Client
             {
                 if (!bulletViews.TryGetValue(b.Id, out var view)) bulletViews[b.Id] = view = Models.Projectile(b.Kind);
                 view.transform.position = b.Position;
-                if (b.Kind == BulletKind.Missile && b.Velocity.sqrMagnitude > 0.01f) view.transform.rotation = Quaternion.LookRotation(b.Velocity);
+                if (b.Velocity.sqrMagnitude > 0.01f) view.transform.rotation = Quaternion.LookRotation(b.Velocity);   // sniper rounds and missiles point along their flight
             }
             stale.Clear(); foreach (var key in bulletViews.Keys) if (!Sim.Bullets.ContainsKey(key)) stale.Add(key);
             foreach (var id in stale) { Destroy(bulletViews[id]); bulletViews.Remove(id); }

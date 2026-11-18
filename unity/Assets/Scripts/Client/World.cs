@@ -97,6 +97,16 @@ namespace RiftWard.Client
                 case 4: SkyDock(rng); break;
                 default: Throne(rng); break;
             }
+            // Shared detail pass: trimmed cover, a varied floor and drifting motes.
+            bool industrial = region == 1 || region == 4;
+            Color accent = Defs.Regions[region].Accent;
+            for (int i = 0; i < Defs.Covers.Length; i++)
+            {
+                var c = Defs.Covers[i];
+                Art.DressCover(dressing, new Vector3(c[0], c[4] / 2f, c[1]), new Vector3(c[2] * 2, c[4], c[3] * 2), look.Cover, accent, industrial);
+            }
+            Art.GroundVariation(dressing, new System.Random(77 + region), look.Ground);
+            Art.AmbientParticles(dressing, region);
         }
 
         float R(System.Random rng, float a, float b) => a + (float)rng.NextDouble() * (b - a);
