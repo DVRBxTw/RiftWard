@@ -131,6 +131,15 @@ namespace RiftWard.Client
                 case "reload_out": return Events(name, new[] { (0f, 0.05f, 520f, 0.7f, 0.5f), (0.06f, 0.12f, 180f, 0.85f, 0.35f) });
                 case "reload_in": return Events(name, new[] { (0f, 0.035f, 1500f, 0.5f, 0.6f), (0.04f, 0.06f, 300f, 0.6f, 0.5f) });
                 case "reload_rack": return Events(name, new[] { (0f, 0.05f, 900f, 0.75f, 0.5f), (0.12f, 0.04f, 1900f, 0.45f, 0.65f) });
+                // Empty magazine: a dry trigger click and the hammer falling on nothing.
+                case "dry": return Events(name, new[] { (0f, 0.02f, 2400f, 0.6f, 0.5f), (0.025f, 0.03f, 900f, 0.7f, 0.35f) });
+                // Weapon swap: cloth rustle, then the new gun's latch and grip.
+                case "switch": return Events(name, new[] { (0f, 0.08f, 200f, 0.95f, 0.22f), (0.09f, 0.03f, 1800f, 0.5f, 0.45f), (0.14f, 0.04f, 1100f, 0.6f, 0.4f) });
+                // Low-ammo tick that rides on each shot near the end of the magazine.
+                case "lowammo": return Events(name, new[] { (0f, 0.025f, 3000f, 0.1f, 0.2f) });
+                // Kill confirmation: a bright tap falling to a soft thud.
+                case "kill": return Events(name, new[] { (0f, 0.05f, 1320f, 0.05f, 0.35f), (0.045f, 0.11f, 520f, 0.15f, 0.45f) });
+                case "vent": return Hiss(name, 0.75f);
                 case "heartbeat": return Events(name, new[] { (0f, 0.09f, 55f, 0.1f, 0.9f), (0.22f, 0.08f, 50f, 0.1f, 0.7f) });
                 default: return Tone(name, 440, 0.05f, 0.1f, 0f);
             }
@@ -147,7 +156,7 @@ namespace RiftWard.Client
             string baseName = name.Split('#')[0];   // "#n" picks a variant: same sound, different noise
             bool rare = baseName.EndsWith("_rare");
             string weapon = baseName.Substring(5).Replace("_rare", "");
-            float duration = weapon == "sniper" ? 0.75f : weapon == "shotgun" ? 0.38f : weapon == "rifle" ? 0.16f : 0.12f;
+            float duration = weapon == "sniper" ? 0.75f : weapon == "shotgun" ? 0.38f : weapon == "rifle" ? 0.2f : 0.15f;
             int count = (int)(FireRate * duration);
             var data = new float[count];
             var rng = new System.Random(name.GetHashCode());
@@ -167,6 +176,10 @@ namespace RiftWard.Client
                         p1 += 2 * Mathf.PI * f * dt;
                         float tone = Mathf.Sin(p1) + 0.35f * Mathf.Sin(p1 * 3f) + 0.15f * Mathf.Sin(p1 * 5f);
                         v = tone * Mathf.Exp(-t * 26f) * 0.5f + noise * Mathf.Exp(-t * 300f) * 0.35f;
+                        // Body: a short low punch, plus the slide's metallic clack a moment later.
+                        p3 += 2 * Mathf.PI * (55f + 110f * Mathf.Exp(-t * 45f)) * dt;
+                        v += Mathf.Sin(p3) * Mathf.Exp(-t * 32f) * 0.45f;
+                        if (t > 0.022f) { p4 += 2 * Mathf.PI * 2350f * dt; v += (Mathf.Sin(p4) * 0.5f + noise * 0.5f) * Mathf.Exp(-(t - 0.022f) * 260f) * 0.3f; }
                         break;
                     }
                     case "rifle":
@@ -179,6 +192,10 @@ namespace RiftWard.Client
                         float fm = Mathf.Sin(p1 + 2.2f * Mathf.Sin(p1 * 2f) * Mathf.Exp(-t * 40f));
                         v = (fm + Mathf.Sin(p2) * 0.7f) * Mathf.Exp(-t * 22f) * 0.42f + Mathf.Sin(p3) * Mathf.Exp(-t * 18f) * 0.55f
                             + noise * Mathf.Exp(-t * 160f) * 0.3f;
+                        // Weight: a sub-bass kick under the pulse and the bolt cycling right after.
+                        p4 += 2 * Mathf.PI * (42f + 70f * Mathf.Exp(-t * 35f)) * dt;
+                        v += Mathf.Sin(p4) * Mathf.Exp(-t * 20f) * 0.5f;
+                        if (t > 0.014f) { band += (noise - band) * 0.55f; v += (noise - band) * Mathf.Exp(-(t - 0.014f) * 220f) * 0.35f; }
                         break;
                     }
                     case "shotgun":
@@ -226,6 +243,28 @@ namespace RiftWard.Client
                 data[i] = Mathf.Clamp(v * attack, -1f, 1f) * 0.8f;
             }
             var clip = AudioClip.Create(name, count, 1, FireRate, false);
+            clip.SetData(data, 0);
+            return clip;
+        }
+
+        /// Steam vent: filtered noise that swells briefly and trails off.
+        static AudioClip Hiss(string name, float duration)
+        {
+            int count = (int)(Rate * duration);
+            var data = new float[count];
+            var rng = new System.Random(name.GetHashCode());
+            float low = 0, prev = 0;
+            for (int i = 0; i < count; i++)
+            {
+                float t = (float)i / Rate;
+                float n = (float)rng.NextDouble() * 2 - 1;
+                low += (n - low) * 0.35f;
+                float high = low - prev;   // keep the airy band, drop the rumble
+                prev = low;
+                float env = Mathf.Min(1f, t / 0.04f) * Mathf.Exp(-t * 4.5f);
+                data[i] = (high * 1.6f + low * 0.25f) * env * 0.5f;
+            }
+            var clip = AudioClip.Create(name, count, 1, Rate, false);
             clip.SetData(data, 0);
             return clip;
         }

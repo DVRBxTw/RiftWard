@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using RiftWard.Sim;
 using UnityEngine;
 
@@ -171,9 +172,17 @@ namespace RiftWard.Client
 
         /// First-person weapon models, parented to the camera. Returns the muzzle transform.
         /// Each model names its magazine "Mag" so the reload animation can pull it out.
-        public static Transform Viewmodel(string weapon, Transform holder, int rarity = 1)
+        public static Transform Viewmodel(string weapon, Transform holder, int rarity = 1, bool firstPerson = false)
         {
-            for (int i = holder.childCount - 1; i >= 0; i--) Object.Destroy(holder.GetChild(i).gameObject);
+            // Detach the old gun before destroying it: Destroy only happens at the end of the frame, and lookups by
+            // name (Slide, Mag, Ammo cells) on the new gun must not find the old one's parts.
+            for (int i = holder.childCount - 1; i >= 0; i--)
+            {
+                var old = holder.GetChild(i).gameObject;
+                old.SetActive(false);
+                old.transform.SetParent(null, false);
+                Object.Destroy(old);
+            }
             float muzzleZ;
             switch (weapon)
             {
@@ -182,7 +191,17 @@ namespace RiftWard.Client
                 case "sniper": muzzleZ = Sniper(holder); break;
                 default: muzzleZ = Pistol(holder); break;
             }
+            Detail(holder, muzzleZ);
             WeaponFinish(holder, rarity, muzzleZ);
+            Surfaces(holder);
+            if (firstPerson)
+            {
+                AmmoBar(holder);
+                // Heat sleeve over the end of the barrel: invisible when cold, glows orange as the gun heats up.
+                var heat = P(holder, new Vector3(0, heatY, muzzleZ - heatLength * 0.5f - 0.01f), new Vector3(heatWidth, heatWidth, heatLength), Palette.Hex("ff6a1a"), 3f);
+                heat.name = "Heat";
+                heat.GetComponent<MeshRenderer>().enabled = false;
+            }
             foreach (var c in holder.GetComponentsInChildren<Collider>()) Object.Destroy(c);
             Build.NoShadows(holder.gameObject);
             var muzzle = new GameObject("Muzzle").transform;
@@ -367,6 +386,70 @@ namespace RiftWard.Client
 
         static GameObject P(Transform t, Vector3 at, Vector3 size, Color c, float glow = 0f) => Build.Cube(t, at, size, c, glow, false);
 
+        // Per-gun anchors set by the builders: where the ammo bar sits (left flank or top, the faces the
+        // first-person camera sees) and where the barrel's heat sleeve goes.
+        static Vector3 ammoAt, ammoCell;
+        static float ammoLength, heatY, heatWidth, heatLength;
+        public const int AmmoCells = 10;
+
+        /// Row of cells on the gun that light up for the rounds left in the magazine (named Ammo0..Ammo9).
+        static void AmmoBar(Transform h)
+        {
+            var bar = Part(h.Find("Slide") ?? h, "AmmoBar", ammoAt);   // rides on the pistol's slide
+            bool top = ammoCell.y < ammoCell.x;
+            P(bar, Vector3.zero, top ? new Vector3(ammoCell.x + 0.006f, 0.003f, ammoLength + 0.012f) : new Vector3(0.003f, ammoCell.y + 0.006f, ammoLength + 0.012f), GunInk);
+            float step = ammoLength / AmmoCells;
+            for (int i = 0; i < AmmoCells; i++)
+            {
+                var cell = P(bar, new Vector3(top ? 0 : -0.0015f, top ? 0.0015f : 0, -ammoLength * 0.5f + step * (i + 0.5f)), new Vector3(ammoCell.x, ammoCell.y, step * 0.72f), AmmoOff);
+                cell.name = "Ammo" + i;
+            }
+        }
+
+        public static readonly Color AmmoLit = Palette.Hex("6fd3ff"), AmmoLow = Palette.Hex("ff4d4d"), AmmoOff = Palette.Hex("1f2328");
+
+        /// Small manufacturing details every gun shares: a hazard-striped band and a stamped plate on the left flank.
+        static void Detail(Transform h, float muzzleZ)
+        {
+            bool top = ammoCell.y < ammoCell.x;
+            float x = top ? -0.0465f : ammoAt.x;
+            if (muzzleZ > 0.3f)   // long guns: hazard band ahead of the receiver (the pistol's slide moves, so none there)
+            {
+                float z = Mathf.Min(muzzleZ - 0.12f, ammoAt.z + ammoLength * 0.5f + 0.05f);
+                for (int i = 0; i < 4; i++)
+                    P(h, new Vector3(x - 0.0005f, heatY - 0.012f, z + i * 0.008f), new Vector3(0.002f, 0.01f, 0.006f), i % 2 == 0 ? Palette.Hex("e8b23a") : GunInk);
+            }
+            if (!top) P(h, new Vector3(x - 0.0005f, ammoAt.y - 0.018f, ammoAt.z), new Vector3(0.002f, 0.008f, 0.04f), GunEdge);   // stamped plate
+        }
+
+        /// Material pass: gunmetal parts become polished metal, polymer stays satin, wood stays dull; glowing
+        /// parts are left alone. Shared materials, cached per colour.
+        static void Surfaces(Transform h)
+        {
+            foreach (var r in h.GetComponentsInChildren<MeshRenderer>())
+            {
+                var m = r.sharedMaterial;
+                if (m == null || m.IsKeywordEnabled("_EMISSION") || m.color.a < 1f) continue;
+                r.sharedMaterial = SurfaceFor(m.color);
+            }
+        }
+
+        static readonly Dictionary<Color, Material> surfaces = new Dictionary<Color, Material>();
+
+        static Material SurfaceFor(Color c)
+        {
+            if (surfaces.TryGetValue(c, out var m)) return m;
+            Color.RGBToHSV(c, out float hue, out float sat, out float val);
+            m = new Material(Build.Mat(c));
+            bool wood = sat > 0.3f && hue > 0.03f && hue < 0.12f && val < 0.45f;
+            bool metal = sat < 0.2f && val < 0.3f;
+            float smooth = wood ? 0.22f : metal ? (val > 0.14f ? 0.72f : 0.6f) : 0.42f;
+            m.SetFloat("_Glossiness", smooth);
+            m.SetFloat("_Metallic", wood ? 0f : metal ? 0.75f : 0.15f);
+            surfaces[c] = m;
+            return m;
+        }
+
         static Transform Part(Transform holder, string name, Vector3 at)
         {
             var t = new GameObject(name).transform;
@@ -417,6 +500,11 @@ namespace RiftWard.Client
             var mag = Part(h, "Mag", new Vector3(0, -0.12f, 0.04f));
             P(mag, Vector3.zero, new Vector3(0.05f, 0.13f, 0.07f), GunInk).transform.localRotation = Quaternion.Euler(14, 0, 0);
             P(mag, new Vector3(0, -0.07f, 0.02f), new Vector3(0.056f, 0.02f, 0.078f), GunSteel).transform.localRotation = Quaternion.Euler(14, 0, 0);
+            var bolt = Part(h, "Bolt", new Vector3(-0.047f, 0.012f, 0.035f));                              // cycles on every shot
+            P(bolt, Vector3.zero, new Vector3(0.006f, 0.022f, 0.05f), GunEdge);
+            P(bolt, new Vector3(-0.012f, 0.002f, -0.018f), new Vector3(0.02f, 0.012f, 0.012f), GunSteel);   // handle knob
+            ammoAt = new Vector3(-0.0405f, 0.029f, 0.225f); ammoCell = new Vector3(0.003f, 0.009f, 0); ammoLength = 0.13f;   // handguard flank, above the vents
+            heatY = 0.005f; heatWidth = 0.034f; heatLength = 0.1f;
             return 0.54f;
         }
 
@@ -444,6 +532,8 @@ namespace RiftWard.Client
             var mag = Part(h, "Mag", new Vector3(-0.058f, 0.0f, 0.03f));                                     // a shell, fed by hand
             Barrel(mag, Vector3.zero, 0.024f, 0.06f, Palette.Hex("b8342a"));
             Barrel(mag, new Vector3(0, 0, -0.03f), 0.026f, 0.012f, Palette.Hex("c9a24a"));
+            ammoAt = new Vector3(-0.026f, 0.046f, 0.03f); ammoCell = new Vector3(0.012f, 0.003f, 0); ammoLength = 0.12f;
+            heatY = 0.025f; heatWidth = 0.048f; heatLength = 0.12f;
             return 0.47f;
         }
 
@@ -467,8 +557,9 @@ namespace RiftWard.Client
             P(h, new Vector3(0, 0.124f, 0.03f), new Vector3(0.022f, 0.02f, 0.022f), GunSteel);
             foreach (float z in new[] { -0.04f, 0.1f }) P(h, new Vector3(0, 0.065f, z), new Vector3(0.03f, 0.03f, 0.02f), GunInk); // rings
             // Bolt handle
-            P(h, new Vector3(0.05f, 0.03f, -0.08f), new Vector3(0.05f, 0.01f, 0.01f), GunSteel);
-            Build.Sphere(h, new Vector3(0.078f, 0.03f, -0.08f), 0.024f, GunInk, 0, false);
+            var bolt = Part(h, "Bolt", new Vector3(0.026f, 0.03f, -0.08f));                                 // lifted and racked after each shot
+            P(bolt, new Vector3(0.024f, 0, 0), new Vector3(0.05f, 0.01f, 0.01f), GunSteel);
+            Build.Sphere(bolt, new Vector3(0.052f, 0, 0), 0.024f, GunInk, 0, false);
             // Bipod folded under the forend
             foreach (float x in new[] { -0.02f, 0.02f }) P(h, new Vector3(x, -0.04f, 0.24f), new Vector3(0.008f, 0.008f, 0.14f), GunInk);
             var grip = P(h, new Vector3(0, -0.1f, -0.15f), new Vector3(0.05f, 0.11f, 0.06f), GunPolymer);
@@ -480,21 +571,24 @@ namespace RiftWard.Client
             var mag = Part(h, "Mag", new Vector3(0, -0.07f, 0.04f));
             P(mag, Vector3.zero, new Vector3(0.048f, 0.07f, 0.09f), GunInk);
             P(mag, new Vector3(0, -0.038f, 0), new Vector3(0.052f, 0.012f, 0.094f), GunSteel);
+            ammoAt = new Vector3(-0.0365f, 0.016f, 0.2f); ammoCell = new Vector3(0.003f, 0.01f, 0); ammoLength = 0.13f;    // forend flank
+            heatY = 0.02f; heatWidth = 0.04f; heatLength = 0.14f;
             return 0.7f;
         }
 
         /// P-9 sidearm: slide with serrations and amber sights, frame with rail, textured grip and extended magazine.
         static float Pistol(Transform h)
         {
-            P(h, new Vector3(0, 0.022f, 0.02f), new Vector3(0.062f, 0.05f, 0.25f), GunSteel);              // slide
+            var slide = Part(h, "Slide", Vector3.zero);                                                     // moves back on every shot
+            P(slide, new Vector3(0, 0.022f, 0.02f), new Vector3(0.062f, 0.05f, 0.25f), GunSteel);          // slide
             for (int i = 0; i < 6; i++) foreach (float x in new[] { -0.032f, 0.032f })
-                P(h, new Vector3(x, 0.026f, -0.08f + i * 0.012f), new Vector3(0.004f, 0.034f, 0.005f), GunInk); // serrations
-            P(h, new Vector3(0.032f, 0.026f, 0.05f), new Vector3(0.004f, 0.016f, 0.05f), GunInk);           // ejection port
+                P(slide, new Vector3(x, 0.026f, -0.08f + i * 0.012f), new Vector3(0.004f, 0.034f, 0.005f), GunInk); // serrations
+            P(slide, new Vector3(0.032f, 0.026f, 0.05f), new Vector3(0.004f, 0.016f, 0.05f), GunInk);       // ejection port
             P(h, new Vector3(0, -0.012f, 0.03f), new Vector3(0.058f, 0.03f, 0.22f), GunPolymer);           // frame
             Rail(h, -0.03f, 0.06f, 0.13f);
             Barrel(h, new Vector3(0, 0.022f, 0.15f), 0.022f, 0.02f, GunInk);
-            P(h, new Vector3(0, 0.054f, 0.13f), new Vector3(0.008f, 0.012f, 0.01f), Palette.Amber, 2f);     // front sight
-            foreach (float x in new[] { -0.014f, 0.014f }) P(h, new Vector3(x, 0.054f, -0.09f), new Vector3(0.008f, 0.012f, 0.01f), Palette.Amber, 2f);
+            P(slide, new Vector3(0, 0.054f, 0.13f), new Vector3(0.008f, 0.012f, 0.01f), Palette.Amber, 2f); // front sight
+            foreach (float x in new[] { -0.014f, 0.014f }) P(slide, new Vector3(x, 0.054f, -0.09f), new Vector3(0.008f, 0.012f, 0.01f), Palette.Amber, 2f);
             var grip = P(h, new Vector3(0, -0.085f, -0.06f), new Vector3(0.054f, 0.13f, 0.07f), GunPolymer);
             grip.transform.localRotation = Quaternion.Euler(-14, 0, 0);
             for (int i = 0; i < 5; i++)
@@ -508,6 +602,8 @@ namespace RiftWard.Client
             var mag = Part(h, "Mag", new Vector3(0, -0.15f, -0.075f));
             P(mag, Vector3.zero, new Vector3(0.046f, 0.06f, 0.056f), GunInk).transform.localRotation = Quaternion.Euler(-14, 0, 0);
             P(mag, new Vector3(0, -0.032f, -0.008f), new Vector3(0.052f, 0.014f, 0.064f), GunSteel).transform.localRotation = Quaternion.Euler(-14, 0, 0);
+            ammoAt = new Vector3(-0.019f, 0.048f, 0.02f); ammoCell = new Vector3(0.009f, 0.003f, 0); ammoLength = 0.12f;   // on top of the slide
+            heatY = 0.022f; heatWidth = 0.03f; heatLength = 0.025f;
             return 0.17f;
         }
 

@@ -814,6 +814,36 @@ namespace RiftWard.Client
                 yield return Settle(0.3f);
                 yield return Shot(folder, "unity-third-" + region);
             }
+            // Each gun close up: its tracer and scorch marks on the far wall, the ammo bar at different fill
+            // levels, barrel heat and the moving parts mid-cycle (the LR-50's bolt is lifted and racked).
+            Client.SetThirdPerson(false);
+            var poses = new[] { ("pistol", 1f, 0.3f, 0.03f), ("rifle", 0.6f, 0.95f, 0.012f), ("shotgun", 0.17f, 0.7f, 0.3f), ("sniper", 0.6f, 1.1f, 0.5f) };
+            foreach (var (w, fill, hot, since) in poses)
+            {
+                var gun = new Loadout { Owned = new List<string> { w }, Equipped = new List<string> { w } };
+                gun.Rarity[w] = 1;
+                Client.WeaponRarity = id => 1;
+                Client.StartOffline(0, gun, true, new AdminSettings { God = true });
+                var gs = Client.Sim;
+                gs.WaveDelay = 999f;
+                var gm = gs.Actors[Client.LocalId];
+                Client.SetView(0.12f, -0.03f);
+                yield return Settle(0.3f);
+                for (int k = 0; k < 3; k++)
+                {
+                    gs.Fire(Client.LocalId, gm.Position + Vector3.up * 1.5f + GameSim.LookDirection(0.12f + k * 0.04f, -0.02f - k * 0.02f) * 60f);
+                    yield return Settle(0.12f);
+                }
+                gm.Ammo = Mathf.Max(1, Mathf.RoundToInt(gm.Mag * fill));
+                gs.Fire(Client.LocalId, gm.Position + Vector3.up * 1.5f + GameSim.LookDirection(0.1f, -0.01f) * 60f);
+                yield return Settle(0.025f);
+                Client.SetWeaponStateForCapture(hot, since);
+                yield return null;
+                yield return null;
+                Client.SetWeaponStateForCapture(hot, since + 0.03f);
+                yield return null;
+                yield return Shot(folder, "unity-gun-" + w);
+            }
             Application.Quit();
         }
 

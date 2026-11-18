@@ -42,7 +42,7 @@ namespace RiftWard.Sim
         /// XP needed to go from this account level to the next; mirrors level_for() in server/service.py.
         public static int AccountLevelNeed(int level) => 100 + 50 * level;
 
-        public const string Version = "0.7.7-unity.1";
+        public const string Version = "0.7.8-unity.1";
 
         // Player movement
         public const float EyeHeight = 1.65f;

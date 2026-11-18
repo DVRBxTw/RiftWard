@@ -41,6 +41,20 @@ namespace RiftWard.Client
         Transform weaponHolder, muzzle, magazine;
         Vector3 magazineRest;
 
+        // Viewmodel moving parts, ammo bar and heat sleeve (found by name after each weapon swap).
+        Transform slidePart, boltPart, pumpPart;
+        Vector3 slideRest, boltRest, pumpRest;
+        Quaternion boltRotRest;
+        MeshRenderer[] ammoCells = new MeshRenderer[0];
+        MeshRenderer heatSleeve;
+        int heatStep = -1;
+        int shownCells = -1;
+        bool shownLow;
+        /// Seconds since your last shot (drives slide / bolt / pump cycling), view-model kick and barrel heat.
+        float cycle = 99f, kick, heat, lastAmmo = -1;
+        bool hotVented;
+        AudioReverbFilter reverb;
+
         readonly Dictionary<int, GameObject> actorViews = new Dictionary<int, GameObject>();
         readonly Dictionary<int, float> enemyHp = new Dictionary<int, float>();
         readonly List<int> stale = new List<int>();
@@ -85,6 +99,9 @@ namespace RiftWard.Client
             Camera.farClipPlane = 260f;
             PostFx.Attach(Camera);
             camGo.AddComponent<AudioListener>();
+            reverb = camGo.AddComponent<AudioReverbFilter>();
+            reverb.enabled = false;
+            camGo.AddComponent<MasterLimiter>();   // after the reverb: limits the final mix
             weaponHolder = new GameObject("Weapon").transform;
             weaponHolder.SetParent(Camera.transform, false);
             weaponHolder.localPosition = WeaponRest;
@@ -182,8 +199,26 @@ namespace RiftWard.Client
             EnterMission(region);
         }
 
+        /// Room sound per region: open grassland, a reverberant steel foundry, a deep cavernous rift.
+        void SetReverb(int region)
+        {
+            if (reverb == null) return;
+            reverb.enabled = region >= 0;
+            if (region < 0) return;
+            reverb.reverbPreset = AudioReverbPreset.User;
+            reverb.dryLevel = 0;
+            reverb.diffusion = 100; reverb.density = 100;
+            switch (region)
+            {
+                case 1: reverb.room = -900; reverb.roomHF = -400; reverb.decayTime = 1.9f; reverb.reflectionsLevel = -500; reverb.reverbLevel = -300; break;
+                case 2: reverb.room = -1200; reverb.roomHF = -1800; reverb.decayTime = 3.2f; reverb.reflectionsLevel = -1000; reverb.reverbLevel = 0; break;
+                default: reverb.room = -3000; reverb.roomHF = -1500; reverb.decayTime = 0.8f; reverb.reflectionsLevel = -2000; reverb.reverbLevel = -1800; break;
+            }
+        }
+
         void EnterMission(int region)
         {
+            SetReverb(region);
             ClearViews();
             World.ApplyRegion(region);
             yaw = 0; pitch = 0; desiredSlot = 0; shownSlot = -1; recoilPending = 0; Paused = false;
@@ -196,6 +231,7 @@ namespace RiftWard.Client
 
         public void LeaveMission()
         {
+            SetReverb(-1);
             Sim = null;
             net = null;
             NetworkInput = null;
@@ -372,9 +408,10 @@ namespace RiftWard.Client
             // A shotgun blast arrives as one event per pellet: sound and muzzle flash play once per shooter,
             // and your hit confirmation once per batch (a headshot if any pellet was one).
             firedThisBatch.Clear();
-            localHit = localHead = false;
+            localHit = localHead = localKill = false;
             foreach (var shot in Sim.Shots) ShotEffect(shot);
             if (localHit || localHead) Sfx.Play(localHead ? "head" : "hit", 0.45f);
+            if (localKill) Sfx.Play("kill", 0.5f);
             foreach (var ex in Sim.Explosions) ExplosionEffect(ex);
             foreach (var text in Sim.Announcements) Hud.Announce(text);
             Sim.Shots.Clear();
@@ -397,7 +434,7 @@ namespace RiftWard.Client
         // ------------------------------------------------------------ effects
 
         readonly HashSet<int> firedThisBatch = new HashSet<int>();
-        bool localHit, localHead;
+        bool localHit, localHead, localKill;
 
         void ShotEffect(ShotEvent shot)
         {
@@ -413,18 +450,10 @@ namespace RiftWard.Client
             int rarity = Sim.Actors.TryGetValue(shot.Shooter, out var shooter) ? shooter.Loadout.RarityOf(shooter.WeaponId) : 1;
             bool firstOfBatch = firedThisBatch.Add(shot.Shooter);
             if (firstOfBatch) ShotSound(shot, shooter, rarity);
-            if (shot.Shooter == LocalId) { localHit |= shot.Hit; localHead |= shot.Head; }
+            if (shot.Shooter == LocalId) { localHit |= shot.Hit; localHead |= shot.Head; localKill |= shot.Killed; }
             if (rarity >= 3) { RarityShot(shot, origin, rarity); if (shot.Shooter == LocalId) { Hud.OnLocalShot(shot, Camera); ApplyRecoil(); } return; }
             if (shooter != null && firstOfBatch) MuzzleFlash(shooter.WeaponId, origin, shot.Shooter == LocalId && !thirdPerson);
-            var beam = new GameObject("Beam");
-            var line = beam.AddComponent<LineRenderer>();
-            line.positionCount = 2;
-            line.SetPosition(0, origin);
-            line.SetPosition(1, shot.End);
-            line.startWidth = line.endWidth = 0.035f;
-            line.sharedMaterial = Build.Mat(Palette.Amber, 3f);
-            line.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
-            effects.Add((beam, 0.06f, Vector3.zero, 0));
+            WeaponFx.Tracer(shooter?.WeaponId ?? "rifle", origin, shot.End);
             if (shot.Hit)
             {
                 var spark = Build.Sphere(null, shot.End, shot.Head ? 0.6f : 0.4f, shot.Head ? Palette.Amber : Palette.Hex("ff8855"), 2.5f, false);
@@ -530,6 +559,7 @@ namespace RiftWard.Client
         void ImpactEffect(Vector3 at, Vector3 incoming)
         {
             Vector3 back = -incoming.normalized;
+            WeaponFx.Scorch(at, WeaponFx.SurfaceNormal(at, incoming));
             Burst.Sphere(at, Palette.Hex("fff1c0"), 0.9f, 4f, 0.05f, 0.25f, 0.06f);
             Burst.Sphere(at + back * 0.05f, Palette.Hex("9a948a"), 0.45f, 0f, 0.1f, 0.5f, 0.45f, back * 0.6f + Vector3.up * 0.4f);
             for (int i = 0; i < 3; i++)
@@ -677,6 +707,11 @@ namespace RiftWard.Client
             yaw += UnityEngine.Random.Range(-1f, 1f) * w.Sway;
             recoilPending += kick * 0.65f;
             shake = 0.02f + kick * 0.9f;
+            cycle = 0f;
+            this.kick = 1f;
+            heat = Mathf.Min(1.2f, heat + (me.WeaponId == "sniper" ? 0.4f : me.WeaponId == "shotgun" ? 0.26f : me.WeaponId == "rifle" ? 0.055f : 0.08f));
+            hotVented = false;
+            if (me.Ammo > 0 && me.Ammo <= Mathf.Max(2, Mathf.CeilToInt(me.Mag * 0.2f))) Sfx.Play("lowammo", 0.35f);
         }
 
         void ExplosionEffect(ExplosionEvent ex)
@@ -859,11 +894,24 @@ namespace RiftWard.Client
             weaponHolder.gameObject.SetActive(showWeapon);
             if (me.Slot != shownSlot)
             {
+                if (shownSlot >= 0) Sfx.Play("switch", 0.5f);
                 shownSlot = me.Slot;
                 desiredSlot = me.Slot;
-                muzzle = Models.Viewmodel(me.WeaponId, weaponHolder, WeaponRarity?.Invoke(me.WeaponId) ?? 1);
+                muzzle = Models.Viewmodel(me.WeaponId, weaponHolder, WeaponRarity?.Invoke(me.WeaponId) ?? 1, true);
                 magazine = weaponHolder.Find("Mag");
                 if (magazine != null) magazineRest = magazine.localPosition;
+                slidePart = weaponHolder.Find("Slide"); boltPart = weaponHolder.Find("Bolt"); pumpPart = weaponHolder.Find("Pump");
+                if (slidePart != null) slideRest = slidePart.localPosition;
+                if (boltPart != null) { boltRest = boltPart.localPosition; boltRotRest = boltPart.localRotation; }
+                if (pumpPart != null) pumpRest = pumpPart.localPosition;
+                // Found by name anywhere in the gun (the pistol's bar rides on its slide).
+                var named = new Dictionary<string, MeshRenderer>();
+                foreach (var r in weaponHolder.GetComponentsInChildren<MeshRenderer>(true)) named[r.name] = r;
+                ammoCells = new MeshRenderer[Models.AmmoCells];
+                for (int i = 0; i < ammoCells.Length; i++) named.TryGetValue("Ammo" + i, out ammoCells[i]);
+                heatSleeve = weaponHolder.Find("Heat")?.GetComponent<MeshRenderer>();
+                shownCells = -1; heatStep = -1;
+                cycle = 99f; heat = 0f;
             }
             float dashT = me.DashCooldown > 0 ? Defs.DashCooldown - me.DashCooldown : 99f;
             float dash = me.Alive && dashT < 0.32f ? Mathf.Sin(Mathf.PI * dashT / 0.32f) : 0f;
@@ -888,9 +936,81 @@ namespace RiftWard.Client
                 magazine.gameObject.SetActive(magDrop < 0.98f);
             }
             float seat = reload > 0.8f && reload < 0.92f ? Mathf.Sin(Mathf.PI * (reload - 0.8f) / 0.12f) : 0f;
+            AnimateWeapon(me, dt);
             weaponHolder.localPosition = WeaponRest + new Vector3(0.02f, -0.045f, -0.1f) * dash + new Vector3(0, 0, -shake)
-                + new Vector3(-0.03f, -0.07f, -0.04f) * tilt + new Vector3(0, 0.012f, 0) * seat;
-            weaponHolder.localRotation = Quaternion.Euler(new Vector3(6f, 2f, -6f) * dash + new Vector3(-14f, 18f, 32f) * tilt + new Vector3(-4f, 0, 0) * seat);
+                + new Vector3(-0.03f, -0.07f, -0.04f) * tilt + new Vector3(0, 0.012f, 0) * seat + new Vector3(0, 0.006f, -0.035f) * kick;
+            weaponHolder.localRotation = Quaternion.Euler(new Vector3(6f, 2f, -6f) * dash + new Vector3(-14f, 18f, 32f) * tilt + new Vector3(-4f, 0, 0) * seat
+                + new Vector3(-5f, 0, 0) * kick);
+        }
+
+        /// For the automated screenshots: pose the weapon at a given heat and time since the last shot.
+        public void SetWeaponStateForCapture(float heatLevel, float sinceShot)
+        {
+            heat = heatLevel; cycle = sinceShot; hotVented = true;
+        }
+
+        /// Slide, bolt and pump cycling after each shot, the ammo bar and the barrel heat glow.
+        void AnimateWeapon(Actor me, float dt)
+        {
+            cycle += dt;
+            kick *= Mathf.Exp(-dt * 16f);
+            // Fast back-and-return: snaps back in a few ms, eases home.
+            float Snap(float t, float back, float total) => t < back ? t / back : Mathf.Max(0f, 1f - (t - back) / (total - back));
+            if (slidePart != null) slidePart.localPosition = slideRest + new Vector3(0, 0, -0.04f) * Snap(cycle, 0.025f, 0.11f);
+            if (pumpPart != null)
+            {
+                float t = (cycle - 0.14f) / 0.36f;   // the pump is racked just after the blast
+                pumpPart.localPosition = pumpRest + new Vector3(0, 0, -0.075f) * (t > 0f && t < 1f ? Mathf.Sin(Mathf.PI * t) : 0f);
+            }
+            if (boltPart != null)
+            {
+                if (me.WeaponId == "sniper")
+                {
+                    // Bolt action: lift, pull back, push forward, lock down.
+                    float t = (cycle - 0.18f) / 0.7f;
+                    float lift = 0f, pull = 0f;
+                    if (t > 0f && t < 1f)
+                    {
+                        lift = t < 0.2f ? t / 0.2f : t > 0.8f ? (1f - t) / 0.2f : 1f;
+                        pull = t < 0.2f || t > 0.8f ? 0f : Mathf.Sin(Mathf.PI * (t - 0.2f) / 0.6f);
+                    }
+                    boltPart.localRotation = boltRotRest * Quaternion.Euler(0, 0, 65f * lift);
+                    boltPart.localPosition = boltRest + new Vector3(0, 0, -0.07f) * pull;
+                }
+                else boltPart.localPosition = boltRest + new Vector3(0, 0, -0.03f) * Snap(cycle, 0.02f, 0.085f);
+            }
+            // Ammo bar: lit cells for rounds left, red near the end, dark while reloading.
+            if (ammoCells.Length > 0)
+            {
+                int lit = me.Reload > 0 ? 0 : Mathf.CeilToInt(Models.AmmoCells * (float)me.Ammo / Mathf.Max(1, me.Mag));
+                bool low = me.Ammo <= Mathf.Max(2, Mathf.CeilToInt(me.Mag * 0.2f));
+                if (lit != shownCells || low != shownLow)
+                {
+                    shownCells = lit; shownLow = low;
+                    var on = Build.Mat(low ? Models.AmmoLow : Models.AmmoLit, 5f);
+                    var off = Build.Mat(Models.AmmoOff);
+                    for (int i = 0; i < ammoCells.Length; i++) if (ammoCells[i] != null) ammoCells[i].sharedMaterial = i < lit ? on : off;
+                }
+            }
+            // Heat: builds with fire, cools when you stop; the barrel tip glows and vents steam once when very hot.
+            heat = Mathf.Max(0f, heat - dt * (cycle > 0.35f ? 0.55f : 0.12f));
+            if (heatSleeve != null)
+            {
+                // Eight glow steps, each a cached translucent material; hidden when cold.
+                int step = Mathf.Clamp(Mathf.FloorToInt(Mathf.Clamp01((heat - 0.35f) / 0.65f) * 8f), 0, 8);
+                if (step != heatStep)
+                {
+                    heatStep = step;
+                    heatSleeve.enabled = step > 0;
+                    if (step > 0) heatSleeve.sharedMaterial = Build.Mat(Palette.Hex("ff4a14"), 3f, step / 8f * 0.6f);
+                }
+                if (!hotVented && heat > 0.85f && cycle > 0.3f)
+                {
+                    hotVented = true;
+                    WeaponFx.Steam(heatSleeve.transform.position, 0.6f, 3);
+                    Sfx.Play("vent", 0.3f);
+                }
+            }
         }
 
         void UpdateAudio(Actor me, float dt)
@@ -899,10 +1019,18 @@ namespace RiftWard.Client
             float ratio = me.Reload > 0 ? me.Reload / Mathf.Max(0.01f, me.ReloadTime) : 0f;
             if (me.Alive && me.Slot == lastReloadSlot)
             {
-                if (lastReloadRatio <= 0 && ratio > 0) Sfx.Play("reload_out");
+                if (lastReloadRatio <= 0 && ratio > 0)
+                {
+                    Sfx.Play("reload_out");
+                    Sfx.Play("vent", 0.35f);
+                    if (heatSleeve != null && !thirdPerson) WeaponFx.Steam(heatSleeve.transform.position, 0.7f, 4);
+                    heat *= 0.3f;
+                }
                 else if (lastReloadRatio > 0.4f && ratio <= 0.4f && ratio > 0) Sfx.Play("reload_in");
                 else if (lastReloadRatio > 0 && ratio <= 0 && me.Ammo >= me.Mag) Sfx.Play("reload_rack");
             }
+            if (me.Alive && me.Slot == lastReloadSlot && lastAmmo > 0 && me.Ammo == 0) Sfx.Play("dry", 0.55f);
+            lastAmmo = me.Ammo;
             lastReloadRatio = ratio;
             lastReloadSlot = me.Slot;
             // Heartbeat when shields are low.
