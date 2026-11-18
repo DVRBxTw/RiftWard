@@ -17,6 +17,7 @@ namespace RiftWard.Sim
                 case "shotgun": return ("近身汲取", $"擊殺敵人回復 {(myth ? 12 : 6)} 點護盾");
                 case "sniper": return ("弱點洞察", $"爆頭傷害 +{(myth ? 80 : 40)}%");
                 case "pistol": return ("連擊快槍", $"擊殺後 2 秒內射速 +{(myth ? 70 : 40)}%");
+                case "saber": return ("嗜能之刃", $"每砍中一名敵人回復 {(myth ? 4 : 2)} 點護盾");
                 default: return null;
             }
         }
@@ -42,7 +43,7 @@ namespace RiftWard.Sim
         /// XP needed to go from this account level to the next; mirrors level_for() in server/service.py.
         public static int AccountLevelNeed(int level) => 100 + 50 * level;
 
-        public const string Version = "0.7.9-unity.1";
+        public const string Version = "0.7.10-unity.1";
 
         // Player movement
         public const float EyeHeight = 1.65f;
@@ -111,7 +112,11 @@ namespace RiftWard.Sim
             new RegionDef("赫利奧王座", "皇帝親自坐鎮王座大廳。\n突破近衛軍，在王座前結束這場戰爭。", 7, new Color32(0xff, 0xd3, 0x6b, 255)),
         };
 
-        public static readonly string[] WeaponOrder = { "pistol", "rifle", "shotgun", "sniper" };
+        public static readonly string[] WeaponOrder = { "pistol", "rifle", "shotgun", "sniper", "saber" };
+
+        // Melee (光劍): left click swings through a frontal arc, right click blocks bullets from the front.
+        public const float MeleeHalfArc = 55f, BlockFactor = 0.3f, BlockSpeed = 0.55f, BlockHalfArc = 70f;
+        public const int MeleeCleave = 3;
 
         public static readonly Dictionary<string, WeaponDef> Weapons = new Dictionary<string, WeaponDef>
         {
@@ -119,6 +124,7 @@ namespace RiftWard.Sim
             ["rifle"] = new WeaponDef("rifle", "AR-27 突擊步槍", "步槍", "全自動高射速，適合壓制大群敵人。", 17f, 0.1f, 30, 1.8f, 1, 0.012f, 2f, 0.75f, 400, 0.011f, 0.007f, 1.3f),
             ["shotgun"] = new WeaponDef("shotgun", "SG-8 霰彈槍", "霰彈", "一次射出 7 顆彈丸，近距離威力驚人。", 11f, 0.8f, 6, 2.2f, 7, 0.07f, 1.5f, 0.85f, 600, 0.065f, 0.015f, 1.4f),
             ["sniper"] = new WeaponDef("sniper", "LR-50 狙擊槍", "狙擊", "單發高傷害，爆頭 3 倍。右鍵開鏡。", 95f, 1.0f, 5, 2.4f, 1, 0f, 3f, 0.35f, 800, 0.09f, 0.01f, 1.6f),
+            ["saber"] = new WeaponDef("saber", "EX-1 能量光劍", "光劍", "高能電漿刃。左鍵揮砍前方扇形，一次最多砍中 3 名敵人；右鍵格擋正面子彈。", 62f, 0.42f, 1, 0f, 1, 0f, 1f, 1f, 0, 0.006f, 0f, 1.5f, melee: true, range: 2.8f),
         };
 
         public static readonly string[] UpgradeKeys = { "damage", "mag", "reload" };
@@ -248,30 +254,35 @@ namespace RiftWard.Sim
     public sealed class WeaponDef
     {
         public readonly string Id, Name, Short, Description;
-        public readonly float Damage, Interval, Reload, Spread, HeadMultiplier, Zoom, Recoil, Sway, UpgradeFactor;
+        public readonly float Damage, Interval, Reload, Spread, HeadMultiplier, Zoom, Recoil, Sway, UpgradeFactor, Range;
         public readonly int Mag, Pellets, Price;
+        /// Melee weapons swing instead of firing: no ammo, no reload; reach is Range.
+        public readonly bool Melee;
 
         public WeaponDef(string id, string name, string shortName, string description, float damage, float interval, int mag, float reload,
-            int pellets, float spread, float head, float zoom, int price, float recoil, float sway, float upgradeFactor)
+            int pellets, float spread, float head, float zoom, int price, float recoil, float sway, float upgradeFactor, bool melee = false, float range = 0f)
         {
             Id = id; Name = name; Short = shortName; Description = description; Damage = damage; Interval = interval; Mag = mag; Reload = reload;
             Pellets = pellets; Spread = spread; HeadMultiplier = head; Zoom = zoom; Price = price; Recoil = recoil; Sway = sway; UpgradeFactor = upgradeFactor;
+            Melee = melee; Range = range;
         }
 
-        /// Stats after armory upgrades (before in-mission buffs).
+        /// Stats after armory upgrades (before in-mission buffs). On a melee weapon the 彈匣 upgrade lengthens the
+        /// reach (+8% per level) and the 換彈 upgrade quickens the swing (-8% per level).
         public WeaponStats StatsAt(int damageLevel, int magLevel, int reloadLevel) => new WeaponStats
         {
             Damage = Damage * (1f + 0.12f * damageLevel),
-            Interval = Interval,
-            Mag = Mathf.CeilToInt(Mag * (1f + 0.15f * magLevel)),
-            Reload = Reload * (1f - 0.08f * reloadLevel),
+            Interval = Melee ? Interval * (1f - 0.08f * reloadLevel) : Interval,
+            Mag = Melee ? 1 : Mathf.CeilToInt(Mag * (1f + 0.15f * magLevel)),
+            Reload = Melee ? 0f : Reload * (1f - 0.08f * reloadLevel),
+            Range = Melee ? Range * (1f + 0.08f * magLevel) : 0f,
             Pellets = Pellets, Spread = Spread, HeadMultiplier = HeadMultiplier, Zoom = Zoom,
         };
     }
 
     public struct WeaponStats
     {
-        public float Damage, Interval, Reload, Spread, HeadMultiplier, Zoom;
+        public float Damage, Interval, Reload, Spread, HeadMultiplier, Zoom, Range;
         public int Mag, Pellets;
     }
 

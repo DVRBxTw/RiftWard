@@ -423,6 +423,7 @@ namespace RiftWard.Client
         // ------------------------------------------------------------ armory
 
         string armoryPick = "pistol";
+        public void ShowArmoryFor(string weapon) { armoryPick = weapon; ShowArmory(); }
         Text armoryStatus;
 
         public void ShowArmory()
@@ -443,15 +444,15 @@ namespace RiftWard.Client
                 var w = Defs.Weapons[id];
                 bool owned = p.Loadout.Owned.Contains(id), current = id == armoryPick;
                 int slot = p.Loadout.Equipped.IndexOf(id);
-                var row = Ui.Button(list, "", () => { armoryPick = id; ShowArmory(); }, 15, null, current ? new Color(Palette.Amber.r, Palette.Amber.g, Palette.Amber.b, 0.08f) : new Color(0, 0, 0, 0), current ? Palette.Amber : new Color(0, 0, 0, 0)).Sized(74);
+                var row = Ui.Button(list, "", () => { armoryPick = id; ShowArmory(); }, 15, null, current ? new Color(Palette.Amber.r, Palette.Amber.g, Palette.Amber.b, 0.08f) : new Color(0, 0, 0, 0), current ? Palette.Amber : new Color(0, 0, 0, 0)).Sized(58);   // five weapons fit above the copies list
                 row.GetComponentInChildren<Text>().text = "";
                 Ui.Label(row.transform, $"0{i + 1}", 13, current ? Palette.Amber : Palette.Muted).rectTransform.Place(new Vector2(0, 0.5f), new Vector2(18, 0), new Vector2(30, 20), new Vector2(0, 0.5f));
-                Ui.Label(row.transform, owned ? $"{w.Name}  ·  {Gear.RarityNames[p.Loadout.RarityOf(id)]}" : w.Name, 18, owned ? Gear.RarityColors[p.Loadout.RarityOf(id)] : Palette.Hex("a9abae"), TextAnchor.UpperLeft, owned).rectTransform.Place(new Vector2(0, 1), new Vector2(60, -14), new Vector2(300, 24), new Vector2(0, 1));
-                string detail = owned ? string.Join(" · ", Defs.UpgradeKeys.Where(k => p.Loadout.Level(id, k) > 0).Select(k => $"{UpgradeName(k)} Lv {p.Loadout.Level(id, k)}")) : "未持有";
-                Ui.Label(row.transform, detail == "" ? "已擁有" : detail, 12, Palette.Muted).rectTransform.Place(new Vector2(0, 1), new Vector2(60, -42), new Vector2(260, 18), new Vector2(0, 1));
+                Ui.Label(row.transform, owned ? $"{w.Name}  ·  {Gear.RarityNames[p.Loadout.RarityOf(id)]}" : w.Name, 18, owned ? Gear.RarityColors[p.Loadout.RarityOf(id)] : Palette.Hex("a9abae"), TextAnchor.UpperLeft, owned).rectTransform.Place(new Vector2(0, 1), new Vector2(60, -8), new Vector2(300, 24), new Vector2(0, 1));
+                string detail = owned ? string.Join(" · ", Defs.UpgradeKeys.Where(k => p.Loadout.Level(id, k) > 0).Select(k => $"{UpgradeName(k, Defs.Weapons[id].Melee)} Lv {p.Loadout.Level(id, k)}")) : "未持有";
+                Ui.Label(row.transform, detail == "" ? "已擁有" : detail, 12, Palette.Muted).rectTransform.Place(new Vector2(0, 1), new Vector2(60, -33), new Vector2(260, 18), new Vector2(0, 1));
                 var tag = Ui.Label(row.transform, owned ? (slot >= 0 ? $"{slot + 1} 號" : "") : "武器補給", 13, owned ? Palette.Bone : Palette.Muted, TextAnchor.MiddleRight);
                 tag.rectTransform.Place(new Vector2(1, 0.5f), new Vector2(-16, 0), new Vector2(80, 20), new Vector2(1, 0.5f));
-                if (current) Ui.Box(row.transform, Palette.Amber, "Mark").rectTransform.Place(new Vector2(0, 0.5f), Vector2.zero, new Vector2(3, 74), new Vector2(0, 0.5f));
+                if (current) Ui.Box(row.transform, Palette.Amber, "Mark").rectTransform.Place(new Vector2(0, 0.5f), Vector2.zero, new Vector2(3, 58), new Vector2(0, 0.5f));
             }
             // Copies of the selected weapon: choose which one to use, salvage the rest by hand.
             if (p.Loadout.Owned.Contains(armoryPick) && p.Loadout.Copies.TryGetValue(armoryPick, out var copies))
@@ -546,8 +547,16 @@ namespace RiftWard.Client
             var stats = Ui.HStack(ds, 22).Sized(70);
             StatCell(stats, "傷害", st.Pellets > 1 ? $"{st.Damage:0}×{st.Pellets}" : $"{st.Damage:0}", st.Damage * st.Pellets / 700f);
             StatCell(stats, "每秒傷害", $"{dps:0}", dps / 280f);
-            StatCell(stats, "彈匣", st.Mag.ToString(), st.Mag / 45f);
-            StatCell(stats, "換彈", $"{st.Reload:0.00}s", 1f - st.Reload / 3f);
+            if (wd.Melee)
+            {
+                StatCell(stats, "攻擊範圍", $"{st.Range:0.0}m", st.Range / 4f);
+                StatCell(stats, "揮砍間隔", $"{st.Interval:0.00}s", 1f - st.Interval / 1f);
+            }
+            else
+            {
+                StatCell(stats, "彈匣", st.Mag.ToString(), st.Mag / 45f);
+                StatCell(stats, "換彈", $"{st.Reload:0.00}s", 1f - st.Reload / 3f);
+            }
             Ui.Box(ds, Palette.Line, "Rule").Sized(1);
             if (!own)
             {
@@ -560,8 +569,8 @@ namespace RiftWard.Client
                 {
                     int lv = p.Loadout.Level(armoryPick, key);
                     var row = Ui.Rect(ds, "Upgrade").Sized(48);
-                    Ui.Label(row, UpgradeName(key), 16, Palette.Bone, TextAnchor.MiddleLeft, true).rectTransform.Place(new Vector2(0, 0.5f), Vector2.zero, new Vector2(80, 24), new Vector2(0, 0.5f));
-                    Ui.Label(row, key == "damage" ? "每級 +12%" : key == "mag" ? "每級 +15%" : "每級 -8%", 12, Palette.Muted, TextAnchor.MiddleLeft)
+                    Ui.Label(row, UpgradeName(key, wd.Melee), 16, Palette.Bone, TextAnchor.MiddleLeft, true).rectTransform.Place(new Vector2(0, 0.5f), Vector2.zero, new Vector2(80, 24), new Vector2(0, 0.5f));
+                    Ui.Label(row, key == "damage" ? "每級 +12%" : key == "mag" ? (wd.Melee ? "每級 +8%" : "每級 +15%") : "每級 -8%", 12, Palette.Muted, TextAnchor.MiddleLeft)
                         .rectTransform.Place(new Vector2(0, 0.5f), new Vector2(80, 0), new Vector2(110, 20), new Vector2(0, 0.5f));
                     for (int k = 0; k < Defs.MaxUpgradeLevel; k++)
                         Ui.Box(row, k < lv ? Palette.Amber : Palette.Line, "Pip").rectTransform.Place(new Vector2(0, 0.5f), new Vector2(200 + k * 32, 0), new Vector2(28, 6), new Vector2(0, 0.5f));
@@ -583,7 +592,8 @@ namespace RiftWard.Client
             armoryStatus = Ui.Label(ds, "", 14, Palette.Amber).Sized(22);
         }
 
-        static string UpgradeName(string key) => key == "damage" ? "傷害" : key == "mag" ? "彈匣" : "換彈";
+        /// On the 光劍 the 彈匣 / 換彈 upgrades lengthen the reach and speed up the swing.
+        static string UpgradeName(string key, bool melee = false) => key == "damage" ? "傷害" : key == "mag" ? (melee ? "攻擊範圍" : "彈匣") : (melee ? "揮砍速度" : "換彈");
 
         static void StatCell(Transform parent, string label, string value, float ratio)
         {
@@ -1617,8 +1627,8 @@ namespace RiftWard.Client
             int pityLeft = weaponPool ? p.WeaponPity : p.GearPity;
             Ui.Label(s, pityLeft <= 1 ? "保底：下一抽必出傳奇以上！" : $"保底：再 {pityLeft} 抽內必出傳奇以上", 13, pityLeft <= 10 ? Gear.RarityColors[3] : Palette.Muted, TextAnchor.UpperLeft, pityLeft <= 10).Sized(18);
             var odds = Ui.HStack(s, 4).Sized(20);
-            int[] weights = { 50, 30, 14, 5, 1 };
-            for (int i = 0; i < Gear.RarityNames.Length; i++) Ui.Label(odds, $"{Gear.RarityNames[i]} {weights[i]}%", 12, Gear.RarityColors[i]);
+            float[] weights = { 50f, 33f, 14f, 2.5f, 0.5f };   // mirrors RARITY_WEIGHTS in server/service.py
+            for (int i = 0; i < Gear.RarityNames.Length; i++) Ui.Label(odds, $"{Gear.RarityNames[i]} {weights[i]:0.#}%", 12, Gear.RarityColors[i]);
             var draws = Ui.HStack(s, 10).Sized(54);
             var one = PrimaryButton(draws, "抽 1 次", () => { drawPool = pool; Draw(1); }, 17);
             one.interactable = keys >= 1;
@@ -1904,7 +1914,7 @@ namespace RiftWard.Client
             weaponKeysInput.contentType = InputField.ContentType.IntegerNumber;
             weaponKeysInput.text = "0";
             int weaponPick = 0;
-            string[] choices = { "不發放武器", "解鎖 AR-27 突擊步槍", "解鎖 SG-8 霰彈槍", "解鎖 LR-50 狙擊槍" };
+            string[] choices = { "不發放武器", "解鎖 AR-27 突擊步槍", "解鎖 SG-8 霰彈槍", "解鎖 LR-50 狙擊槍", "解鎖 EX-1 能量光劍" };
             Button weaponButton = null;
             weaponButton = Ui.Button(Ui.HStack(gs, 10).Sized(40), choices[0], () => { weaponPick = (weaponPick + 1) % choices.Length; weaponButton.SetCaption(choices[weaponPick]); }, 14);
             var actions = Ui.HStack(gs, 10).Sized(46);

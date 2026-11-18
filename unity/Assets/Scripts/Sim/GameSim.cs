@@ -129,7 +129,8 @@ namespace RiftWard.Sim
             a.Spread = st.Spread;
             a.HeadMultiplier = st.HeadMultiplier;
             a.Zoom = st.Zoom;
-            a.Ammo = Mathf.Min(a.Ammo, a.Mag);
+            a.Range = st.Range;
+            a.Ammo = Defs.Weapons[id].Melee ? a.Mag : Mathf.Min(a.Ammo, a.Mag);   // a blade never runs dry
         }
 
         public void SwitchWeapon(Actor a, int slot)
@@ -163,7 +164,7 @@ namespace RiftWard.Sim
             RefreshWeapon(a);
         }
 
-        float EffectiveSpeed(Actor a) => a.Speed * (a.IsAdmin ? a.Admin.Speed : 1f);
+        public static float EffectiveSpeed(Actor a) => a.Speed * (a.IsAdmin ? a.Admin.Speed : 1f) * (a.Blocking ? Defs.BlockSpeed : 1f);
         bool Flying(Actor a) => a.IsAdmin && a.Admin.Fly;
 
         // ------------------------------------------------------------ movement (shared with client prediction)
@@ -296,7 +297,19 @@ namespace RiftWard.Sim
                 a.PerkHaste = Mathf.Max(0, a.PerkHaste - dt);
                 MoveActor(a, input, dt);
                 a.Ack = input.Seq;
-                if (!a.Alive) continue;
+                if (!a.Alive) { a.Blocking = false; continue; }
+                if (a.Melee)
+                {
+                    a.Blocking = input.Block && !input.Fire;
+                    a.Reload = 0; a.Ammo = a.Mag;
+                    if (input.Fire && a.FireCooldown <= 0)
+                    {
+                        a.FireCooldown = a.FireInterval / (a.PerkHaste > 0 ? 1.4f : 1f);
+                        Swing(a);
+                    }
+                    continue;
+                }
+                a.Blocking = false;
                 UpdateAmmo(a, input, dt);
                 if (input.Fire && a.FireCooldown <= 0 && a.Reload <= 0)
                 {
@@ -686,6 +699,52 @@ namespace RiftWard.Sim
         }
 
         /// Shield troopers block body shots from the front; flank them or aim for the head.
+        /// Damage factor for a bullet travelling along velocity into a player: blocked from the front with a blade.
+        public static float BlockedBy(Actor a, Vector3 velocity)
+        {
+            if (!a.Blocking || velocity.sqrMagnitude < 1e-4f) return 1f;
+            var incoming = new Vector3(-velocity.x, 0, -velocity.z).normalized;
+            return Vector3.Angle(incoming, LookDirection(a.Yaw, 0)) <= Defs.BlockHalfArc ? Defs.BlockFactor : 1f;
+        }
+
+        /// One sword swing: every enemy within reach inside the frontal arc (and not behind cover) is hit, nearest
+        /// first, up to MeleeCleave. A swing that hits nothing still reports a miss so clients play the swing.
+        public void Swing(Actor a)
+        {
+            Vector3 eye = a.Position + Vector3.up * Defs.EyeHeight;
+            Vector3 forward = LookDirection(a.Yaw, 0);
+            float damage = a.Damage;
+            if (Rand01() < a.Critical) damage *= 2f;
+            a.StatShots++;
+            var targets = new List<(Enemy e, float d)>();
+            foreach (var e in Enemies.Values)
+            {
+                var flat = new Vector3(e.Position.x - a.Position.x, 0, e.Position.z - a.Position.z);
+                float d = flat.magnitude, reach = a.Range + 0.45f * e.Scale;
+                if (d > reach || (d > 0.3f && Vector3.Angle(flat, forward) > Defs.MeleeHalfArc)) continue;
+                var chest = e.Position + Vector3.up * e.Scale;
+                var to = chest - eye;
+                if (to.sqrMagnitude > 0.01f && RayBlock(eye, to.normalized, to.magnitude) < to.magnitude - 0.1f) continue;
+                targets.Add((e, d));
+            }
+            targets.Sort((x, y) => x.d.CompareTo(y.d));
+            int hits = 0;
+            foreach (var (e, _) in targets)
+            {
+                if (hits >= Defs.MeleeCleave) break;
+                hits++;
+                var chest = e.Position + Vector3.up * e.Scale;
+                float dealt = damage * DamageMultiplier(e, (chest - eye).normalized, false);
+                e.Hp -= dealt;
+                bool killed = false;
+                a.Hp = Mathf.Min(a.MaxHp, a.Hp + PerkStrength(a, 2f));   // 嗜能之刃
+                if (e.Hp <= 0) { KillEnemy(e, a.Id); killed = true; }
+                Shots.Add(new ShotEvent { Shooter = a.Id, Origin = eye, End = chest, Hit = true, Dealt = dealt, Killed = killed });
+            }
+            if (hits > 0) a.StatHits++;
+            else Shots.Add(new ShotEvent { Shooter = a.Id, Origin = eye, End = eye + forward * a.Range, Hit = false });
+        }
+
         public static float DamageMultiplier(Enemy e, Vector3 dir, bool head)
         {
             if (e.Kind == Defs.KindShield && !head && Vector3.Dot(dir, e.Facing) < -0.3f) return 0.25f;
@@ -954,7 +1013,7 @@ namespace RiftWard.Sim
                     Vector3 body = a.Position + Vector3.up * 0.9f;
                     if (Mathf.Abs(b.Position.y - body.y) < 1f && new Vector2(b.Position.x - body.x, b.Position.z - body.z).magnitude < Defs.BulletHitRadius)
                     {
-                        a.Hp = Mathf.Max(0, a.Hp - b.Damage);
+                        a.Hp = Mathf.Max(0, a.Hp - b.Damage * BlockedBy(a, b.Velocity));
                         hit = true;
                         break;
                     }

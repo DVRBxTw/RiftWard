@@ -140,6 +140,8 @@ namespace RiftWard.Client
                 // Kill confirmation: a bright tap falling to a soft thud.
                 case "kill": return Events(name, new[] { (0f, 0.05f, 1320f, 0.05f, 0.35f), (0.045f, 0.11f, 520f, 0.15f, 0.45f) });
                 case "vent": return Hiss(name, 0.75f);
+                // Blade connecting: a hot sizzle with a low thump.
+                case "saber_hit": return Events(name, new[] { (0f, 0.05f, 140f, 0.3f, 0.6f), (0.01f, 0.16f, 2600f, 0.9f, 0.4f) });
                 case "heartbeat": return Events(name, new[] { (0f, 0.09f, 55f, 0.1f, 0.9f), (0.22f, 0.08f, 50f, 0.1f, 0.7f) });
                 default: return Tone(name, 440, 0.05f, 0.1f, 0f);
             }
@@ -156,7 +158,7 @@ namespace RiftWard.Client
             string baseName = name.Split('#')[0];   // "#n" picks a variant: same sound, different noise
             bool rare = baseName.EndsWith("_rare");
             string weapon = baseName.Substring(5).Replace("_rare", "");
-            float duration = weapon == "sniper" ? 0.75f : weapon == "shotgun" ? 0.38f : weapon == "rifle" ? 0.2f : 0.15f;
+            float duration = weapon == "sniper" ? 0.75f : weapon == "shotgun" ? 0.38f : weapon == "rifle" ? 0.2f : weapon == "saber" ? 0.34f : 0.15f;
             int count = (int)(FireRate * duration);
             var data = new float[count];
             var rng = new System.Random(name.GetHashCode());
@@ -196,6 +198,22 @@ namespace RiftWard.Client
                         p4 += 2 * Mathf.PI * (42f + 70f * Mathf.Exp(-t * 35f)) * dt;
                         v += Mathf.Sin(p4) * Mathf.Exp(-t * 20f) * 0.5f;
                         if (t > 0.014f) { band += (noise - band) * 0.55f; v += (noise - band) * Mathf.Exp(-(t - 0.014f) * 220f) * 0.35f; }
+                        break;
+                    }
+                    case "saber":
+                    {
+                        // Energy blade swing: an airy whoosh that rises and falls, over a buzzing hum that bends
+                        // in pitch as the blade moves (Doppler-like), with a bright crackle on top.
+                        float swell = Mathf.Sin(Mathf.PI * Mathf.Clamp01(t / 0.3f));
+                        band += (noise - band) * Mathf.Lerp(0.08f, 0.4f, swell);
+                        float hum = 92f * (1f + 0.35f * swell);
+                        p1 += 2 * Mathf.PI * hum * dt;
+                        p2 += 2 * Mathf.PI * hum * 2.01f * dt;
+                        float saw = (p1 / (2 * Mathf.PI)) % 1f * 2f - 1f;
+                        if (rng.NextDouble() < 0.01 * swell) crackle = 1f;
+                        crackle *= 0.9f;
+                        v = band * swell * 0.7f + (saw * 0.35f + Mathf.Sin(p2) * 0.25f) * (0.35f + 0.65f * swell) * Mathf.Exp(-t * 3f)
+                            + noise * crackle * 0.25f;
                         break;
                     }
                     case "shotgun":

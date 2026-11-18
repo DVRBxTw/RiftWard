@@ -300,12 +300,17 @@ namespace RiftWard.Client
                 case "rifle": muzzleZ = Rifle(holder); break;
                 case "shotgun": muzzleZ = Shotgun(holder); break;
                 case "sniper": muzzleZ = Sniper(holder); break;
+                case "saber": muzzleZ = Saber(holder, rarity); break;
                 default: muzzleZ = Pistol(holder); break;
             }
-            Detail(holder, muzzleZ);
-            WeaponFinish(holder, rarity, muzzleZ);
+            bool melee = weapon == "saber";
+            if (!melee)   // the gun details and rarity finish are shaped for guns; the blade shows rarity itself
+            {
+                Detail(holder, muzzleZ);
+                WeaponFinish(holder, rarity, muzzleZ);
+            }
             Surfaces(holder);
-            if (firstPerson)
+            if (firstPerson && !melee)
             {
                 AmmoBar(holder);
                 // Heat sleeve over the end of the barrel: invisible when cold, glows orange as the gun heats up.
@@ -685,6 +690,41 @@ namespace RiftWard.Client
             ammoAt = new Vector3(-0.0365f, 0.016f, 0.2f); ammoCell = new Vector3(0.003f, 0.01f, 0); ammoLength = 0.13f;    // forend flank
             heatY = 0.02f; heatWidth = 0.04f; heatLength = 0.14f;
             return 0.7f;
+        }
+
+        /// Blade colour by rarity: cyan up to 普通, then the rarity colour (稀世 violet, 傳奇 gold, 神話 crimson).
+        public static Color BladeColor(int rarity) => rarity >= 2 ? Gear.RarityColors[Mathf.Clamp(rarity, 0, 4)] : Palette.Hex("6fd3ff");
+
+        /// EX-1 energy sword: ribbed metal hilt with an emitter, guard ring and glowing switch, and a plasma blade
+        /// (white-hot core inside a coloured glow). Held angled up and forward; 傳奇+ get gold hilt bands, 神話
+        /// a second, crackling outer glow.
+        static float Saber(Transform h, int rarity)
+        {
+            var saber = Part(h, "Saber", new Vector3(0, -0.02f, 0.02f));
+            saber.localRotation = Quaternion.Euler(-58, 0, 0);
+            Color hilt = Palette.Hex("3a3f47"), grip = Palette.Hex("15171a"), blade = BladeColor(rarity);
+            Barrel(saber, new Vector3(0, 0, 0), 0.042f, 0.2f, hilt);
+            for (int i = 0; i < 6; i++) Barrel(saber, new Vector3(0, 0, -0.07f + i * 0.026f), 0.046f, 0.012f, grip);
+            Barrel(saber, new Vector3(0, 0, -0.112f), 0.05f, 0.024f, GunEdge);                       // pommel
+            Barrel(saber, new Vector3(0, 0, 0.112f), 0.056f, 0.024f, GunEdge);                       // emitter
+            Barrel(saber, new Vector3(0, 0, 0.128f), 0.064f, 0.008f, rarity >= 3 ? Palette.Hex("d9a73e") : hilt);   // guard ring
+            P(saber, new Vector3(0, 0.024f, 0.03f), new Vector3(0.012f, 0.008f, 0.02f), blade, 4f);  // switch
+            if (rarity >= 3)
+                foreach (float z in new[] { -0.04f, 0.06f }) Barrel(saber, new Vector3(0, 0, z), 0.047f, 0.008f, Palette.Hex("d9a73e"));
+            var b = Part(saber, "Blade", new Vector3(0, 0, 0.56f));
+            Barrel(b, Vector3.zero, 0.02f, 0.86f, Color.Lerp(blade, Color.white, 0.75f));
+            var glow = Build.Cylinder(b, Vector3.zero, 0.05f, 0.9f, blade, 4f);
+            glow.transform.localRotation = Quaternion.Euler(90, 0, 0);
+            glow.GetComponent<MeshRenderer>().sharedMaterial = Build.Mat(blade, 4f, 0.45f);
+            Build.Sphere(b, new Vector3(0, 0, 0.45f), 0.05f, Color.Lerp(blade, Color.white, 0.6f), 4f, false);
+            if (rarity >= 4)
+            {
+                var outer = Build.Cylinder(b, Vector3.zero, 0.09f, 0.94f, blade, 3f);
+                outer.transform.localRotation = Quaternion.Euler(90, 0, 0);
+                outer.GetComponent<MeshRenderer>().sharedMaterial = Build.Mat(blade, 3f, 0.2f);
+                outer.AddComponent<Spinner>().Pulse = 0.25f;
+            }
+            return 0.2f;
         }
 
         /// P-9 sidearm: slide with serrations and amber sights, frame with rail, textured grip and extended magazine.

@@ -453,18 +453,20 @@ namespace RiftWard.Client
                 weaponName.text = Defs.Weapons[local.WeaponId].Name;
                 weaponName.color = Gear.RarityColors[rarity];
                 if (Changed(weaponRarity, ((long)rarity << 32) | (long)Mathf.RoundToInt(local.Damage))) weaponRarity.text = $"{Gear.RarityNames[rarity]}  ·  傷害 {local.Damage:0}";
-                bool reloading = local.Reload > 0;
-                bool lowMag = !reloading && local.Ammo <= Mathf.Max(1, local.Mag / 5);
-                if (Changed(ammo, reloading ? -1 : local.Ammo)) ammo.text = reloading ? "換彈" : local.Ammo.ToString();
-                ammo.fontSize = reloading ? 30 : 56;
+                bool melee = local.Melee;
+                bool reloading = !melee && local.Reload > 0;
+                bool lowMag = !melee && !reloading && local.Ammo <= Mathf.Max(1, local.Mag / 5);
+                if (Changed(ammo, melee ? -2 : reloading ? -1 : local.Ammo)) ammo.text = melee ? "近戰" : reloading ? "換彈" : local.Ammo.ToString();
+                ammo.fontSize = reloading || melee ? 30 : 56;
                 ammo.color = reloading || lowMag ? Palette.Amber : Palette.Bone;
-                if (Changed(ammoMax, local.Mag)) ammoMax.text = $"/ {local.Mag}";
+                if (Changed(ammoMax, melee ? -1 : local.Mag)) ammoMax.text = melee ? "" : $"/ {local.Mag}";
                 reloadBar.Value = reloading ? 1f - local.Reload / local.ReloadTime : (float)local.Ammo / Mathf.Max(1, local.Mag);
                 reloadBar.Color = reloading ? Palette.Amber : Palette.Bone;
                 lowAmmo.text = lowMag && local.Alive ? (local.Ammo == 0 ? $"彈匣已空 · 按 {Bindings.Name(Bindings.Action.Reload)} 換彈" : $"彈藥不足 · 按 {Bindings.Name(Bindings.Action.Reload)} 換彈") : "";
                 lowAmmo.color = new Color(Palette.Amber.r, Palette.Amber.g, Palette.Amber.b, 0.6f + 0.4f * Mathf.Sin(Time.time * 8f));
-                if (Changed(hint, (thirdPerson ? 1 : 0) | ((long)Bindings.Key(Bindings.Action.Reload) << 1) | ((long)Bindings.Key(Bindings.Action.View) << 20)))
-                    hint.text = $"{Bindings.Name(Bindings.Action.Reload)} 換彈  ·  右鍵 瞄準  ·  {Bindings.Name(Bindings.Action.View)} {(thirdPerson ? "第三人稱" : "第一人稱")}  ·  Esc 選單";
+                if (Changed(hint, (thirdPerson ? 1 : 0) | ((long)Bindings.Key(Bindings.Action.Reload) << 1) | ((long)Bindings.Key(Bindings.Action.View) << 20) | (melee ? 1L << 40 : 0)))
+                    hint.text = melee ? $"左鍵 揮砍  ·  右鍵 格擋  ·  {Bindings.Name(Bindings.Action.View)} {(thirdPerson ? "第三人稱" : "第一人稱")}  ·  Esc 選單"
+                        : $"{Bindings.Name(Bindings.Action.Reload)} 換彈  ·  右鍵 瞄準  ·  {Bindings.Name(Bindings.Action.View)} {(thirdPerson ? "第三人稱" : "第一人稱")}  ·  Esc 選單";
                 revive.text = "";
                 if (!local.Alive && sim.Actors.Count > 1)
                     revive.text = $"你已倒地 · 等待隊友按住 {Bindings.Name(Bindings.Action.Interact)} 救援  {Mathf.RoundToInt(100 * local.Revive / Defs.ReviveTime)}%";

@@ -630,6 +630,38 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(self.call("/api/friends/respond",{"username":"Third_Test","accept":False},auth)[1]["incoming"],[])
         self.assertEqual(self.call("/api/friends/respond",{"username":"Third_Test","accept":True},auth)[0],400)
 
+    def test_supply_odds(self):
+        self.assertEqual(sum(service.RARITY_WEIGHTS),100)
+        self.assertEqual(service.RARITY_WEIGHTS[3:],[2.5,0.5])
+        # Over many draws without pity the rates land on the published odds.
+        rng = random.Random(1234)
+        counts = [0]*5
+        n = 200000
+        for _ in range(n):
+            counts[service.roll_rarity(rng, 0)[0]] += 1
+        for rarity, percent in enumerate(service.RARITY_WEIGHTS):
+            self.assertAlmostEqual(100*counts[rarity]/n, percent, delta=0.25)
+        # Pity still forces 傳奇 or 神話 on the 50th draw, at the same 5:1 ratio.
+        forced = [service.roll_rarity(rng, service.PITY_LIMIT-1)[0] for _ in range(6000)]
+        self.assertTrue(all(r >= 3 for r in forced))
+        self.assertAlmostEqual(forced.count(4)/len(forced), 1/6, delta=0.02)
+
+    def test_saber_is_a_rare_weapon_draw(self):
+        weights = service.WEAPON_WEIGHTS
+        self.assertAlmostEqual(weights["saber"]/sum(weights.values()), 0.048, delta=0.001)
+        self.assertLess(weights["saber"], min(v for k, v in weights.items() if k != "saber"))
+        # Drawn, it joins the armory like any gun and can be upgraded and equipped.
+        account = self.register()
+        auth = {"Authorization":"Bearer "+account["token"]}
+        aid = account["profile"]["id"]
+        self.store.admin_grant("Beta_Test",5000,"saber")
+        profile = self.call("/api/me",{},auth)[1]["profile"]
+        self.assertIn("saber",profile["loadout"]["owned"])
+        self.assertIn("saber",profile["loadout"]["equipped"])
+        response = self.call("/api/shop/upgrade",{"weapon":"saber","stat":"mag"},auth)
+        self.assertEqual(response[1]["profile"]["loadout"]["levels"]["saber"]["mag"],1)
+        self.assertEqual(response[1]["profile"]["gold"],5000-service.upgrade_cost("saber",0,1))
+
     def test_manifest_and_path_restriction(self):
         code, manifest = self.call("/api/version")
         self.assertEqual(code,200)

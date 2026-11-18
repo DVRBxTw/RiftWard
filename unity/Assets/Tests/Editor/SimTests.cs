@@ -381,6 +381,54 @@ namespace RiftWard.Tests
         }
 
         [Test]
+        public void SaberSwingsCleaveAndBlocks()
+        {
+            var kit = new Loadout { Owned = new List<string> { "saber" }, Equipped = new List<string> { "saber" } };
+            var sim = new GameSim(9);
+            var a = sim.AddActor(1, kit);
+            sim.StartMission(0);
+            sim.WaveDelay = 999f;
+            Assert.IsTrue(a.Melee);
+            Assert.AreEqual(2.8f, a.Range, 1e-4f);
+            Enemy Put(int id, Vector3 offset)
+            {
+                var e = new Enemy { Id = id, Position = a.Position + offset, Hp = 9999, MaxHp = 9999, Speed = 0, Damage = 0 };
+                sim.ApplyKind(e, Defs.KindGrunt);
+                e.Hp = e.MaxHp = 9999;
+                sim.Enemies[id] = e;
+                return e;
+            }
+            // Four in front within reach, one behind, one out of reach.
+            var front = new[] { Put(1, new Vector3(0, 0, 1.2f)), Put(2, new Vector3(0.8f, 0, 1.8f)), Put(3, new Vector3(-0.8f, 0, 2f)), Put(4, new Vector3(0, 0, 2.6f)) };
+            var behind = Put(5, new Vector3(0, 0, -1.5f));
+            var far = Put(6, new Vector3(0, 0, 6f));
+            sim.Inputs[1] = new PlayerInput { Fire = true, Yaw = 0 };
+            sim.Tick(0.02f);
+            Assert.AreEqual(3, front.Count(e => e.Hp < 9999), "cleaves the three nearest in the arc");
+            Assert.Less(front[0].Hp, 9999f);
+            Assert.AreEqual(9999f, front[3].Hp, "the fourth is left for the next swing");
+            Assert.AreEqual(9999f, behind.Hp);
+            Assert.AreEqual(9999f, far.Hp);
+            Assert.AreEqual(a.Mag, a.Ammo, "a blade never uses ammo");
+            Assert.AreEqual(0f, a.Reload);
+            Assert.IsTrue(sim.Shots.All(s => s.Hit));
+
+            // Guarding: bullets from the front deal 30%, from behind full damage; guarding slows movement.
+            sim.Inputs[1] = new PlayerInput { Block = true, Yaw = 0 };
+            sim.Tick(0.02f);
+            Assert.IsTrue(a.Blocking);
+            Assert.AreEqual(Defs.BlockFactor, GameSim.BlockedBy(a, new Vector3(0, 0, -5f)), 1e-4f);
+            Assert.AreEqual(1f, GameSim.BlockedBy(a, new Vector3(0, 0, 5f)), 1e-4f);
+            Assert.AreEqual(Defs.BaseSpeed * Defs.BlockSpeed, GameSim.EffectiveSpeed(a), 1e-3f);
+            // Attacking drops the guard.
+            sim.Inputs[1] = new PlayerInput { Block = true, Fire = true, Yaw = 0 };
+            sim.Tick(0.02f);
+            Assert.IsFalse(a.Blocking);
+            // The 彈匣 upgrade lengthens the reach.
+            Assert.AreEqual(2.8f * 1.4f, Defs.Weapons["saber"].StatsAt(0, 5, 0).Range, 1e-4f);
+        }
+
+        [Test]
         public void BossesAreGiantSoldiersWithEnragePhase()
         {
             var sim = NewMission();

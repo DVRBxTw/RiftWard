@@ -72,7 +72,7 @@ namespace RiftWard.Sim
         public static void Write(this BinaryWriter w, PlayerInput i)
         {
             w.Write(i.Seq); w.Write(i.Move.x); w.Write(i.Move.y); w.Write(i.Yaw); w.Write(i.Pitch); w.Write(i.Aim);
-            int flags = (i.Fire ? 1 : 0) | (i.Dash ? 2 : 0) | (i.Jump ? 4 : 0) | (i.Descend ? 8 : 0) | (i.Reload ? 16 : 0) | (i.Skill ? 32 : 0) | (i.Interact ? 64 : 0);
+            int flags = (i.Fire ? 1 : 0) | (i.Dash ? 2 : 0) | (i.Jump ? 4 : 0) | (i.Descend ? 8 : 0) | (i.Reload ? 16 : 0) | (i.Skill ? 32 : 0) | (i.Interact ? 64 : 0) | (i.Block ? 128 : 0);
             w.Write((byte)flags);
             w.Write((byte)Mathf.Clamp(i.Slot, 0, 255));
         }
@@ -82,7 +82,7 @@ namespace RiftWard.Sim
             var i = new PlayerInput { Seq = r.ReadInt32(), Move = new Vector2(r.ReadSingle(), r.ReadSingle()), Yaw = r.ReadSingle(), Pitch = r.ReadSingle(), Aim = r.ReadVector3() };
             int f = r.ReadByte();
             i.Fire = (f & 1) != 0; i.Dash = (f & 2) != 0; i.Jump = (f & 4) != 0; i.Descend = (f & 8) != 0;
-            i.Reload = (f & 16) != 0; i.Skill = (f & 32) != 0; i.Interact = (f & 64) != 0;
+            i.Reload = (f & 16) != 0; i.Skill = (f & 32) != 0; i.Interact = (f & 64) != 0; i.Block = (f & 128) != 0;
             i.Slot = r.ReadByte();
             if (!float.IsFinite(i.Yaw) || !float.IsFinite(i.Pitch) || !float.IsFinite(i.Move.x) || !float.IsFinite(i.Move.y) ||
                 !float.IsFinite(i.Aim.x) || !float.IsFinite(i.Aim.y) || !float.IsFinite(i.Aim.z)) i = new PlayerInput { Seq = i.Seq };
@@ -106,7 +106,7 @@ namespace RiftWard.Sim
                 w.Write(a.Id); w.Write(a.Position); w.Write(a.Hp); w.Write(a.MaxHp); w.Write(a.Yaw); w.Write(a.VerticalVelocity);
                 w.Write(a.DashCooldown); w.Write(a.DashLeft); w.Write(a.DashDirection); w.Write(a.Ack);
                 w.Write(a.Ammo); w.Write(a.Mag); w.Write(a.Reload); w.Write(a.ReloadTime); w.Write((byte)a.Slot);
-                w.Write(a.SkillCooldown); w.Write(a.SkillMult); w.Write(a.Revive); w.Write(a.Speed * (a.IsAdmin ? a.Admin.Speed : 1f));
+                w.Write(a.SkillCooldown); w.Write(a.SkillMult); w.Write(a.Revive); w.Write(GameSim.EffectiveSpeed(a));
                 w.Write(a.IsAdmin && a.Admin.Fly); w.Write(a.Zoom);
                 w.Write((byte)a.Loadout.Equipped.Count);
                 foreach (var weapon in a.Loadout.Equipped) w.Write(weapon);

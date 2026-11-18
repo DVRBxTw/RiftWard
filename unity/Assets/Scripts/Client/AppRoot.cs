@@ -578,10 +578,10 @@ namespace RiftWard.Client
                 ["bonus"] = new Dictionary<string, object> { ["hp"] = 42.0, ["damage"] = 22.0, ["speed"] = 6.0, ["crit"] = 5.0 },
                 ["loadout"] = new Dictionary<string, object>
                 {
-                    ["owned"] = new List<object> { "pistol", "rifle", "sniper" }, ["equipped"] = new List<object> { "pistol", "sniper" },
-                    ["rarity"] = new Dictionary<string, object> { ["pistol"] = 4.0, ["rifle"] = 0.0, ["sniper"] = 3.0 },
-                    ["copies"] = new Dictionary<string, object> { ["pistol"] = new List<object> { 1.0, 4.0, 0.0, 2.0 }, ["rifle"] = new List<object> { 0.0 }, ["sniper"] = new List<object> { 3.0 } },
-                    ["active"] = new Dictionary<string, object> { ["pistol"] = 1.0, ["rifle"] = 0.0, ["sniper"] = 0.0 },
+                    ["owned"] = new List<object> { "pistol", "rifle", "sniper", "saber" }, ["equipped"] = new List<object> { "pistol", "sniper" },
+                    ["rarity"] = new Dictionary<string, object> { ["pistol"] = 4.0, ["rifle"] = 0.0, ["sniper"] = 3.0, ["saber"] = 3.0 },
+                    ["copies"] = new Dictionary<string, object> { ["pistol"] = new List<object> { 1.0, 4.0, 0.0, 2.0 }, ["rifle"] = new List<object> { 0.0 }, ["sniper"] = new List<object> { 3.0 }, ["saber"] = new List<object> { 3.0 } },
+                    ["active"] = new Dictionary<string, object> { ["pistol"] = 1.0, ["rifle"] = 0.0, ["sniper"] = 0.0, ["saber"] = 0.0 },
                 },
             });
             // Achievements in every state: unclaimed tiers, partial progress, finished with a title.
@@ -705,6 +705,10 @@ namespace RiftWard.Client
             Screens.ShowArmory();
             yield return Settle(0.5f);
             yield return Shot(folder, "unity-armory-rarity");
+            Screens.ShowArmoryFor("saber");
+            yield return Settle(0.6f);
+            yield return Shot(folder, "unity-armory-saber");
+            Screens.ShowArmoryFor("pistol");
             Hints.Maybe(Screens.Root, "armory", true);
             yield return Settle(0.3f);
             yield return Shot(folder, "unity-hint");
@@ -907,6 +911,39 @@ namespace RiftWard.Client
                 Client.SetWeaponStateForCapture(hot, since + 0.03f);
                 yield return null;
                 yield return Shot(folder, "unity-gun-" + w);
+            }
+            // 光劍: a swing through a group in front (first person mid-swing), the guard pose, and third person.
+            {
+                var blade = new Loadout { Owned = new List<string> { "saber" }, Equipped = new List<string> { "saber" } };
+                blade.Rarity["saber"] = 3;
+                Client.WeaponRarity = id => 3;
+                Client.StartOffline(0, blade, true, new AdminSettings { God = true });
+                var bs = Client.Sim;
+                bs.WaveDelay = 999f;
+                var bm = bs.Actors[Client.LocalId];
+                Client.SetView(0f, -0.05f);
+                for (int k = 0; k < 4; k++)
+                {
+                    var foe = new Enemy { Id = 7000 + k, Position = bm.Position + new Vector3(-1.2f + k * 0.8f, 0, 2.2f + (k % 2) * 0.5f), Speed = 0, Damage = 0 };
+                    bs.ApplyKind(foe, k == 3 ? Defs.KindGuard : Defs.KindGrunt);
+                    foe.Hp = foe.MaxHp = 5000; foe.ShotCooldown = 99f; foe.MeleeCooldown = 99f;
+                    bs.Enemies[foe.Id] = foe;
+                }
+                yield return Settle(0.4f);
+                bs.Swing(bm);
+                yield return Settle(0.07f);
+                yield return Shot(folder, "unity-saber-swing");
+                yield return Settle(0.5f);
+                GameClient.CaptureGuard = true;
+                yield return Settle(0.4f);
+                yield return Shot(folder, "unity-saber-guard");
+                GameClient.CaptureGuard = false;
+                Client.SetThirdPerson(true);
+                yield return Settle(0.3f);
+                bs.Swing(bm);
+                yield return Settle(0.06f);
+                yield return Shot(folder, "unity-saber-third");
+                Client.SetThirdPerson(false);
             }
             Application.Quit();
         }

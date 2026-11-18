@@ -27,7 +27,7 @@ VERSION = "0.4.2-beta.1"
 
 # Armory catalog. The game client mirrors these numbers for display only;
 # every purchase is priced and validated here.
-WEAPON_PRICES = {"pistol": 0, "rifle": 400, "shotgun": 600, "sniper": 800}
+WEAPON_PRICES = {"pistol": 0, "rifle": 400, "shotgun": 600, "sniper": 800, "saber": 0}
 UPGRADE_STATS = ("damage", "mag", "reload")
 MAX_UPGRADE = 5
 MAX_REWARD = 8000   # mirrors GameSim.MaxMissionGold (噩夢 multiplies the gold of a cleared mission)
@@ -124,7 +124,7 @@ GEAR_LEVEL_BONUS = 0.2                         # every enhancement level adds 20
 
 
 def upgrade_cost(weapon: str, level: int, rarity: int = 1) -> int:
-    factor = {"pistol": 1.0, "rifle": 1.3, "shotgun": 1.4, "sniper": 1.6}[weapon]
+    factor = {"pistol": 1.0, "rifle": 1.3, "shotgun": 1.4, "sniper": 1.6, "saber": 1.5}[weapon]
     return int(round(120 * (level + 1) * factor * RARITY_UPGRADE_MULT[max(0, min(len(RARITY_UPGRADE_MULT) - 1, rarity))]))
 
 
@@ -147,7 +147,7 @@ TALENTS = {"hp": 5, "damage": 2, "speed": 1.5, "reload": 3, "crit": 1}   # bonus
 TALENT_MAX = 10
 GEAR_SLOTS = {"armor": "hp", "module": "damage", "boots": "speed", "chip": "crit"}
 RARITIES = ["劣質", "普通", "稀世", "傳奇", "神話"]
-RARITY_WEIGHTS = [50, 30, 14, 5, 1]
+RARITY_WEIGHTS = [50, 33, 14, 2.5, 0.5]   # percent per draw; mirrored on the supply screen (Screens.cs)
 # Primary stat value per rarity for each stat (hp is flat, the rest are percentages).
 GEAR_VALUES = {"hp": [6, 12, 20, 32, 50], "damage": [2, 4, 7, 11, 16], "speed": [2, 3, 5, 8, 12],
                "crit": [2, 3, 5, 8, 12], "reload": [3, 5, 8, 12, 18]}
@@ -200,7 +200,7 @@ def roll_item(rng, rarity=None):
     return {"id": secrets.token_hex(6), "slot": slot, "rarity": rarity, "stats": stats}
 
 
-WEAPON_WEIGHTS = {"pistol": 30, "rifle": 30, "shotgun": 20, "sniper": 20}
+WEAPON_WEIGHTS = {"pistol": 30, "rifle": 30, "shotgun": 20, "sniper": 20, "saber": 5}   # the 光劍 is a rare find: 5 / 105 ≈ 4.8% of draws
 DUPLICATE_GOLD = [20, 50, 120, 300, 800]
 GEAR_SALVAGE_GOLD = [10, 25, 60, 150, 400]
 

@@ -30,6 +30,31 @@ namespace RiftWard.Client
             }
         }
 
+        /// Sword swing: a curved, fading ribbon of light sweeping through the arc in front of the swinger.
+        public static void Slash(Vector3 centre, float yaw, float radius, Color color, bool leftToRight)
+        {
+            const int points = 14;
+            var go = new GameObject("Slash");
+            var line = Line(go, color, 0.12f, 0.12f);
+            line.positionCount = points;
+            float half = Defs.MeleeHalfArc * Mathf.Deg2Rad;
+            for (int i = 0; i < points; i++)
+            {
+                float t = i / (points - 1f);
+                float a = yaw + Mathf.Lerp(-half, half, leftToRight ? t : 1f - t);
+                line.SetPosition(i, centre + new Vector3(Mathf.Sin(a), Mathf.Lerp(0.18f, -0.22f, t), Mathf.Cos(a)) * radius);
+            }
+            // Thin at the start of the stroke, full at the leading edge.
+            line.widthCurve = new AnimationCurve(new Keyframe(0, 0.15f), new Keyframe(0.75f, 1f), new Keyframe(1, 0.4f));
+            go.AddComponent<Beam>().Init(line, color, 0.12f, 0.16f);
+            var core = new GameObject("SlashCore");
+            var coreLine = Line(core, Color.white, 0.04f, 0.04f);
+            coreLine.positionCount = points;
+            for (int i = 0; i < points; i++) coreLine.SetPosition(i, line.GetPosition(i));
+            coreLine.widthCurve = line.widthCurve;
+            core.AddComponent<Beam>().Init(coreLine, Color.white, 0.04f, 0.1f);
+        }
+
         static readonly Queue<GameObject> scorches = new Queue<GameObject>();
         const int MaxScorches = 48;
 
@@ -114,7 +139,7 @@ namespace RiftWard.Client
         }
 
         /// A straight beam that thins and fades out.
-        sealed class Beam : MonoBehaviour
+        public sealed class Beam : MonoBehaviour
         {
             LineRenderer line;
             float life, t, width;
@@ -128,8 +153,13 @@ namespace RiftWard.Client
                 b.line = Line(go, b.color, width, width);
                 b.line.SetPosition(0, from);
                 b.line.SetPosition(1, to);
+                b.line.startWidth = b.line.endWidth = 1f;   // the width lives in widthMultiplier so it can fade
+                b.line.widthMultiplier = width;
                 b.life = life; b.width = width;
             }
+
+            /// Takes over an existing line (its widthCurve gives the shape, w the overall width).
+            public void Init(LineRenderer existing, Color c, float w, float l) { line = existing; color = c; width = w; life = l; line.widthMultiplier = w; }
 
             void Update()
             {
@@ -137,7 +167,7 @@ namespace RiftWard.Client
                 float k = Mathf.Clamp01(t / life);
                 var c = color; c.a *= (1f - k) * (1f - k);
                 line.startColor = line.endColor = c;
-                line.startWidth = line.endWidth = width * (1f - 0.6f * k);
+                line.widthMultiplier = width * (1f - 0.6f * k);
                 if (t >= life) Destroy(gameObject);
             }
         }

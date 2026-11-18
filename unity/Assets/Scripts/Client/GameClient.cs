@@ -45,6 +45,8 @@ namespace RiftWard.Client
         /// Test aimbot (admin ability panel, client only): while aiming, the view turns onto the nearest visible
         /// enemy's head, as a view-locking cheat would. The server only sees an ordinary view direction.
         public static bool TestAimbot;
+        /// Automated screenshots only: hold the blade's guard pose.
+        public static bool CaptureGuard;
         /// 0 = snap instantly, 1 = slow glide.
         public static float TestAimbotSmooth = 0.3f;
         public const float TestAimbotFov = 45f;
@@ -395,6 +397,7 @@ namespace RiftWard.Client
                 Reload = active && Bindings.Held(Bindings.Action.Reload),
                 Skill = active && Bindings.Held(Bindings.Action.Skill),
                 Interact = active && Bindings.Held(Bindings.Action.Interact),
+                Block = active && me != null && me.Melee && Input.GetMouseButton(1),
                 Slot = desiredSlot,
             };
             SubmitInput(input);
@@ -421,9 +424,10 @@ namespace RiftWard.Client
             // A shotgun blast arrives as one event per pellet: sound and muzzle flash play once per shooter,
             // and your hit confirmation once per batch (a headshot if any pellet was one).
             firedThisBatch.Clear();
-            localHit = localHead = localKill = false;
+            localHit = localHead = localKill = localSlash = false;
             foreach (var shot in Sim.Shots) ShotEffect(shot);
-            if (localHit || localHead) Sfx.Play(localHead ? "head" : "hit", 0.45f);
+            if (localSlash) Sfx.Play("saber_hit", 0.55f);
+            else if (localHit || localHead) Sfx.Play(localHead ? "head" : "hit", 0.45f);
             if (localKill) Sfx.Play("kill", 0.5f);
             foreach (var ex in Sim.Explosions) ExplosionEffect(ex);
             foreach (var text in Sim.Announcements) Hud.Announce(text);
@@ -447,7 +451,36 @@ namespace RiftWard.Client
         // ------------------------------------------------------------ effects
 
         readonly HashSet<int> firedThisBatch = new HashSet<int>();
-        bool localHit, localHead, localKill;
+        bool localHit, localHead, localKill, localSlash;
+        bool swingLeft;
+        Vector3 meleeEuler, meleeOffset;
+        float blockPose;
+
+        /// A sword swing: one light ribbon and swing sound per swinger and batch, a burst of sparks on each enemy hit.
+        void SwingEffect(ShotEvent shot, Actor swinger)
+        {
+            int rarity = swinger.Loadout.RarityOf(swinger.WeaponId);
+            Color blade = Models.BladeColor(rarity);
+            bool mine = shot.Shooter == LocalId;
+            if (firedThisBatch.Add(shot.Shooter))
+            {
+                if (mine) { ApplyRecoil(); swingLeft = !swingLeft; }
+                bool firstPerson = mine && !thirdPerson;
+                Vector3 centre = firstPerson ? Camera.transform.position + Vector3.down * 0.25f : shot.Origin + Vector3.down * 0.35f;
+                WeaponFx.Slash(centre, swinger.Yaw, firstPerson ? 1.25f : Mathf.Max(1.2f, swinger.Range * 0.7f), blade, mine ? swingLeft : true);
+                if (mine) Sfx.Play(Sfx.FireName("saber", rarity), 0.55f);
+                else Sfx.PlayAt(Sfx.FireName("saber", rarity), shot.Origin, 0.5f);
+                if (mine) Hud.OnLocalShot(shot, Camera);
+            }
+            if (!shot.Hit) return;
+            if (mine) { localHit = true; localKill |= shot.Killed; localSlash = true; }
+            Burst.Sphere(shot.End, Color.Lerp(blade, Color.white, 0.4f), 0.85f, 5f, 0.15f, 0.7f, 0.12f).GetComponent<Burst>().AddLight(blade, 3f, 4f);
+            for (int i = 0; i < 6; i++)
+            {
+                var spark = Build.Cube(null, shot.End, Vector3.one * 0.05f, Color.Lerp(blade, Color.white, 0.5f), 5f, false);
+                effects.Add((spark, 0.3f, UnityEngine.Random.onUnitSphere * 5f + Vector3.up * 2f, 700f));
+            }
+        }
 
         void ShotEffect(ShotEvent shot)
         {
@@ -458,6 +491,7 @@ namespace RiftWard.Client
                 var shooterRig = shooterView.GetComponent<CharacterRig>();
                 if (shooterRig != null) { shooterRig.Fire(); if (shooterRig.Muzzle != null) origin = shooterRig.Muzzle.position; }
             }
+            if (Sim.Actors.TryGetValue(shot.Shooter, out var swinger) && swinger.Melee) { SwingEffect(shot, swinger); return; }
             // A miss that stopped short of full range hit a wall or the ground.
             if (!shot.Hit && Vector3.Distance(shot.Origin, shot.End) < Defs.ShotRange - 0.5f) ImpactEffect(shot.End, shot.End - shot.Origin);
             int rarity = Sim.Actors.TryGetValue(shot.Shooter, out var shooter) ? shooter.Loadout.RarityOf(shooter.WeaponId) : 1;
@@ -721,7 +755,8 @@ namespace RiftWard.Client
             recoilPending += kick * 0.65f;
             shake = 0.02f + kick * 0.9f;
             cycle = 0f;
-            this.kick = 1f;
+            this.kick = me.Melee ? 0.35f : 1f;
+            if (me.Melee) return;   // a blade has no heat or magazine
             heat = Mathf.Min(1.2f, heat + (me.WeaponId == "sniper" ? 0.4f : me.WeaponId == "shotgun" ? 0.26f : me.WeaponId == "rifle" ? 0.055f : 0.08f));
             hotVented = false;
             if (me.Ammo > 0 && me.Ammo <= Mathf.Max(2, Mathf.CeilToInt(me.Mag * 0.2f))) Sfx.Play("lowammo", 0.35f);
@@ -953,9 +988,9 @@ namespace RiftWard.Client
             float seat = reload > 0.8f && reload < 0.92f ? Mathf.Sin(Mathf.PI * (reload - 0.8f) / 0.12f) : 0f;
             AnimateWeapon(me, dt);
             weaponHolder.localPosition = WeaponRest + new Vector3(0.02f, -0.045f, -0.1f) * dash + new Vector3(0, 0, -shake)
-                + new Vector3(-0.03f, -0.07f, -0.04f) * tilt + new Vector3(0, 0.012f, 0) * seat + new Vector3(0, 0.006f, -0.035f) * kick;
+                + new Vector3(-0.03f, -0.07f, -0.04f) * tilt + new Vector3(0, 0.012f, 0) * seat + new Vector3(0, 0.006f, -0.035f) * kick + meleeOffset;
             weaponHolder.localRotation = Quaternion.Euler(new Vector3(6f, 2f, -6f) * dash + new Vector3(-14f, 18f, 32f) * tilt + new Vector3(-4f, 0, 0) * seat
-                + new Vector3(-5f, 0, 0) * kick);
+                + new Vector3(-5f, 0, 0) * kick + meleeEuler);
         }
 
         /// For the automated screenshots: pose the weapon at a given heat and time since the last shot.
@@ -969,6 +1004,22 @@ namespace RiftWard.Client
         {
             cycle += dt;
             kick *= Mathf.Exp(-dt * 16f);
+            if (me.Melee)
+            {
+                // Swing: a fast sweep across the view (alternating sides), then back to rest. Block: blade raised
+                // across the body while the guard is held.
+                float t = cycle / 0.2f, side = swingLeft ? 1f : -1f;
+                float sweep = t < 1f ? Mathf.Lerp(-1f, 1f, 1f - (1f - t) * (1f - t)) : 0f;
+                float arc = t < 1f ? Mathf.Sin(Mathf.PI * t) : t < 1.8f ? 0f : 0f;
+                float settle = t >= 1f && t < 1.8f ? 1f - (t - 1f) / 0.8f : 0f;
+                meleeEuler = new Vector3(-25f * arc + 10f * settle, 75f * sweep * side * (t < 1f ? 1f : settle), -55f * arc * side);
+                meleeOffset = new Vector3(-0.14f * sweep * side * (t < 1f ? 1f : settle), 0.04f * arc, 0.08f * arc);
+                bool guarding = CaptureGuard || Active && Input.GetMouseButton(1) && !Input.GetMouseButton(0);
+                blockPose = Mathf.MoveTowards(blockPose, guarding ? 1f : 0f, dt * 7f);
+                meleeEuler += new Vector3(-10f, -20f, 80f) * blockPose;
+                meleeOffset += new Vector3(-0.15f, 0.1f, 0.02f) * blockPose;
+            }
+            else { meleeEuler = Vector3.zero; meleeOffset = Vector3.zero; blockPose = 0f; }
             // Fast back-and-return: snaps back in a few ms, eases home.
             float Snap(float t, float back, float total) => t < back ? t / back : Mathf.Max(0f, 1f - (t - back) / (total - back));
             if (slidePart != null) slidePart.localPosition = slideRest + new Vector3(0, 0, -0.04f) * Snap(cycle, 0.025f, 0.11f);

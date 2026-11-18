@@ -11,6 +11,8 @@ namespace RiftWard.Sim
         public float Yaw, Pitch;
         public Vector3 Aim;
         public bool Fire, Dash, Jump, Descend, Reload, Skill, Interact;
+        /// Melee weapons: guard against bullets from the front (right mouse).
+        public bool Block;
         public int Slot;
     }
 
@@ -76,6 +78,10 @@ namespace RiftWard.Sim
         public int Ammo, Mag;
         public float Reload, ReloadTime;
         public float Damage, FireInterval, Spread, HeadMultiplier, Zoom;
+        /// Melee reach of the current weapon (0 for guns) and whether the player is guarding with it.
+        public float Range;
+        public bool Blocking;
+        public bool Melee => Defs.Weapons.TryGetValue(WeaponId, out var w) && w.Melee;
         public int Pellets = 1;
         public Dictionary<string, int> AmmoByWeapon = new Dictionary<string, int>();
 
