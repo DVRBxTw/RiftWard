@@ -62,9 +62,10 @@ namespace RiftWard.Client
 
         public static GameObject Enemy(int kind)
         {
-            if (kind >= Defs.KindHeavyBoss) return Boss(kind);
+            if (kind == Defs.KindEmperor) return Emperor();
+            if (Defs.IsBossKind(kind)) return Boss(kind);
             var def = Defs.Kinds[kind];
-            Color color = def.Color, shell = Palette.Hex("4a2c26"), dark = Palette.Hex("231a19");
+            Color color = def.Color, shell = kind == Defs.KindGuard ? Palette.Hex("5a4522") : Palette.Hex("4a2c26"), dark = kind == Defs.KindGuard ? Palette.Hex("2a2116") : Palette.Hex("231a19");
             var root = new GameObject("Enemy").transform;
             var hips = Joint(root, "Hips", new Vector3(0, 0.6f, 0));
             foreach (var (side, x) in new[] { ("L", -0.2f), ("R", 0.2f) })
@@ -111,9 +112,119 @@ namespace RiftWard.Client
                     var plate = Build.Cube(elbowL, new Vector3(0.1f, -0.1f, 0.4f), new Vector3(1.05f, 1.35f, 0.1f), color, 0.6f);
                     plate.GetComponent<MeshRenderer>().sharedMaterial = Build.Mat(color, 0.6f, 0.55f);
                     break;
+                case Defs.KindGuard:
+                {
+                    // Imperial Guard: gold pauldrons, a crested helm, a halberd and a hexagonal energy shield. The
+                    // ChargeGlow parts light up red while it winds up and rushes.
+                    Color gold = Palette.Hex("d8a740"), red = Palette.Hex("ff3b3b");
+                    foreach (float x in new[] { -0.46f, 0.46f }) Build.Cube(torso, new Vector3(x, 0.92f, 0), new Vector3(0.36f, 0.14f, 0.5f), gold);
+                    Build.Cube(torso, new Vector3(0, 0.45f, 0.36f), new Vector3(0.5f, 0.42f, 0.04f), gold);
+                    Build.Cube(head, new Vector3(0, 0.4f, 0.0f), new Vector3(0.06f, 0.22f, 0.5f), Palette.Hex("b8323a"));
+                    Build.Cube(head, new Vector3(0, 0.3f, 0.12f), new Vector3(0.6f, 0.06f, 0.54f), gold);
+                    var halberd = Build.Cube(armR, new Vector3(0, -0.3f, 0.35f), new Vector3(0.05f, 0.05f, 1.6f), Palette.Hex("3a3024"));
+                    halberd.transform.localRotation = Quaternion.Euler(-12, 0, 0);
+                    Build.Cube(armR, new Vector3(0, -0.12f, 1.12f), new Vector3(0.04f, 0.3f, 0.22f), gold, 0.8f);
+                    var shield = new GameObject("GuardShield").transform;
+                    shield.SetParent(elbowL, false);
+                    shield.localPosition = new Vector3(0.12f, -0.1f, 0.45f);
+                    for (int i = 0; i < 6; i++)
+                    {
+                        float a = i * Mathf.PI / 3f;
+                        var cell = Build.Cube(shield, new Vector3(Mathf.Cos(a) * 0.36f, Mathf.Sin(a) * 0.36f, 0), new Vector3(0.36f, 0.36f, 0.04f), color, 1.2f, false);
+                        cell.transform.localRotation = Quaternion.Euler(0, 0, a * Mathf.Rad2Deg + 30f);
+                        cell.GetComponent<MeshRenderer>().sharedMaterial = Build.Mat(color, 1.2f, 0.45f);
+                    }
+                    Build.Cube(shield, Vector3.zero, new Vector3(0.4f, 0.4f, 0.05f), gold, 1.5f, false);
+                    var glow = new GameObject("ChargeGlow").transform;
+                    glow.SetParent(root, false);
+                    Build.Cube(glow, new Vector3(0, 1.62f, 0.32f), new Vector3(0.46f, 0.1f, 0.04f), red, 5f, false);
+                    var aura = Build.Sphere(glow, new Vector3(0, 1.1f, 0), 1.6f, red, 3f, false);
+                    aura.GetComponent<MeshRenderer>().sharedMaterial = Build.Mat(red, 3f, 0.18f);
+                    glow.gameObject.SetActive(false);
+                    break;
+                }
             }
             root.localScale = Vector3.one * def.Scale;
             CharacterRig.Attach(root.gameObject, CharacterRig.Style.Trooper);
+            return root.gameObject;
+        }
+
+        /// Emperor Helio, the final boss: white-and-gold armour over a long robe, a spiked crown with a rotating
+        /// halo, a crimson cape and a sceptre topped with a burning orb. Uses the boss rig's joints.
+        public static GameObject Emperor()
+        {
+            var root = new GameObject("Emperor").transform;
+            Color ivory = Palette.Hex("e8e0cc"), gold = Palette.Hex("d9a73e"), crimson = Palette.Hex("8a1c2c"), black = Palette.Hex("1c1a1f");
+            Color glow = Defs.Kinds[Defs.KindEmperor].Color, hot = Palette.Hex("fff1b0");
+            var hips = Joint(root, "Hips", new Vector3(0, 0.86f, 0));
+            foreach (var (side, x) in new[] { ("L", -0.17f), ("R", 0.17f) })
+            {
+                var leg = Joint(hips, "Leg" + side, new Vector3(x, 0, 0));
+                Build.Cube(leg, new Vector3(0, -0.2f, 0), new Vector3(0.24f, 0.42f, 0.28f), ivory);
+                var knee = Joint(leg, "Knee" + side, new Vector3(0, -0.4f, 0));
+                Build.Cube(knee, new Vector3(0, -0.02f, 0.15f), new Vector3(0.2f, 0.16f, 0.04f), gold);
+                Build.Cube(knee, new Vector3(0, -0.2f, 0), new Vector3(0.22f, 0.4f, 0.26f), ivory);
+                Build.Cube(knee, new Vector3(0, -0.38f, 0.05f), new Vector3(0.28f, 0.14f, 0.4f), gold);
+            }
+            // Robe skirt: overlapping panels that hang from the hips.
+            for (int i = 0; i < 6; i++)
+            {
+                float a = i * Mathf.PI / 3f;
+                var panel = Build.Cube(hips, new Vector3(Mathf.Sin(a) * 0.3f, -0.28f, Mathf.Cos(a) * 0.24f), new Vector3(0.28f, 0.56f, 0.04f), i % 2 == 0 ? crimson : ivory);
+                panel.transform.localRotation = Quaternion.Euler(-10, a * Mathf.Rad2Deg, 0);
+            }
+            var torso = Joint(hips, "Torso", Vector3.zero);
+            Build.Cube(torso, new Vector3(0, 0.04f, 0), new Vector3(0.6f, 0.2f, 0.34f), gold);
+            Build.Cube(torso, new Vector3(0, 0.39f, 0), new Vector3(0.74f, 0.6f, 0.42f), ivory);
+            Build.Cube(torso, new Vector3(0, 0.42f, 0.22f), new Vector3(0.5f, 0.42f, 0.04f), gold);
+            var core = Build.Sphere(torso, new Vector3(0, 0.45f, 0.25f), 0.16f, glow, 5f, false);
+            core.AddComponent<Spinner>().Pulse = 0.25f;
+            foreach (float x in new[] { -0.52f, 0.52f })
+            {
+                Build.Cube(torso, new Vector3(x, 0.72f, 0), new Vector3(0.38f, 0.2f, 0.52f), gold);
+                Build.Cube(torso, new Vector3(x, 0.86f, 0), new Vector3(0.06f, 0.18f, 0.06f), gold).transform.localRotation = Quaternion.Euler(0, 0, x < 0 ? 20 : -20);
+            }
+            var cape = Build.Cube(torso, new Vector3(0, 0.05f, -0.28f), new Vector3(0.9f, 1.5f, 0.04f), crimson);
+            cape.transform.localRotation = Quaternion.Euler(-10, 0, 0);
+            Build.Cube(torso, new Vector3(0, 0.78f, -0.26f), new Vector3(0.92f, 0.08f, 0.06f), gold);
+            var head = Joint(torso, "Head", new Vector3(0, 0.8f, 0));
+            Build.Cube(head, new Vector3(0, 0.06f, 0), new Vector3(0.38f, 0.38f, 0.4f), ivory);
+            Build.Cube(head, new Vector3(0, 0.06f, 0.205f), new Vector3(0.3f, 0.06f, 0.02f), glow, 4f);
+            // Spiked crown and a slowly turning halo behind it.
+            Build.Cube(head, new Vector3(0, 0.27f, 0), new Vector3(0.42f, 0.06f, 0.44f), gold);
+            for (int i = 0; i < 5; i++)
+            {
+                float x = -0.16f + i * 0.08f;
+                Build.Cube(head, new Vector3(x, 0.36f + (i == 2 ? 0.06f : 0f), 0.18f), new Vector3(0.04f, i == 2 ? 0.2f : 0.12f, 0.04f), gold, 0.6f);
+            }
+            var halo = new GameObject("Halo").transform;
+            halo.SetParent(head, false);
+            halo.localPosition = new Vector3(0, 0.22f, -0.28f);
+            halo.gameObject.AddComponent<Spinner>().Speed = 25f;
+            for (int i = 0; i < 12; i++)
+            {
+                float a = i * Mathf.PI / 6f;
+                var ray = Build.Cube(halo, new Vector3(Mathf.Cos(a) * 0.42f, Mathf.Sin(a) * 0.42f, 0), new Vector3(0.05f, 0.18f, 0.02f), i % 2 == 0 ? hot : glow, 4f, false);
+                ray.transform.localRotation = Quaternion.Euler(0, 0, a * Mathf.Rad2Deg - 90f);
+            }
+            foreach (var (side, x) in new[] { ("L", -0.52f), ("R", 0.52f) })
+            {
+                var arm = Joint(torso, "Arm" + side, new Vector3(x, 0.6f, 0));
+                Build.Cube(arm, new Vector3(0, -0.16f, 0), new Vector3(0.2f, 0.32f, 0.22f), ivory);
+                var elbow = Joint(arm, "Elbow" + side, new Vector3(0, -0.3f, 0));
+                Build.Cube(elbow, new Vector3(0, -0.12f, 0), new Vector3(0.18f, 0.26f, 0.2f), ivory);
+                Build.Cube(elbow, new Vector3(0, -0.28f, 0.04f), new Vector3(0.22f, 0.12f, 0.24f), gold);
+                if (side == "R")
+                {
+                    // Sceptre held forward, burning orb at the tip (also where his volleys come from).
+                    var staff = Build.Cube(elbow, new Vector3(0, -0.3f, 0.3f), new Vector3(0.05f, 0.05f, 1.1f), gold);
+                    staff.transform.localRotation = Quaternion.Euler(-30, 0, 0);
+                    var orb = Build.Sphere(elbow, new Vector3(0, -0.02f, 0.78f), 0.2f, hot, 6f, false);
+                    orb.AddComponent<Spinner>().Pulse = 0.35f;
+                }
+            }
+            root.localScale = Vector3.one * Defs.Kinds[Defs.KindEmperor].Scale;
+            CharacterRig.Attach(root.gameObject, CharacterRig.Style.Boss);
             return root.gameObject;
         }
 

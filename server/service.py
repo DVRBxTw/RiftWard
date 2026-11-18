@@ -35,7 +35,7 @@ MAX_REWARD = 8000   # mirrors GameSim.MaxMissionGold (噩夢 multiplies the gold
 # Difficulty tiers (普通, 困難, 噩夢); mirrors Defs.Difficulties in the game client.
 DIFFICULTY_NAMES = ["普通", "困難", "噩夢"]
 DIFFICULTY_XP = [1.0, 1.25, 1.5]
-REGION_COUNT = 3
+REGION_COUNT = 6   # two chapters of three regions; mirrors Defs.Regions
 
 
 DIFFICULTY_GOLD = [1.0, 1.6, 2.4]
@@ -86,7 +86,7 @@ ACHIEVEMENTS = [
     ("elites",      "combat",  "精英獵人",   "擊敗 {goal} 名精英敵人",            "elite_kills",         [10, 50, 200],      None),
     ("victories",   "clear",   "百戰老兵",   "完成 {goal} 場任務",                "victories",           [5, 25, 100],       "老兵"),
     ("hard",        "clear",   "迎難而上",   "在困難以上難度完成 {goal} 場任務",  "hard_victories",      [1, 10, 50],        None),
-    ("nightmare",   "clear",   "裂隙征服者", "在 {goal} 個區域通關噩夢",          "nightmare_regions",   [1, 2, 3],          "裂隙征服者"),
+    ("nightmare",   "clear",   "裂隙征服者", "在 {goal} 個區域通關噩夢",          "nightmare_regions",   [2, 4, 6],          "裂隙征服者"),
     ("flawless",    "clear",   "不死之身",   "零倒地完成 {goal} 場任務",          "flawless",            [1, 5, 20],         "不死之身"),
     ("grades",      "clear",   "完美評價",   "以 S 評分完成 {goal} 場任務",       "s_grades",            [1, 10, 30],        None),
     ("revives",     "support", "戰地天使",   "救援隊友 {goal} 次",                "revives",             [5, 30, 100],       "戰地天使"),
@@ -342,6 +342,11 @@ class Store:
         result["bonus"] = {k: round(v, 2) for k, v in bonus.items()}
         cleared = self._parse_cleared(result.pop("cleared"), result["unlocked"])
         result["cleared"] = cleared
+        # A cleared region opens the next one. Before chapter 2 the last region capped progress, so accounts that
+        # cleared 帝國裂隙 then still read unlocked = 2; their clear record opens 霜冕要塞 now.
+        passed = [i for i, c in enumerate(cleared) if c >= 0]
+        if passed:
+            result["unlocked"] = max(result["unlocked"], min(REGION_COUNT - 1, passed[-1] + 1))
         result["daily"] = self._daily_view(self._daily(account_id, cleared))
         state = self._achievement_state(account_id)
         progress = self._achievement_progress(result, gear)

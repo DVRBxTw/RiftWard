@@ -419,7 +419,8 @@ namespace RiftWard.Sim
                 toward.y = 0;
                 if (toward.sqrMagnitude > 0.0001f) e.Yaw = Mathf.Atan2(toward.x, toward.z);
                 Vector3 dir = toward.normalized;
-                if (distance > e.Keep) e.Position += dir * e.Speed * dt;
+                float speed = e.Kind == Defs.KindGuard ? (e.State == 1 ? 0.15f : e.State == 3 ? Defs.GuardChargeSpeed : 1f) * e.Speed : e.Speed;
+                if (distance > e.Keep || e.State == 3 && e.Kind == Defs.KindGuard) e.Position += dir * speed * dt;
                 else if (distance < e.Keep - 2f) e.Position -= dir * e.Speed * 0.6f * dt;
                 e.Position = PushOutOfCover(e.Position, e.Boss ? 1f : 0.5f);
                 e.Position.x = Mathf.Clamp(e.Position.x, -Defs.ArenaHalf, Defs.ArenaHalf);
@@ -501,6 +502,7 @@ namespace RiftWard.Sim
             if (Wave >= 3) pool.Add(Defs.KindBomber);
             if (Wave >= 4) pool.Add(Defs.KindSniper);
             if (Wave >= 5) pool.Add(Defs.KindShield);
+            if (Region >= Defs.RegionsPerChapter && Wave >= 4) pool.Add(Defs.KindGuard);   // chapter 2: imperial guards
             bool hasBoss = false;
             var gates = PickGates(count > 10 ? 2 : 1);
             for (int i = 0; i < count; i++)
@@ -512,11 +514,12 @@ namespace RiftWard.Sim
                 if (boss)
                 {
                     hasBoss = true;
-                    float baseHealth = Wave == 10 ? 3000f : 7000f;
+                    bool emperor = Wave >= 20 && Region == Defs.Regions.Length - 1;
+                    float baseHealth = Wave == 10 ? 3000f : emperor ? 9000f : 7000f;
                     e.Hp = baseHealth * (1f + 0.18f * region) * partyScale * LevelScale;
                     e.Damage = (20f + 3f * region) * (1f + 0.03f * elapsedWaves) * levelDamage;
                     e.Speed = 1.6f * (1f + 0.1f * region) * (1f + Mathf.Min(0.2f, 0.01f * elapsedWaves));
-                    e.Kind = Wave >= 20 ? Defs.KindCommander : Defs.KindHeavyBoss;
+                    e.Kind = emperor ? Defs.KindEmperor : Wave >= 20 ? Defs.KindCommander : Defs.KindHeavyBoss;
                     e.Scale = Defs.Kinds[e.Kind].Scale;
                     e.Xp = 300;
                 }
@@ -555,7 +558,8 @@ namespace RiftWard.Sim
             waveStart = Elapsed;
             waveDamage = 0;
             waveGraded = false;
-            Announcements.Add(hasBoss ? "BOSS 來襲" : $"第 {Wave} 波");
+            bool finalBoss = hasBoss && Enemies.Values.Any(x => x.Kind == Defs.KindEmperor);
+            Announcements.Add(finalBoss ? "赫利奧皇帝 降臨" : hasBoss ? "BOSS 來襲" : $"第 {Wave} 波");
         }
 
         public void ApplyKind(Enemy e, int kind)
@@ -569,6 +573,7 @@ namespace RiftWard.Sim
                 case Defs.KindSniper: e.Hp *= 0.8f; e.Speed *= 0.9f; e.Keep = 13f; e.RangedOnly = true; e.ShotCooldown = Rand(2.5f, 4f); e.Xp = baseXp + 10; break;
                 case Defs.KindBomber: e.Hp *= 0.45f; e.Speed *= 1.9f; e.Shoots = false; e.RangedOnly = true; e.Xp = baseXp; break;
                 case Defs.KindShield: e.Hp *= 1.6f; e.Speed *= 0.85f; e.Xp = baseXp + 12; break;
+                case Defs.KindGuard: e.Hp *= 2.2f; e.Speed *= 0.95f; e.Shoots = false; e.Xp = baseXp + 18; e.ChargeCooldown = Rand(2f, 4f); break;
                 default: e.Xp = baseXp; break;
             }
             e.MaxHp = e.Hp;
@@ -684,6 +689,7 @@ namespace RiftWard.Sim
         public static float DamageMultiplier(Enemy e, Vector3 dir, bool head)
         {
             if (e.Kind == Defs.KindShield && !head && Vector3.Dot(dir, e.Facing) < -0.3f) return 0.25f;
+            if (e.Kind == Defs.KindGuard && !head && Vector3.Dot(dir, e.Facing) < -0.3f) return 0.4f;   // energy shield in front
             return 1f;
         }
 
@@ -993,6 +999,8 @@ namespace RiftWard.Sim
                         continue;
                     }
                 }
+                if (e.Kind == Defs.KindGuard) { UpdateGuard(e, alive, dt); continue; }
+                if (e.Kind == Defs.KindEmperor) { UpdateEmperor(e, alive, dt); continue; }
                 if (!e.Boss) continue;
                 if (e.Phase == 1 && e.Hp < e.MaxHp * 0.5f)
                 {
@@ -1020,6 +1028,104 @@ namespace RiftWard.Sim
                             float angle = offset + Mathf.PI * 2f * k / 14f;
                             SpawnBullet(e.Position + Vector3.up * 1.6f * (e.Scale / 1.5f), new Vector3(Mathf.Sin(angle), 0, Mathf.Cos(angle)) * 5.5f, e.Damage * 0.45f, BulletKind.Enemy);
                         }
+                    }
+                }
+            }
+        }
+
+        /// Imperial Guard: walks in behind its shield; within charge range it winds up (State 1, glowing), then
+        /// rushes (State 3) and slams the first player it reaches.
+        void UpdateGuard(Enemy e, List<Actor> alive, float dt)
+        {
+            Actor nearest = null;
+            float distance = float.MaxValue;
+            foreach (var a in alive) { float d = Vector3.Distance(a.Position, e.Position); if (d < distance) { distance = d; nearest = a; } }
+            switch (e.State)
+            {
+                case 1:
+                    e.ChargeTime -= dt;
+                    if (e.ChargeTime <= 0) { e.State = 3; e.ChargeTime = Defs.GuardCharge; }
+                    break;
+                case 3:
+                    e.ChargeTime -= dt;
+                    if (nearest != null && distance < 1.8f * e.Scale)
+                    {
+                        nearest.Hp = Mathf.Max(0, nearest.Hp - e.Damage * 1.6f);
+                        e.MeleeCooldown = 1.2f;
+                        e.ChargeTime = 0;
+                    }
+                    if (e.ChargeTime <= 0) { e.State = 0; e.ChargeCooldown = Rand(4f, 6.5f); }
+                    break;
+                default:
+                    e.ChargeCooldown -= dt;
+                    if (e.ChargeCooldown <= 0 && nearest != null && distance > 3f && distance < 11f) { e.State = 1; e.ChargeTime = Defs.GuardWindup; }
+                    break;
+            }
+        }
+
+        /// The Emperor, final boss of chapter 2. Phase 1: fan volleys (shared boss fire) and summoned guards.
+        /// Phase 2 (below 66%): blinks across the arena and adds bullet rings. Phase 3 (below 33%): faster, with a
+        /// rotating double spiral barrage on top.
+        void UpdateEmperor(Enemy e, List<Actor> alive, float dt)
+        {
+            float health = e.Hp / Mathf.Max(1f, e.MaxHp);
+            if (e.Phase == 1 && health < Defs.EmperorPhase2)
+            {
+                e.Phase = 2; e.State = 2;
+                Announcements.Add("皇帝：「你以為踏進王座，就能改變什麼？」");
+            }
+            if (e.Phase == 2 && health < Defs.EmperorPhase3)
+            {
+                e.Phase = 3;
+                e.Speed *= 1.25f;
+                Announcements.Add("皇帝怒吼 · 王座之光暴走！");
+            }
+            e.SummonCooldown -= dt;
+            if (e.SummonCooldown <= 0)
+            {
+                e.SummonCooldown = e.Phase >= 3 ? 9f : 13f;
+                for (int i = 0; i < 2 && Enemies.Count < Defs.MaxEnemies; i++)
+                {
+                    float angle = Rand(0f, Mathf.PI * 2f);
+                    var guard = NewEnemy(e.Position + new Vector3(Mathf.Sin(angle) * 3.5f, 0, Mathf.Cos(angle) * 3.5f));
+                    ApplyKind(guard, Defs.KindGuard);
+                    guard.Wave = Wave;
+                    Enemies[guard.Id] = guard;
+                }
+            }
+            if (e.Phase >= 2)
+            {
+                e.BlinkCooldown -= dt;
+                if (e.BlinkCooldown <= 0)
+                {
+                    e.BlinkCooldown = e.Phase >= 3 ? 5f : 7f;
+                    Explosions.Add(new ExplosionEvent { Position = e.Position + Vector3.up * 2f, Radius = 3f, Color = Defs.Kinds[Defs.KindEmperor].Color });
+                    e.Position = SpawnNear(PickGates(1)[0], 2f);
+                    Explosions.Add(new ExplosionEvent { Position = e.Position + Vector3.up * 2f, Radius = 3.5f, Color = Defs.Kinds[Defs.KindEmperor].Color });
+                }
+                e.RingCooldown -= dt;
+                if (e.RingCooldown <= 0 && Bullets.Count < Defs.MaxBullets - 16)
+                {
+                    e.RingCooldown = 3.2f;
+                    float offset = Rand01() * Mathf.PI * 2f;
+                    for (int k = 0; k < 16; k++)
+                    {
+                        float angle = offset + Mathf.PI * 2f * k / 16f;
+                        SpawnBullet(e.Position + Vector3.up * 2.2f, new Vector3(Mathf.Sin(angle), 0, Mathf.Cos(angle)) * 5.5f, e.Damage * 0.4f, BulletKind.Enemy);
+                    }
+                }
+            }
+            if (e.Phase >= 3)
+            {
+                e.SpiralCooldown -= dt;
+                if (e.SpiralCooldown <= 0 && Bullets.Count < Defs.MaxBullets - 4)
+                {
+                    e.SpiralCooldown = 0.16f;
+                    e.SpiralAngle += 0.42f;
+                    foreach (float arm in new[] { 0f, Mathf.PI })
+                    {
+                        float angle = e.SpiralAngle + arm;
+                        SpawnBullet(e.Position + Vector3.up * 2.2f, new Vector3(Mathf.Sin(angle), 0, Mathf.Cos(angle)) * 6f, e.Damage * 0.32f, BulletKind.Enemy);
                     }
                 }
             }

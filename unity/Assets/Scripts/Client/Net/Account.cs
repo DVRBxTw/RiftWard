@@ -31,7 +31,7 @@ namespace RiftWard.Client
         public Dictionary<string, float> Bonus = new Dictionary<string, float>();
 
         /// Highest difficulty cleared per region (-1 = never).
-        public List<int> Cleared = new List<int> { -1, -1, -1 };
+        public List<int> Cleared = Enumerable.Repeat(-1, Defs.Regions.Length).ToList();
         public DailyMissions Daily = new DailyMissions();
         public readonly List<Achievement> Achievements = new List<Achievement>();
         /// Worn title: achievement id and its text (both empty when none).

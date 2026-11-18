@@ -304,6 +304,83 @@ namespace RiftWard.Tests
         }
 
         [Test]
+        public void ChapterTwoBringsImperialGuards()
+        {
+            var sim = new GameSim(11);
+            var a = sim.AddActor(1, new Loadout());
+            sim.StartMission(Defs.RegionsPerChapter);
+            sim.WaveDelay = 999f;
+            sim.Wave = 9;
+            bool seen = false;
+            for (int i = 0; i < 6 && !seen; i++) { sim.Enemies.Clear(); sim.SpawnWave(); seen = sim.Enemies.Values.Any(e => e.Kind == Defs.KindGuard); }
+            Assert.IsTrue(seen, "guards join chapter 2 waves");
+            var chapterOne = new GameSim(11);
+            chapterOne.AddActor(1, new Loadout());
+            chapterOne.StartMission(2);
+            chapterOne.Wave = 9;
+            for (int i = 0; i < 6; i++) { chapterOne.Enemies.Clear(); chapterOne.SpawnWave(); Assert.IsFalse(chapterOne.Enemies.Values.Any(e => e.Kind == Defs.KindGuard)); }
+
+            // Wind-up, rush, one hit on contact.
+            sim.Enemies.Clear();
+            var guard = new Enemy { Id = 900, Position = a.Position + new Vector3(0, 0, 8f), Speed = 2.5f, Damage = 20f, Hp = 100, MaxHp = 100 };
+            sim.ApplyKind(guard, Defs.KindGuard);
+            guard.ChargeCooldown = 0f;
+            sim.Enemies[guard.Id] = guard;
+            sim.Inputs[1] = new PlayerInput();
+            sim.Tick(0.02f);
+            Assert.AreEqual(1, guard.State, "wind-up starts within range");
+            float hp = a.Hp;
+            for (int i = 0; i < 120 && guard.State != 0; i++) sim.Tick(0.02f);
+            Assert.Less(a.Hp, hp, "the rush hits");
+            Assert.AreEqual(0, guard.State);
+            // The shield halves front hits, not shots from behind or to the head.
+            guard.Yaw = 0f;
+            Assert.AreEqual(0.4f, GameSim.DamageMultiplier(guard, Vector3.back, false), 1e-4f);
+            Assert.AreEqual(1f, GameSim.DamageMultiplier(guard, Vector3.forward, false), 1e-4f);
+            Assert.AreEqual(1f, GameSim.DamageMultiplier(guard, Vector3.back, true), 1e-4f);
+        }
+
+        [Test]
+        public void EmperorIsTheFinalBossWithThreePhases()
+        {
+            var sim = new GameSim(5);
+            var a = sim.AddActor(1, new Loadout(), true);
+            sim.SetAdmin(1, new AdminSettings { God = true });
+            sim.StartMission(Defs.Regions.Length - 1);
+            sim.WaveDelay = 999f;
+            sim.Wave = 20;
+            sim.SpawnWave();
+            var emperor = sim.Enemies.Values.Single(e => e.Boss);
+            Assert.AreEqual(Defs.KindEmperor, emperor.Kind);
+            Assert.IsTrue(sim.Announcements.Contains("赫利奧皇帝 降臨"));
+            // Other regions keep the commander on wave 20.
+            var other = new GameSim(5);
+            other.AddActor(1, new Loadout());
+            other.StartMission(Defs.Regions.Length - 2);
+            other.Wave = 20;
+            other.SpawnWave();
+            Assert.AreEqual(Defs.KindCommander, other.Enemies.Values.Single(e => e.Boss).Kind);
+
+            sim.Inputs[1] = new PlayerInput();
+            emperor.Hp = emperor.MaxHp * 0.6f;
+            sim.Tick(0.02f);
+            Assert.AreEqual(2, emperor.Phase);
+            Vector3 before = emperor.Position;
+            emperor.BlinkCooldown = 0f;
+            sim.Tick(0.02f);
+            Assert.Greater(Vector3.Distance(before, emperor.Position), 1f, "phase 2 blinks");
+            emperor.Hp = emperor.MaxHp * 0.3f;
+            sim.Bullets.Clear();
+            for (int i = 0; i < 30; i++) sim.Tick(0.02f);
+            Assert.AreEqual(3, emperor.Phase);
+            Assert.Greater(sim.Bullets.Count, 4, "phase 3 fires the spiral");
+            emperor.SummonCooldown = 0f;
+            int guards = sim.Enemies.Values.Count(e => e.Kind == Defs.KindGuard);
+            sim.Tick(0.02f);
+            Assert.AreEqual(guards + 2, sim.Enemies.Values.Count(e => e.Kind == Defs.KindGuard), "summons two guards");
+        }
+
+        [Test]
         public void BossesAreGiantSoldiersWithEnragePhase()
         {
             var sim = NewMission();

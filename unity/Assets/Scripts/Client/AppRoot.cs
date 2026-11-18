@@ -104,6 +104,7 @@ namespace RiftWard.Client
             Client.WeaponRarity = id => Profile?.Loadout.RarityOf(id) ?? 1;
             Client.ShowcaseWeapon = () => Profile != null && Profile.Loadout.Equipped.Count > 0 ? Profile.Loadout.Equipped[0] : "rifle";
             Client.Menus.LeaveRequested = ReturnHome;
+            Client.CanPause = () => !inNetMission || partySize <= 1;
             Client.Menus.RetryRequested = Deploy;
             var bench = Arg("-bench");
             if (bench != null) { StartCoroutine(Bench(bench)); return; }
@@ -314,8 +315,38 @@ namespace RiftWard.Client
         public void ShowHome()
         {
             if (Profile == null) { Screens.ShowAccount(); return; }
+            // Story beats, once per account on this computer: the chapter 2 opening after 帝國裂隙 is cleared,
+            // the ending after the Emperor falls.
+            if (StoryDue("ch2", Profile.Unlocked >= Defs.RegionsPerChapter))
+            {
+                Client.ShowShowcase(Defs.RegionsPerChapter);
+                Screens.ShowPages(Screens.ChapterTwo, 0, "前往第二章", () => { SelectRegion(Defs.RegionsPerChapter); });
+                return;
+            }
+            int last = Defs.Regions.Length - 1;
+            if (StoryDue("ending", last < Profile.Cleared.Count && Profile.Cleared[last] >= 0))
+            {
+                Client.ShowShowcase(last);
+                Screens.ShowPages(Screens.Ending, 0, "返回基地", ShowHome);
+                return;
+            }
             Client.ShowShowcase(Mathf.Clamp(SelectedRegion, 0, Profile.Unlocked));
             Screens.ShowHome(homeStatus);
+        }
+
+        /// True the first time a story beat becomes due for this account (then remembered).
+        bool StoryDue(string beat, bool reached)
+        {
+            if (!reached || Profile == null || Arg("-capture") != null) return false;
+            string key = $"rw.story.{Profile.Id}.{beat}";
+            try
+            {
+                if (PlayerPrefs.GetInt(key, 0) == 1) return false;
+                PlayerPrefs.SetInt(key, 1);
+                PlayerPrefs.Save();
+            }
+            catch { return false; }
+            return true;
         }
 
         public void SelectRegion(int region) => SelectMission(region, SelectedDifficulty);
@@ -659,6 +690,18 @@ namespace RiftWard.Client
             yield return Settle(0.6f);
             yield return Shot(folder, "unity-home-difficulty");
             SelectDifficulty(0);
+            // Chapter 2 open: 霜冕要塞 cleared, 天穹船塢 selected.
+            Profile.Unlocked = 4;
+            Profile.Cleared[2] = 1; Profile.Cleared[3] = 0;
+            SelectRegion(4);
+            yield return Settle(0.8f);
+            yield return Shot(folder, "unity-home-ch2");
+            Screens.ShowPages(Screens.ChapterTwo, 2, "前往第二章", () => { });
+            yield return Settle(0.3f);
+            yield return Shot(folder, "unity-story-ch2");
+            Profile.Unlocked = 1;
+            Profile.Cleared[2] = -1; Profile.Cleared[3] = -1;
+            SelectRegion(0);
             Screens.ShowArmory();
             yield return Settle(0.5f);
             yield return Shot(folder, "unity-armory-rarity");
@@ -763,7 +806,9 @@ namespace RiftWard.Client
             yield return Settle(0.4f);
             yield return Shot(folder, "unity-sniper");
             Client.Menus.OpenPause();
-            yield return Settle(0.2f);
+            float pausedAt = sim.Elapsed;
+            yield return Settle(0.6f);
+            Debug.Log($"PAUSE_CHECK frozen={Mathf.Approximately(sim.Elapsed, pausedAt)} elapsed={pausedAt:0.00}->{sim.Elapsed:0.00}");
             yield return Shot(folder, "unity-pause");
             Client.Menus.HideAll();
             Client.Menus.ShowResult(true, 0, 86, 742, 740, 1980, "A", new[] { 41, 13, 290, 176 }, new Menus.ResultProgress { Xp = 301, Level = 3, LevelXp = 180, Wave = 20, BestWave = 14, Unlocked = 2 }, 1);
@@ -806,9 +851,28 @@ namespace RiftWard.Client
                 }
                 yield return Shot(folder, "unity-rig");
                 foreach (var c in cast) Destroy(c);
+                // Chapter 2 foes: an Imperial Guard winding up its charge (red glow) beside Emperor Helio.
+                var guard = Models.Enemy(Defs.KindGuard);
+                CharacterRig.Find(guard.transform, "ChargeGlow").gameObject.SetActive(true);
+                var calm = Models.Enemy(Defs.KindGuard);
+                var emperor = Models.Enemy(Defs.KindEmperor);
+                guard.transform.position = new Vector3(-3.2f, 0, 16f);
+                calm.transform.position = new Vector3(-1.4f, 0, 15.2f);
+                emperor.transform.position = new Vector3(2.4f, 0, 18f);
+                foreach (var go in new[] { guard, calm, emperor }) go.transform.rotation = Quaternion.Euler(0, 200, 0);
+                Client.enabled = false;
+                for (int f = 0; f < 20; f++)
+                {
+                    Client.Camera.transform.position = new Vector3(-0.3f, 3.2f, 8.5f);
+                    Client.Camera.transform.LookAt(new Vector3(0.2f, 2.6f, 16.5f));
+                    yield return null;
+                }
+                yield return Shot(folder, "unity-chapter2-foes");
+                foreach (var go in new[] { guard, calm, emperor }) Destroy(go);
+                Client.enabled = true;
                 Client.enabled = true;
             }
-            for (int region = 1; region <= 2; region++)
+            for (int region = 1; region < Defs.Regions.Length; region++)
             {
                 Client.World.ApplyRegion(region);
                 yield return Settle(0.3f);

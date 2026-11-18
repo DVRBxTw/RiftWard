@@ -30,7 +30,17 @@ namespace RiftWard.Client
         int lastReloadSlot = -1;
         float heartbeat;
         bool releaseFireToResume;
-        public bool Paused;
+        public bool Paused { get; private set; }
+        /// True when opening the pause menu freezes the mission: always offline, online only while alone in the room.
+        public Func<bool> CanPause = () => true;
+
+        /// Opens or closes the pause state; online the server is told, and freezes the mission if you are alone.
+        public void SetPaused(bool on)
+        {
+            if (Paused == on) return;
+            Paused = on;
+            if (net != null) net.Send(Msg.SetPause, w => w.Write(on));
+        }
 
         /// Test aimbot (admin ability panel, client only): while aiming, the view turns onto the nearest visible
         /// enemy's head, as a view-locking cheat would. The server only sees an ordinary view direction.
@@ -59,7 +69,7 @@ namespace RiftWard.Client
         readonly Dictionary<int, float> enemyHp = new Dictionary<int, float>();
         readonly List<int> stale = new List<int>();
         // Looked up once per enemy view instead of searching the hierarchy every frame.
-        readonly Dictionary<int, (Transform laser, CharacterRig rig)> enemyParts = new Dictionary<int, (Transform, CharacterRig)>();
+        readonly Dictionary<int, (Transform laser, CharacterRig rig, Transform chargeGlow)> enemyParts = new Dictionary<int, (Transform, CharacterRig, Transform)>();
         readonly HashSet<int> plasmaMounted = new HashSet<int>();
         readonly Dictionary<int, List<float>> bladeSlots = new Dictionary<int, List<float>>();
         /// Render-side mission clock: advances every frame and eases toward Sim.Elapsed, which only changes per
@@ -212,6 +222,9 @@ namespace RiftWard.Client
             {
                 case 1: reverb.room = -900; reverb.roomHF = -400; reverb.decayTime = 1.9f; reverb.reflectionsLevel = -500; reverb.reverbLevel = -300; break;
                 case 2: reverb.room = -1200; reverb.roomHF = -1800; reverb.decayTime = 3.2f; reverb.reflectionsLevel = -1000; reverb.reverbLevel = 0; break;
+                case 3: reverb.room = -1700; reverb.roomHF = -900; reverb.decayTime = 1.3f; reverb.reflectionsLevel = -800; reverb.reverbLevel = -900; break;    // fortress walls in the snow
+                case 4: reverb.room = -3600; reverb.roomHF = -2000; reverb.decayTime = 0.6f; reverb.reflectionsLevel = -2400; reverb.reverbLevel = -2400; break; // open sky deck
+                case 5: reverb.room = -600; reverb.roomHF = -500; reverb.decayTime = 2.8f; reverb.reflectionsLevel = -300; reverb.reverbLevel = 100; break;       // marble throne hall
                 default: reverb.room = -3000; reverb.roomHF = -1500; reverb.decayTime = 0.8f; reverb.reflectionsLevel = -2000; reverb.reverbLevel = -1800; break;
             }
         }
@@ -221,7 +234,7 @@ namespace RiftWard.Client
             SetReverb(region);
             ClearViews();
             World.ApplyRegion(region);
-            yaw = 0; pitch = 0; desiredSlot = 0; shownSlot = -1; recoilPending = 0; Paused = false;
+            yaw = 0; pitch = 0; desiredSlot = 0; shownSlot = -1; recoilPending = 0; SetPaused(false);
             lastState = MissionState.Playing;
             Hud.ResetTransient();
             if (showcase != null) showcase.SetActive(false);
@@ -400,7 +413,7 @@ namespace RiftWard.Client
         {
             if (NetworkInput != null && NetworkInput(input)) return;
             Sim.Inputs[LocalId] = input;
-            Sim.Tick(Time.fixedDeltaTime);
+            if (!Paused) Sim.Tick(Time.fixedDeltaTime);   // offline: the pause menu freezes the mission
         }
 
         void DrainEvents()
@@ -815,9 +828,11 @@ namespace RiftWard.Client
                     if (e.Elite) Models.MakeElite(view);
                     view.transform.position = e.Position;
                     enemyViews[e.Id] = view;
-                    enemyParts[e.Id] = (CharacterRig.Find(view.transform, "Laser"), view.GetComponent<CharacterRig>());
+                    enemyParts[e.Id] = (CharacterRig.Find(view.transform, "Laser"), view.GetComponent<CharacterRig>(), CharacterRig.Find(view.transform, "ChargeGlow"));
                 }
-                var (laser, enemyRig) = enemyParts[e.Id];
+                var (laser, enemyRig, chargeGlow) = enemyParts[e.Id];
+                // Imperial Guard wind-up (1) and rush (3): red warning glow so the charge can be dodged.
+                if (chargeGlow != null) chargeGlow.gameObject.SetActive(e.State == 1 || e.State == 3);
                 view.transform.position = Vector3.Lerp(view.transform.position, e.Position, 1f - Mathf.Exp(-14f * dt));
                 view.transform.rotation = Quaternion.Euler(0, e.Yaw * Mathf.Rad2Deg, 0);
                 if (enemyHp.TryGetValue(e.Id, out var lastHp) && e.Hp < lastHp - 0.5f && enemyRig != null) enemyRig.Hit();

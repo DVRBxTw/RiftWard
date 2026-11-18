@@ -42,7 +42,7 @@ namespace RiftWard.Sim
         /// XP needed to go from this account level to the next; mirrors level_for() in server/service.py.
         public static int AccountLevelNeed(int level) => 100 + 50 * level;
 
-        public const string Version = "0.7.8-unity.1";
+        public const string Version = "0.7.9-unity.1";
 
         // Player movement
         public const float EyeHeight = 1.65f;
@@ -96,11 +96,19 @@ namespace RiftWard.Sim
             new[] { 13f, -1f, 0.35f, 2.5f, 1.8f },
         };
 
+        /// Story chapters; each holds RegionsPerChapter consecutive regions.
+        public static readonly (string number, string title)[] Chapters = { ("第一章", "墜落星球"), ("第二章", "帝國母星") };
+        public const int RegionsPerChapter = 3;
+        public static int ChapterOf(int region) => Mathf.Clamp(region / RegionsPerChapter, 0, Chapters.Length - 1);
+
         public static readonly RegionDef[] Regions =
         {
             new RegionDef("翠風草原", "你的運輸艦墜落在這顆陌生星球的草原上。\n帝國追擊部隊已經降落，先守住墜落點。", 4, new Color32(0x9b, 0xd3, 0x6a, 255)),
             new RegionDef("熔核工廠", "帝國在星球地底建造了熔核工廠，\n摧毀它，切斷入侵艦隊的能源。", 5, new Color32(0xff, 0xad, 0x66, 255)),
             new RegionDef("帝國裂隙", "裂隙的另一端就是帝國母星。\n擊敗守衛，穿越裂隙發動反擊。", 6, new Color32(0xb4, 0x92, 0xff, 255)),
+            new RegionDef("霜冕要塞", "穿過裂隙，你落在帝國母星的北境冰原。\n攻破霜冕要塞的城門，打開南下的道路。", 6, new Color32(0x9f, 0xd8, 0xff, 255)),
+            new RegionDef("天穹船塢", "帝國艦隊正在高空船塢集結，準備進攻地球。\n在艦隊起飛前，摧毀船塢的防衛部隊。", 7, new Color32(0xff, 0x9a, 0x6a, 255)),
+            new RegionDef("赫利奧王座", "皇帝親自坐鎮王座大廳。\n突破近衛軍，在王座前結束這場戰爭。", 7, new Color32(0xff, 0xd3, 0x6b, 255)),
         };
 
         public static readonly string[] WeaponOrder = { "pistol", "rifle", "shotgun", "sniper" };
@@ -130,9 +138,19 @@ namespace RiftWard.Sim
             new KindDef("護盾兵", new Color32(0x5a, 0xa9, 0xff, 255), 1.0f),
             new KindDef("帝國重裝兵", new Color32(0xff, 0x55, 0x33, 255), 2.2f),
             new KindDef("帝國指揮官", new Color32(0xff, 0xb3, 0x47, 255), 2.6f),
+            new KindDef("帝國近衛兵", new Color32(0xff, 0xcf, 0x5a, 255), 1.15f),
+            new KindDef("赫利奧皇帝", new Color32(0xff, 0xd3, 0x6b, 255), 3.0f),
         };
 
-        public const int KindGrunt = 0, KindCharger = 1, KindSniper = 2, KindBomber = 3, KindShield = 4, KindHeavyBoss = 5, KindCommander = 6;
+        public const int KindGrunt = 0, KindCharger = 1, KindSniper = 2, KindBomber = 3, KindShield = 4, KindHeavyBoss = 5, KindCommander = 6,
+            KindGuard = 7, KindEmperor = 8;
+
+        public static bool IsBossKind(int kind) => kind == KindHeavyBoss || kind == KindCommander || kind == KindEmperor;
+
+        /// Imperial Guard charge: a glowing wind-up, then a fast rush that hits once on contact.
+        public const float GuardWindup = 0.55f, GuardCharge = 0.7f, GuardChargeSpeed = 3.4f;
+        /// The Emperor's phases begin below these fractions of his health.
+        public const float EmperorPhase2 = 0.66f, EmperorPhase3 = 0.33f;
 
         public static readonly BuffDef[] Buffs =
         {

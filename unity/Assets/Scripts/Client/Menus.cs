@@ -93,7 +93,8 @@ namespace RiftWard.Client
         public void OpenPause()
         {
             if (pause != null) return;
-            client.Paused = true;
+            client.SetPaused(true);
+            bool frozen = client.CanPause();
             GameClient.LockCursor(false);
             var root = Scrim(canvas.transform, 0.8f);
             pause = root.gameObject;
@@ -101,9 +102,9 @@ namespace RiftWard.Client
             var stack = Ui.VStack(sheet, 12);
             stack.Fill();
             stack.GetComponent<VerticalLayoutGroup>().padding = new RectOffset(28, 28, 28, 28);
-            Ui.Label(stack, "PAUSED", 13, Palette.Amber).Sized(18);
+            Ui.Label(stack, frozen ? "PAUSED · 遊戲已暫停" : "MENU · 隊友仍在戰鬥", 13, frozen ? Palette.Amber : Palette.Danger).Sized(18);
             Ui.Label(stack, "戰術選單", 32, Palette.Bone, TextAnchor.UpperLeft, true).Sized(42);
-            Ui.Label(stack, "退出後回到基地主頁；連線時隊友仍可繼續任務。", 15, Palette.Muted).Sized(40);
+            Ui.Label(stack, frozen ? "戰鬥已凍結，敵人不會移動或攻擊。退出後回到基地主頁。" : "多人房間不會暫停，敵人仍會攻擊你；退出後隊友可繼續任務。", 15, Palette.Muted).Sized(40);
             Ui.Button(stack, "繼續戰鬥", ClosePause, 18).Sized(52);
             Ui.Button(stack, "退出到主頁", () => { ClosePause(false); LeaveRequested?.Invoke(); }, 18, Palette.Danger).Sized(48);
             if (SettingsPanel != null)
@@ -143,7 +144,7 @@ namespace RiftWard.Client
         {
             if (pause != null) Object.Destroy(pause);
             pause = null;
-            client.Paused = false;
+            client.SetPaused(false);
             if (resume && client.Sim != null) GameClient.LockCursor(true);
         }
 
@@ -228,7 +229,7 @@ namespace RiftWard.Client
             if (pause != null) Object.Destroy(pause);
             if (result != null) Object.Destroy(result);
             pause = result = null;
-            client.Paused = false;
+            client.SetPaused(false);
         }
     }
 }

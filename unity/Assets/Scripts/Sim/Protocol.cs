@@ -20,6 +20,8 @@ namespace RiftWard.Sim
         InviteFriend = 15,
         /// [int account id]: decline that friend's invitation.
         DeclineInvite = 16,
+        /// [bool paused]: the pause menu opened or closed. Honoured only while the player is alone in the room.
+        SetPause = 17,
         // server → client
         Welcome = 50, Error = 51, Lobby = 52, Deploy = 53, Snapshot = 54, Events = 55, BuffOffer = 56, Finish = 57, ProfileSync = 58, Notice = 59, BackHome = 60,
         /// [byte channel][int account id][string name][string title][string text][bool admin]

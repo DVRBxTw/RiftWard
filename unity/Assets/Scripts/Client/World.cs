@@ -28,6 +28,15 @@ namespace RiftWard.Client
                 Ground = Palette.Hex("493429"), Cover = Palette.Hex("4a3a32"), Wall = Palette.Hex("3e3029") },
             new Look { Sky = Palette.Hex("160f28"), Fog = Palette.Hex("24183d"), FogDensity = 0.018f, Ambient = Palette.Hex("4f4670"), Sun = Palette.Hex("d9c9ff"), SunIntensity = 0.85f,
                 Ground = Palette.Hex("352c4c"), Cover = Palette.Hex("3a3450"), Wall = Palette.Hex("332d48") },
+            // 霜冕要塞: pale overcast sky, drifting snow fog, cold blue light over a snowfield.
+            new Look { Sky = Palette.Hex("aebfd0"), Fog = Palette.Hex("c9d6e2"), FogDensity = 0.016f, Ambient = Palette.Hex("8a9cb0"), Sun = Palette.Hex("dfe9ff"), SunIntensity = 0.9f,
+                Ground = Palette.Hex("c7d2dc"), Cover = Palette.Hex("6b7684"), Wall = Palette.Hex("4e5866") },
+            // 天穹船塢: sunset above the clouds, warm low sun on steel decking.
+            new Look { Sky = Palette.Hex("e2875a"), Fog = Palette.Hex("f0a57a"), FogDensity = 0.006f, Ambient = Palette.Hex("7a6070"), Sun = Palette.Hex("ffc79a"), SunIntensity = 1.15f,
+                Ground = Palette.Hex("4a4e57"), Cover = Palette.Hex("5d6470"), Wall = Palette.Hex("3a3e46") },
+            // 赫利奧王座: crimson-black void, golden light, dark marble.
+            new Look { Sky = Palette.Hex("1a0608"), Fog = Palette.Hex("2a0c10"), FogDensity = 0.014f, Ambient = Palette.Hex("6a4a40"), Sun = Palette.Hex("ffd9a0"), SunIntensity = 1.0f,
+                Ground = Palette.Hex("1e1a1c"), Cover = Palette.Hex("3a2e2a"), Wall = Palette.Hex("2a2224") },
         };
 
         public World(Camera camera)
@@ -79,9 +88,15 @@ namespace RiftWard.Client
             dressing = new GameObject("Dressing").transform;
             dressing.SetParent(Root, false);
             var rng = new System.Random(2189 + region);
-            if (region == 0) Grassland(rng);
-            else if (region == 1) Foundry(rng);
-            else Rift(rng);
+            switch (region)
+            {
+                case 0: Grassland(rng); break;
+                case 1: Foundry(rng); break;
+                case 2: Rift(rng); break;
+                case 3: Frostcrown(rng); break;
+                case 4: SkyDock(rng); break;
+                default: Throne(rng); break;
+            }
         }
 
         float R(System.Random rng, float a, float b) => a + (float)rng.NextDouble() * (b - a);
@@ -323,6 +338,189 @@ namespace RiftWard.Client
                 Build.Cube(dressing, p, new Vector3(0.8f, 5, 0.8f), crystal, 0.5f).transform.localRotation = Quaternion.Euler(0, 0, i % 2 == 0 ? 18 : -18);
             }
             RiftDetail(rng, crystal, rock);
+        }
+
+        /// 霜冕要塞: a snowfield before the imperial fortress — battlemented walls and towers beyond the arena,
+        /// ice spires, snowdrifts, frozen banners and snow hanging in the air.
+        void Frostcrown(System.Random rng)
+        {
+            Color snow = Palette.Hex("dfe7ee"), ice = Palette.Hex("9fd8ff"), stone = Palette.Hex("5a6472"), dark = Palette.Hex("3a4250"), banner = Palette.Hex("8a1c2c");
+            Build.Cube(dressing, new Vector3(0, -0.62f, 0), new Vector3(170, 0.5f, 170), Palette.Hex("cdd7e0"));
+            // Distant mountains.
+            for (int i = 0; i < 12; i++)
+            {
+                float angle = Mathf.PI * 2f * i / 12f + R(rng, -0.2f, 0.2f), radius = R(rng, 70, 90), h = R(rng, 25, 45);
+                var peak = Build.Cone(dressing, new Vector3(Mathf.Sin(angle) * radius, 0, Mathf.Cos(angle) * radius), R(rng, 18, 28), h, Palette.Hex("8c9aab"));
+                Build.Cone(dressing, new Vector3(Mathf.Sin(angle) * radius, h * 0.62f, Mathf.Cos(angle) * radius), R(rng, 7, 10), h * 0.38f, snow);
+            }
+            // The fortress: a wall with battlements and towers along the north side, gate glowing red.
+            for (int x = -40; x <= 40; x += 4)
+            {
+                Build.Cube(dressing, new Vector3(x, 5f, 34), new Vector3(4.05f, 10f, 4), stone);
+                if ((x / 4) % 2 == 0) Build.Cube(dressing, new Vector3(x, 10.7f, 34), new Vector3(1.8f, 1.4f, 4.2f), stone);
+            }
+            foreach (float x in new[] { -30f, -12f, 12f, 30f })
+            {
+                Build.Cylinder(dressing, new Vector3(x, 8f, 33), 6f, 16f, dark);
+                Build.Cone(dressing, new Vector3(x, 16f, 33), 4f, 6f, banner);
+                Build.Cube(dressing, new Vector3(x, 12f, 29.9f), new Vector3(1.2f, 2.2f, 0.1f), Palette.Hex("ffcf5a"), 2f, false);
+            }
+            Build.Cube(dressing, new Vector3(0, 4f, 31.9f), new Vector3(8f, 8f, 0.2f), Palette.Hex("3a1418"));
+            Build.Cube(dressing, new Vector3(0, 4f, 31.8f), new Vector3(7f, 0.25f, 0.1f), Palette.Hex("ff3b3b"), 3f, false);
+            // Ice spires and snowdrifts around the arena.
+            for (int i = 0; i < 20; i++)
+            {
+                float angle = R(rng, 0, Mathf.PI * 2f), radius = R(rng, 25, 45);
+                float h = R(rng, 2f, 7f);
+                var spire = Build.Cube(dressing, new Vector3(Mathf.Sin(angle) * radius, h * 0.4f, Mathf.Cos(angle) * radius), new Vector3(R(rng, 0.6f, 1.4f), h, R(rng, 0.6f, 1.4f)), ice, 0.8f, false);
+                spire.transform.localRotation = Quaternion.Euler(R(rng, -15, 15), R(rng, 0, 360), R(rng, -15, 15));
+            }
+            for (int i = 0; i < 24; i++)
+            {
+                float angle = R(rng, 0, Mathf.PI * 2f), radius = R(rng, 19, 26), sz = R(rng, 1.2f, 3f);
+                Build.Sphere(dressing, new Vector3(Mathf.Sin(angle) * radius, sz * 0.1f, Mathf.Cos(angle) * radius), sz, snow).transform.localScale = new Vector3(sz * 1.6f, sz * 0.45f, sz * 1.2f);
+            }
+            // Frozen tracks and ice patches on the field.
+            for (int i = 0; i < 14; i++)
+            {
+                var pos = new Vector3(R(rng, -21, 21), 0.012f, R(rng, -21, 21));
+                var patch = Build.Cylinder(dressing, pos, R(rng, 1.5f, 3.5f), 0.02f, Palette.Hex("b9d3e6"));
+                patch.GetComponent<MeshRenderer>().shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+            }
+            // Imperial banners on poles at the arena corners.
+            foreach (var c in new[] { new Vector3(-21, 0, -21), new Vector3(21, 0, -21), new Vector3(-21, 0, 21), new Vector3(21, 0, 21) })
+            {
+                Build.Cylinder(dressing, c + Vector3.up * 2.5f, 0.14f, 5f, dark);
+                Build.Cube(dressing, c + new Vector3(0, 3.6f, 0.5f), new Vector3(0.05f, 2f, 1f), banner);
+                Build.Cube(dressing, c + new Vector3(0, 3.9f, 0.52f), new Vector3(0.06f, 0.4f, 0.4f), Palette.Hex("ffcf5a"), 1f, false);
+            }
+            // Snowflakes hanging in the air (static: bloom and fog do the rest).
+            for (int i = 0; i < 160; i++)
+                Build.Cube(dressing, new Vector3(R(rng, -30, 30), R(rng, 0.5f, 14f), R(rng, -30, 30)), Vector3.one * R(rng, 0.04f, 0.09f), Color.white, 0.6f, false);
+        }
+
+        /// 天穹船塢: a landing deck high above the clouds — deck plating and markings, docked warships with
+        /// glowing engines, cranes, and a sea of clouds far below.
+        void SkyDock(System.Random rng)
+        {
+            Color deck = Palette.Hex("4a4e57"), steel = Palette.Hex("3a3e46"), hull = Palette.Hex("5a5f6a"), hazard = Palette.Hex("e0a32e"), engine = Palette.Hex("7fd8ff");
+            // Cloud sea far below and distant cloud banks.
+            Build.Cube(dressing, new Vector3(0, -30f, 0), new Vector3(400, 0.5f, 400), Palette.Hex("f3c7a8"));
+            for (int i = 0; i < 26; i++)
+            {
+                float angle = R(rng, 0, Mathf.PI * 2f), radius = R(rng, 45, 120), sz = R(rng, 12, 30);
+                var cloud = Build.Sphere(dressing, new Vector3(Mathf.Sin(angle) * radius, R(rng, -26, -12), Mathf.Cos(angle) * radius), sz, Palette.Hex("f6d2b8"), 0, false);
+                cloud.transform.localScale = new Vector3(sz * 2f, sz * 0.5f, sz * 1.4f);
+            }
+            // The deck extends past the arena, with plate seams and landing markings.
+            Build.Cube(dressing, new Vector3(0, -0.62f, 0), new Vector3(70, 0.5f, 70), steel);
+            for (int x = -20; x <= 20; x += 5)
+                for (int z = -20; z <= 20; z += 5)
+                    Build.Cube(dressing, new Vector3(x, 0.006f, z), new Vector3(4.9f, 0.01f, 4.9f), (x + z) % 10 == 0 ? Palette.Hex("4e525c") : deck, 0, false);
+            Build.Cylinder(dressing, new Vector3(0, 0.012f, 0), 9f, 0.02f, hazard).GetComponent<MeshRenderer>().shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+            Build.Cylinder(dressing, new Vector3(0, 0.016f, 0), 8.4f, 0.02f, deck).GetComponent<MeshRenderer>().shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+            for (int i = -10; i <= 10; i++)
+                foreach (float side in new[] { -22.6f, 22.6f })
+                {
+                    Build.Cube(dressing, new Vector3(i * 2f, 0.016f, side), new Vector3(0.9f, 0.03f, 0.5f), i % 2 == 0 ? hazard : Palette.Hex("1a1614"), 0, false);
+                    Build.Cube(dressing, new Vector3(side, 0.016f, i * 2f), new Vector3(0.5f, 0.03f, 0.9f), i % 2 == 0 ? hazard : Palette.Hex("1a1614"), 0, false);
+                }
+            // Edge lights along the deck.
+            for (int i = 0; i < 16; i++)
+            {
+                float angle = Mathf.PI * 2f * i / 16f;
+                Build.Cube(dressing, new Vector3(Mathf.Sin(angle) * 30f, 0.2f, Mathf.Cos(angle) * 30f), new Vector3(0.4f, 0.4f, 0.4f), engine, 3f, false);
+            }
+            // Docked warships beyond the arena: hull, bridge tower, engine glow.
+            foreach (var (pos, yaw) in new[] { (new Vector3(-38, 4, 18), 80f), (new Vector3(40, 6, -10), -100f), (new Vector3(5, 12, 52), 10f) })
+            {
+                var ship = new GameObject("Warship").transform;
+                ship.SetParent(dressing, false);
+                ship.localPosition = pos;
+                ship.localRotation = Quaternion.Euler(0, yaw, 0);
+                Build.Cube(ship, Vector3.zero, new Vector3(7, 3, 26), hull);
+                Build.Cube(ship, new Vector3(0, 1.2f, 10), new Vector3(4, 2.2f, 8), hull * 0.9f).transform.localRotation = Quaternion.Euler(-8, 0, 0);
+                Build.Cube(ship, new Vector3(0, 3.4f, -4), new Vector3(3, 3.6f, 4), steel);
+                Build.Cube(ship, new Vector3(0, 4.4f, -1.95f), new Vector3(2.4f, 0.4f, 0.1f), Palette.Hex("ffcf5a"), 2f, false);
+                foreach (float x in new[] { -2.2f, 0f, 2.2f })
+                    Build.Cylinder(ship, new Vector3(x, 0, -13.1f), 1.6f, 0.2f, engine, 4f).transform.localRotation = Quaternion.Euler(90, 0, 0);
+                Build.Cube(ship, new Vector3(3.6f, 0, 2), new Vector3(0.1f, 0.6f, 14f), Palette.Hex("b8323a"));
+            }
+            // Loading cranes and cargo at the deck corners.
+            foreach (var c in new[] { new Vector3(-26, 0, -26), new Vector3(26, 0, 26) })
+            {
+                Build.Cube(dressing, c + Vector3.up * 7f, new Vector3(1f, 14f, 1f), steel);
+                Build.Cube(dressing, c + new Vector3(0, 14f, c.x < 0 ? 6f : -6f), new Vector3(1f, 1f, 14f), hazard);
+                Build.Cube(dressing, c + new Vector3(0, 10f, c.x < 0 ? 10f : -10f), new Vector3(2.4f, 1.6f, 2.4f), hull);
+            }
+            for (int i = 0; i < 6; i++)
+            {
+                float angle = Mathf.PI * 2f * i / 6f + 0.3f;
+                var pos = new Vector3(Mathf.Sin(angle) * 21.5f, 0.6f, Mathf.Cos(angle) * 21.5f);
+                Build.Cube(dressing, pos, new Vector3(1.6f, 1.2f, 1.2f), i % 2 == 0 ? Palette.Hex("3d5a66") : Palette.Hex("6a5634"));
+                Build.Cube(dressing, pos + new Vector3(0, 0, 0.61f), new Vector3(0.5f, 0.2f, 0.01f), hazard, 0.5f);
+            }
+        }
+
+        /// 赫利奧王座: a dark marble hall open to a crimson void — gold-inlaid floor, a ring of columns, golden light
+        /// pillars, hanging banners and the throne itself on a stepped dais to the north.
+        void Throne(System.Random rng)
+        {
+            Color marble = Palette.Hex("2a2426"), gold = Palette.Hex("d9a73e"), crimson = Palette.Hex("8a1c2c"), light = Palette.Hex("ffd36b"), black = Palette.Hex("120e10");
+            Build.Cube(dressing, new Vector3(0, -0.62f, 0), new Vector3(170, 0.5f, 170), black);
+            // Gold inlay grid and a central sun emblem.
+            for (int i = -4; i <= 4; i++)
+            {
+                Build.Cube(dressing, new Vector3(i * 5f, 0.008f, 0), new Vector3(0.12f, 0.01f, 44f), gold, 0.6f, false);
+                Build.Cube(dressing, new Vector3(0, 0.008f, i * 5f), new Vector3(44f, 0.01f, 0.12f), gold, 0.6f, false);
+            }
+            Build.Cylinder(dressing, new Vector3(0, 0.012f, 0), 6f, 0.02f, gold, 1f);
+            Build.Cylinder(dressing, new Vector3(0, 0.016f, 0), 5.4f, 0.02f, marble);
+            for (int i = 0; i < 12; i++)
+            {
+                float a = i * Mathf.PI / 6f;
+                var ray = Build.Cube(dressing, new Vector3(Mathf.Sin(a) * 4.2f, 0.02f, Mathf.Cos(a) * 4.2f), new Vector3(0.3f, 0.01f, 2.2f), gold, 1.2f, false);
+                ray.transform.localRotation = Quaternion.Euler(0, a * Mathf.Rad2Deg, 0);
+            }
+            // Ring of marble columns with gold capitals.
+            for (int i = 0; i < 14; i++)
+            {
+                float angle = Mathf.PI * 2f * i / 14f;
+                var pos = new Vector3(Mathf.Sin(angle) * 27f, 0, Mathf.Cos(angle) * 27f);
+                Build.Cylinder(dressing, pos + Vector3.up * 9f, 2.2f, 18f, marble);
+                Build.Cube(dressing, pos + Vector3.up * 18.3f, new Vector3(3f, 0.7f, 3f), gold);
+                Build.Cube(dressing, pos + Vector3.up * 0.4f, new Vector3(3f, 0.8f, 3f), gold * 0.8f);
+                if (i % 2 == 0) Build.Cube(dressing, pos + Vector3.up * 11f - pos.normalized * 1.2f, new Vector3(1.6f, 6f, 0.08f), crimson).transform.localRotation = Quaternion.LookRotation(-pos.normalized);
+            }
+            // Golden light pillars rising into the void.
+            for (int i = 0; i < 6; i++)
+            {
+                float angle = Mathf.PI * 2f * i / 6f + Mathf.PI / 6f;
+                var pos = new Vector3(Mathf.Sin(angle) * 36f, 0, Mathf.Cos(angle) * 36f);
+                var beam = Build.Cylinder(dressing, pos + Vector3.up * 30f, 2.4f, 60f, light, 3f);
+                beam.GetComponent<MeshRenderer>().sharedMaterial = Build.Mat(light, 3f, 0.35f);
+            }
+            // The throne on a stepped dais to the north, a giant sun disc behind it.
+            for (int k = 0; k < 4; k++)
+                Build.Cube(dressing, new Vector3(0, 0.5f + k, 38f + k * 1.5f), new Vector3(16f - k * 3f, 1f, 6f), k % 2 == 0 ? marble : gold * 0.9f);
+            Build.Cube(dressing, new Vector3(0, 6.5f, 44f), new Vector3(4f, 4f, 2.5f), crimson);
+            Build.Cube(dressing, new Vector3(0, 10.5f, 45f), new Vector3(5f, 8f, 1f), gold);
+            var sun = Build.Cylinder(dressing, new Vector3(0, 14f, 47f), 18f, 0.4f, light, 2f);
+            sun.transform.localRotation = Quaternion.Euler(90, 0, 0);
+            sun.GetComponent<MeshRenderer>().sharedMaterial = Build.Mat(light, 2.5f, 0.55f);
+            // Floating gold shards in the void.
+            for (int i = 0; i < 22; i++)
+            {
+                float angle = R(rng, 0, Mathf.PI * 2f), radius = R(rng, 40, 70);
+                var shard = Build.Cube(dressing, new Vector3(Mathf.Sin(angle) * radius, R(rng, 6, 30), Mathf.Cos(angle) * radius), new Vector3(R(rng, 0.8f, 2.4f), R(rng, 2f, 5f), R(rng, 0.8f, 2.4f)), gold, 0.8f);
+                shard.transform.localRotation = Quaternion.Euler(R(rng, -30, 30), R(rng, 0, 360), R(rng, -30, 30));
+            }
+            // Braziers at the arena corners.
+            foreach (var c in new[] { new Vector3(-21, 0, -21), new Vector3(21, 0, -21), new Vector3(-21, 0, 21), new Vector3(21, 0, 21) })
+            {
+                Build.Cylinder(dressing, c + Vector3.up * 0.8f, 1.2f, 1.6f, gold * 0.8f);
+                Build.Cylinder(dressing, c + Vector3.up * 1.65f, 1f, 0.1f, Palette.Hex("ff8a3a"), 4f);
+            }
         }
 
         /// Alien battlefield: crystal clusters, cracked glowing ground, floating rocks and imperial pylons.

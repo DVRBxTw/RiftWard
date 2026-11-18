@@ -130,6 +130,10 @@ namespace RiftWard.Sim
         /// 0 idle, 1 sniper aiming (telegraph), 2 boss enraged.
         public int State;
         public float RingCooldown = 2f;
+        /// Imperial Guard: time to the next charge and the time left in the current wind-up / rush.
+        public float ChargeCooldown = 3f, ChargeTime;
+        /// Emperor: blink and summon timers and the rotating angle of his spiral barrage.
+        public float BlinkCooldown = 6f, SummonCooldown = 9f, SpiralAngle, SpiralCooldown;
 
         /// Direction the enemy faces (towards its target).
         public Vector3 Facing => new Vector3(Mathf.Sin(Yaw), 0f, Mathf.Cos(Yaw));

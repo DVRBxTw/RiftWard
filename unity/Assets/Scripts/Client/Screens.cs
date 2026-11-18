@@ -215,6 +215,40 @@ namespace RiftWard.Client
             new[] { "先學會活下來", "滑鼠瞄準，WASD 移動，左鍵射擊，右鍵瞄準。\nShift 衝刺、Space 跳躍、R 換彈、Q 手榴彈。\n接下來進入安全訓練場，完成瞄準、移動和擊破目標。" },
         };
 
+        /// 第二章 opening, shown the first time 帝國裂隙 is cleared (and from 劇情回顧).
+        public static readonly string[][] ChapterTwo =
+        {
+            new[] { "第二章 / 帝國母星", "穿過裂隙的瞬間，空氣變得冰冷刺骨。\n眼前是赫利奧帝國的母星：一座被冰雪與鋼鐵覆蓋的世界。\n你們是第一批踏上這片土地的地球士兵。" },
+            new[] { "帝國的反擊", "北境的霜冕要塞擋住了南下的道路，\n高空船塢裡，進攻地球的艦隊正在集結。\n而在一切的盡頭，赫利奧皇帝在王座上等著你。" },
+            new[] { "新的敵人", "帝國近衛兵手持能量盾，正面幾乎刀槍不入。\n他們全身發出紅光時，代表即將衝撞，立刻閃開。\n繞到側面或瞄準頭部，才能擊倒他們。" },
+        };
+
+        /// Ending, shown the first time the Emperor falls.
+        public static readonly string[][] Ending =
+        {
+            new[] { "王座崩塌", "赫利奧皇帝倒在他的王座前，\n那道籠罩帝國千年的金色光芒，第一次熄滅了。" },
+            new[] { "回家的路", "船塢裡的艦隊再也沒有起飛。\n裂隙另一端，那顆救過你的翠綠星球，終於迎來了和平。\n而地球，正等著你們凱旋。" },
+            new[] { "感謝遊玩", "你完成了《裂隙守衛》的全部故事。\n挑戰更高的難度、收集傳說武器、和好友一起刷新紀錄吧。\n—— 遠征軍指揮部，向你致敬。" },
+        };
+
+        /// A sequence of story pages; done runs after the last one (or when skipped).
+        public void ShowPages(string[][] pages, int page, string finish, Action done)
+        {
+            var r = Begin("story");
+            var stack = Ui.VStack(r, 18);
+            stack.Place(new Vector2(0.5f, 0.5f), new Vector2(0, 40), new Vector2(820, 440));
+            Caps(stack, $"RIFTWARD  ·  {page + 1} / {pages.Length}", Palette.Amber).Sized(18);
+            Ui.Label(stack, pages[page][0], 40, Palette.Bone, TextAnchor.UpperLeft, true).Sized(54);
+            Ui.Label(stack, pages[page][1], 21, Palette.Hex("d6d1c6")).Sized(150);
+            var row = Ui.HStack(stack, 12).Sized(54);
+            PrimaryButton(row, page < pages.Length - 1 ? "下一頁" : finish, () =>
+            {
+                if (page < pages.Length - 1) ShowPages(pages, page + 1, finish, done);
+                else done();
+            });
+            if (page < pages.Length - 1) Ui.Button(row, "略過", done, 18);
+        }
+
         public void ShowStory(int page)
         {
             var r = Begin("story");
@@ -251,9 +285,25 @@ namespace RiftWard.Client
             stack.Fill();
             stack.GetComponent<VerticalLayoutGroup>().padding = new RectOffset(48, 48, 32, 28);
             Ui.Label(stack, "選擇關卡", 34, Palette.Bone, TextAnchor.UpperLeft, true).Sized(46);
-            Ui.Label(stack, "第一章 · 墜落星球", 14, Palette.Muted).Sized(30);
+            // Chapter tabs: a chapter opens once its first region is unlocked.
+            int chapter = Defs.ChapterOf(selected);
+            var chapters = Ui.HStack(stack, 8).Sized(40);
+            for (int c = 0; c < Defs.Chapters.Length; c++)
+            {
+                int first = c * Defs.RegionsPerChapter;
+                bool open = first <= p.Unlocked, on = c == chapter;
+                var (number, title) = Defs.Chapters[c];
+                var tab = Ui.Button(chapters, open ? $"{number} · {title}" : $"{number} · 未解鎖", () =>
+                {
+                    int target = Mathf.Min(p.Unlocked, first + Defs.RegionsPerChapter - 1);
+                    app.SelectRegion(Mathf.Max(first, target));
+                }, 15, on ? Palette.Amber : open ? Palette.Bone : Palette.Muted,
+                    on ? new Color(Palette.Amber.r, Palette.Amber.g, Palette.Amber.b, 0.1f) : new Color(1, 1, 1, 0.03f), on ? Palette.Amber : Palette.Line);
+                tab.interactable = open && !on;
+            }
+            Ui.Rect(stack, "Gap").Sized(8);
             Widgets.Section(stack, "部署區域").Sized(26);
-            for (int i = 0; i < Defs.Regions.Length; i++)
+            for (int i = chapter * Defs.RegionsPerChapter; i < Mathf.Min(Defs.Regions.Length, (chapter + 1) * Defs.RegionsPerChapter); i++)
             {
                 int index = i;
                 bool locked = i > p.Unlocked, current = i == selected;
@@ -305,7 +355,7 @@ namespace RiftWard.Client
             deploy.SetCaption(tierIndex > 0 ? $"部署          0{selected + 1} {region.Name} · {tier.Name}" : $"部署          0{selected + 1} {region.Name}");
             deploy.interactable = app.CanDeploy;
             Ui.Rect(stack, "Gap").Sized(12);
-            Ui.Button(stack, "故事與教學", () => ShowStory(0), 14, Palette.Muted).Sized(40);
+            Ui.Button(stack, chapter == 0 ? "故事與教學" : "第二章劇情回顧", () => { if (chapter == 0) ShowStory(0); else ShowPages(ChapterTwo, 0, "返回基地", app.ShowHome); }, 14, Palette.Muted).Sized(40);
             if (app.Net.Welcomed)
             {
                 Ui.Rect(stack, "Gap").Sized(20);

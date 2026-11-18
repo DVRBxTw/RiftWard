@@ -47,6 +47,8 @@ namespace RiftWard.Client
             public int FastWave = -1;
             /// Account ids invited by a member: they may join even when the room is private.
             public readonly HashSet<int> Invited = new HashSet<int>();
+            /// Set by the pause menu; the mission freezes only while one player is in the room.
+            public bool Paused;
         }
 
         const int MaxPlayers = 64, RoomSize = 4;
@@ -154,6 +156,7 @@ namespace RiftWard.Client
         {
             var sim = room.Sim;
             if (sim == null || room.Mode != "playing") return;
+            if (room.Paused && room.Members.Count == 1) return;   // solo pause: nothing moves, nothing is sent
             foreach (var kv in MembersOf(room))
                 if (sim.Actors.TryGetValue(kv.Key, out var actor) && clock - kv.Value.LastInput > 0.25f)
                     sim.Inputs[kv.Key] = new PlayerInput { Seq = sim.Inputs.TryGetValue(kv.Key, out var old) ? old.Seq : 0, Yaw = actor.Yaw, Slot = actor.Slot };
@@ -242,6 +245,7 @@ namespace RiftWard.Client
             p.Room = room;
             Debug.Log($"ROOM_JOINED {code} id={p.Conn.Id}");
             room.Invited.Remove(p.AccountId);
+            room.Paused = false;   // a party never stays paused
             SendLobby(room);
             RoomNotice(room, $"{p.ChatName} 加入了房間");
             if (room.Mode == "playing") JoinMission(room, p.Conn.Id);
@@ -376,6 +380,10 @@ namespace RiftWard.Client
                     case Msg.Chat:
                         byte channel = r.ReadByte();
                         HandleChat(p, channel, r.ReadString());
+                        break;
+                    case Msg.SetPause:
+                        bool pauseOn = r.ReadBoolean();
+                        if (room != null) room.Paused = pauseOn && room.Members.Count == 1;
                         break;
                     case Msg.RefreshFriends:
                         FetchFriends(p);

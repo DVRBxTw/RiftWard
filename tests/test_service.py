@@ -331,14 +331,14 @@ class ServiceTests(unittest.TestCase):
         account = self.register()
         key = {"X-Server-Key":self.store.server_key}
         aid = account["profile"]["id"]
-        self.assertEqual(account["profile"]["cleared"],[-1,-1,-1])
+        self.assertEqual(account["profile"]["cleared"],[-1]*6)
         # 困難 stays locked until 普通 has been cleared in that region.
         code, response = self.call("/api/server/progress",{"account_id":aid,"mission":0,"difficulty":1},key)
         self.assertEqual((code,response["error"]),(400,"難度尚未解鎖"))
         profile = self.call("/api/server/progress",{"account_id":aid,"mission":0,"difficulty":0},key)[1]["profile"]
-        self.assertEqual(profile["cleared"],[0,-1,-1])
+        self.assertEqual(profile["cleared"],[0,-1,-1,-1,-1,-1])
         profile = self.call("/api/server/progress",{"account_id":aid,"mission":0,"difficulty":1},key)[1]["profile"]
-        self.assertEqual(profile["cleared"],[1,-1,-1])
+        self.assertEqual(profile["cleared"],[1,-1,-1,-1,-1,-1])
         self.assertEqual(self.call("/api/server/progress",{"account_id":aid,"mission":1,"difficulty":2},key)[0],400)
         for bad in (3,-1,True,"1"):
             self.assertEqual(self.call("/api/server/progress",{"account_id":aid,"mission":0,"difficulty":bad},key)[0],400)
@@ -354,10 +354,27 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(self.call("/api/server/reward",{"account_id":aid,"gold":6000},key)[1]["profile"]["gold"],6000)
         self.assertEqual(self.call("/api/server/reward",{"account_id":aid,"gold":service.MAX_REWARD+1},key)[0],400)
 
+    def test_chapter_two_opens_after_the_rift(self):
+        account = self.register()
+        key = {"X-Server-Key":self.store.server_key}
+        aid = account["profile"]["id"]
+        # An account from before chapter 2: progress capped at region 2, with 帝國裂隙 cleared on 困難.
+        with self.store.connect() as db:
+            db.execute("UPDATE progress SET unlocked=2, cleared=? WHERE account_id=?", (json.dumps([1, 0, 1]), aid))
+        profile = self.store.profile(aid)
+        self.assertEqual(profile["unlocked"],3)
+        self.assertEqual(profile["cleared"],[1,0,1,-1,-1,-1])
+        # Chapter 2 progresses region by region up to the throne, and no further.
+        for region in (3,4,5):
+            profile = self.call("/api/server/progress",{"account_id":aid,"mission":region,"difficulty":0},key)[1]["profile"]
+        self.assertEqual(profile["unlocked"],5)
+        self.assertEqual(profile["cleared"][5],0)
+        self.assertEqual(self.call("/api/server/progress",{"account_id":aid,"mission":6,"difficulty":0},key)[0],400)
+
     def test_legacy_accounts_count_passed_regions_as_cleared(self):
-        self.assertEqual(service.Store._parse_cleared("[]",2),[0,0,-1])
-        self.assertEqual(service.Store._parse_cleared("[2,\"x\",true,7]",0),[2,-1,-1])
-        self.assertEqual(service.Store._parse_cleared("not json",1),[0,-1,-1])
+        self.assertEqual(service.Store._parse_cleared("[]",2),[0,0,-1,-1,-1,-1])
+        self.assertEqual(service.Store._parse_cleared("[2,\"x\",true,7]",0),[2,-1,-1,2,-1,-1])   # 7 is capped at 噩夢
+        self.assertEqual(service.Store._parse_cleared("not json",1),[0,-1,-1,-1,-1,-1])
 
     def test_daily_missions(self):
         account = self.register()
