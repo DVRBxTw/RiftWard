@@ -736,6 +736,22 @@ namespace RiftWard.Client
             for (int f = 0; f < 30; f++) { Client.AimbotStepForCapture(1f / 60f); yield return null; }
             yield return Shot(folder, "unity-aimbot");
             Client.SetView(0, 0);
+            // Ordinary-rarity muzzle flash (傳奇+ guns have their own effect), first and third person.
+            me.Loadout.Rarity["rifle"] = 1;
+            kit.Rarity["rifle"] = 1;
+            Client.SelectSlot(0);
+            yield return Settle(0.3f);
+            foreach (bool third in new[] { false, true })
+            {
+                Client.SetThirdPerson(third);
+                yield return Settle(0.2f);
+                sim.Fire(Client.LocalId, me.Position + Vector3.up * 1.4f + GameSim.LookDirection(0, 0) * 30f);
+                yield return Settle(0.012f);
+                yield return Shot(folder, third ? "unity-muzzle-third" : "unity-muzzle");
+            }
+            Client.SetThirdPerson(false);
+            kit.Rarity["rifle"] = 4;
+            me.Loadout.Rarity["rifle"] = 4;
             Client.Hud.ResetTransient();
             yield return Settle(0.4f);
             yield return Shot(folder, "unity-rifle");

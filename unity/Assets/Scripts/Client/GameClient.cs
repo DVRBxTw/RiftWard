@@ -369,7 +369,12 @@ namespace RiftWard.Client
 
         void DrainEvents()
         {
+            // A shotgun blast arrives as one event per pellet: sound and muzzle flash play once per shooter,
+            // and your hit confirmation once per batch (a headshot if any pellet was one).
+            firedThisBatch.Clear();
+            localHit = localHead = false;
             foreach (var shot in Sim.Shots) ShotEffect(shot);
+            if (localHit || localHead) Sfx.Play(localHead ? "head" : "hit", 0.45f);
             foreach (var ex in Sim.Explosions) ExplosionEffect(ex);
             foreach (var text in Sim.Announcements) Hud.Announce(text);
             Sim.Shots.Clear();
@@ -391,6 +396,9 @@ namespace RiftWard.Client
 
         // ------------------------------------------------------------ effects
 
+        readonly HashSet<int> firedThisBatch = new HashSet<int>();
+        bool localHit, localHead;
+
         void ShotEffect(ShotEvent shot)
         {
             if (shot.Shooter < 0) { GadgetEffect(shot); return; }
@@ -403,8 +411,11 @@ namespace RiftWard.Client
             // A miss that stopped short of full range hit a wall or the ground.
             if (!shot.Hit && Vector3.Distance(shot.Origin, shot.End) < Defs.ShotRange - 0.5f) ImpactEffect(shot.End, shot.End - shot.Origin);
             int rarity = Sim.Actors.TryGetValue(shot.Shooter, out var shooter) ? shooter.Loadout.RarityOf(shooter.WeaponId) : 1;
-            ShotSound(shot, shooter, rarity);
+            bool firstOfBatch = firedThisBatch.Add(shot.Shooter);
+            if (firstOfBatch) ShotSound(shot, shooter, rarity);
+            if (shot.Shooter == LocalId) { localHit |= shot.Hit; localHead |= shot.Head; }
             if (rarity >= 3) { RarityShot(shot, origin, rarity); if (shot.Shooter == LocalId) { Hud.OnLocalShot(shot, Camera); ApplyRecoil(); } return; }
+            if (shooter != null && firstOfBatch) MuzzleFlash(shooter.WeaponId, origin, shot.Shooter == LocalId && !thirdPerson);
             var beam = new GameObject("Beam");
             var line = beam.AddComponent<LineRenderer>();
             line.positionCount = 2;
@@ -493,8 +504,26 @@ namespace RiftWard.Client
         {
             if (shooter == null) return;
             bool mine = shot.Shooter == LocalId;
-            Sfx.Play(Sfx.FireName(shooter.WeaponId, rarity), mine ? 0.55f : 0.22f);
-            if (mine && (shot.Hit || shot.Head)) Sfx.Play(shot.Head ? "head" : "hit", 0.45f);
+            if (mine) Sfx.Play(Sfx.FireName(shooter.WeaponId, rarity), 0.55f);
+            else Sfx.PlayAt(Sfx.FireName(shooter.WeaponId, rarity), shot.Origin, 0.5f);   // teammates: from where they stand
+        }
+
+        /// Muzzle flash for ordinary weapons (傳奇+ have their own): a bright core, a softer bloom and a short
+        /// point light that lights up nearby walls, ground and the weapon. Sized per gun.
+        void MuzzleFlash(string weaponId, Vector3 origin, bool firstPerson)
+        {
+            float size; Color color;
+            switch (weaponId)
+            {
+                case "shotgun": size = 0.55f; color = Palette.Hex("ff9a4a"); break;
+                case "sniper": size = 0.6f; color = Palette.Hex("c9a6ff"); break;
+                case "rifle": size = 0.36f; color = Palette.Hex("ffc46a"); break;
+                default: size = 0.28f; color = Palette.Hex("ffd98a"); break;
+            }
+            float scale = firstPerson ? 0.5f : 1f;
+            var core = Burst.Sphere(origin, Color.Lerp(color, Color.white, 0.6f), 0.95f, 5f, size * 0.35f * scale, size * 0.6f * scale, 0.045f);
+            core.GetComponent<Burst>().AddLight(color, firstPerson ? 2.2f : 3.5f, firstPerson ? 4f : 7f);
+            Burst.Sphere(origin, color, 0.55f, 4f, size * 0.5f * scale, size * 1.1f * scale, 0.07f);
         }
 
         /// Bullet striking cover or ground: a brief flash, a puff of dust and a few sparks bouncing back.
@@ -669,7 +698,7 @@ namespace RiftWard.Client
                 effects.Add((spark, UnityEngine.Random.Range(0.35f, 0.6f), UnityEngine.Random.onUnitSphere * UnityEngine.Random.Range(5f, 10f) + Vector3.up * 4f, 720f));
             }
             if (Sim.Actors.TryGetValue(LocalId, out var me) && Vector3.Distance(me.Position, ex.Position) < ex.Radius * 3) shake = 0.08f;
-            Sfx.Play("explosion", 0.8f);
+            Sfx.PlayAt("explosion", ex.Position, 1f);
         }
 
         /// Enemies collapse into tumbling fragments instead of vanishing.

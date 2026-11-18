@@ -7,30 +7,114 @@ namespace RiftWard.Client
     public sealed class Sfx
     {
         const int Rate = 22050;
-        readonly AudioSource[] voices;
+        /// Separate voice pools so a burst of rifle fire never cuts off hit confirmations, reloads or teammates:
+        /// your own weapon (2D), feedback and UI (2D), and positioned world sounds (3D, others' shots and blasts).
+        readonly Pool weapon, feedback, world;
         readonly Dictionary<string, AudioClip> clips = new Dictionary<string, AudioClip>();
-        int next;
+        Transform listener;
+
+        /// Each fire sound is synthesised in a few variants (different noise) that rotate, plus a small random
+        /// pitch and volume change per shot, so automatic fire does not sound like one sample on repeat.
+        public const int FireVariants = 3;
+        const float WorldNear = 3f, WorldFar = 70f;
+
+        sealed class Pool
+        {
+            public readonly AudioSource[] Voices;
+            readonly float[] started;
+            readonly AudioLowPassFilter[] filters;
+
+            public Pool(GameObject host, int count, bool spatial)
+            {
+                Voices = new AudioSource[count];
+                started = new float[count];
+                if (spatial) filters = new AudioLowPassFilter[count];
+                for (int i = 0; i < count; i++)
+                {
+                    var go = spatial ? new GameObject("WorldVoice") : host;
+                    if (spatial) go.transform.SetParent(host.transform, false);
+                    var v = go.AddComponent<AudioSource>();
+                    v.playOnAwake = false;
+                    v.spatialBlend = spatial ? 1f : 0f;
+                    if (spatial)
+                    {
+                        v.rolloffMode = AudioRolloffMode.Logarithmic;
+                        v.minDistance = WorldNear;
+                        v.maxDistance = WorldFar;
+                        v.dopplerLevel = 0f;
+                        v.spread = 30f;
+                        filters[i] = go.AddComponent<AudioLowPassFilter>();
+                    }
+                    Voices[i] = v;
+                }
+            }
+
+            /// A free voice, or else the one that started longest ago (it is the closest to finishing).
+            public int Take()
+            {
+                int pick = 0;
+                for (int i = 0; i < Voices.Length; i++)
+                {
+                    if (!Voices[i].isPlaying) { pick = i; break; }
+                    if (started[i] < started[pick]) pick = i;
+                }
+                started[pick] = Time.unscaledTime;
+                return pick;
+            }
+
+            public AudioLowPassFilter Filter(int i) => filters?[i];
+        }
 
         public Sfx(GameObject host, int polyphony = 8)
         {
-            voices = new AudioSource[polyphony];
-            for (int i = 0; i < polyphony; i++)
-            {
-                voices[i] = host.AddComponent<AudioSource>();
-                voices[i].playOnAwake = false;
-                voices[i].spatialBlend = 0;
-            }
+            weapon = new Pool(host, 10, false);
+            feedback = new Pool(host, polyphony, false);
+            world = new Pool(host, 16, true);
         }
 
-        public void Play(string name, float volume = 1f)
+        AudioClip Clip(string name)
         {
             if (!clips.TryGetValue(name, out var clip)) clips[name] = clip = Make(name);
-            var v = voices[next];
-            next = (next + 1) % voices.Length;
-            v.clip = clip;
-            v.volume = volume * GameSettings.Effects;
+            return clip;
+        }
+
+        /// 2D sound. Fire sounds go to the weapon pool with per-shot variation; everything else to feedback.
+        public void Play(string name, float volume = 1f)
+        {
+            bool fire = name.StartsWith("fire_");
+            var pool = fire ? weapon : feedback;
+            var v = pool.Voices[pool.Take()];
+            v.clip = Clip(fire ? Variant(name) : name);
+            v.pitch = fire ? Jitter(name) : 1f;
+            v.volume = volume * (fire ? Random.Range(0.92f, 1f) : 1f) * GameSettings.Effects;
             v.Play();
         }
+
+        /// 3D sound at a world position: louder and brighter close by; far away it fades and loses its highs,
+        /// so a teammate's shot across the arena reads as a distant, muffled report from that direction.
+        public void PlayAt(string name, Vector3 position, float volume = 1f)
+        {
+            bool fire = name.StartsWith("fire_");
+            int i = world.Take();
+            var v = world.Voices[i];
+            v.transform.position = position;
+            v.clip = Clip(fire ? Variant(name) : name);
+            v.pitch = fire ? Jitter(name) : Random.Range(0.96f, 1.04f);
+            v.volume = volume * (fire ? Random.Range(0.92f, 1f) : 1f) * GameSettings.Effects;
+            var filter = world.Filter(i);
+            if (filter != null)
+            {
+                if (listener == null) listener = Object.FindAnyObjectByType<AudioListener>()?.transform;
+                float distance = listener != null ? Vector3.Distance(listener.position, position) : 0f;
+                filter.cutoffFrequency = Mathf.Lerp(22000f, 1800f, Mathf.Clamp01((distance - WorldNear) / 45f));
+            }
+            v.Play();
+        }
+
+        static string Variant(string name) => name + "#" + Random.Range(0, FireVariants);
+
+        /// Heavier guns vary less, so the rail gun keeps its weight.
+        static float Jitter(string name) => 1f + Random.Range(-1f, 1f) * (name.Contains("sniper") ? 0.015f : name.Contains("shotgun") ? 0.025f : 0.04f);
 
         /// Weapon fire sound name for a weapon at a rarity (傳奇+ adds a shimmer layer).
         public static string FireName(string weapon, int rarity) => "fire_" + weapon + (rarity >= 3 ? "_rare" : "");
@@ -60,8 +144,9 @@ namespace RiftWard.Client
         /// P-9 laser zap, AR-27 pulse rifle, SG-8 plasma blast, LR-50 rail gun.
         static AudioClip Fire(string name)
         {
-            bool rare = name.EndsWith("_rare");
-            string weapon = name.Substring(5).Replace("_rare", "");
+            string baseName = name.Split('#')[0];   // "#n" picks a variant: same sound, different noise
+            bool rare = baseName.EndsWith("_rare");
+            string weapon = baseName.Substring(5).Replace("_rare", "");
             float duration = weapon == "sniper" ? 0.75f : weapon == "shotgun" ? 0.38f : weapon == "rifle" ? 0.16f : 0.12f;
             int count = (int)(FireRate * duration);
             var data = new float[count];
