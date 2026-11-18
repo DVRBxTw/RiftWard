@@ -526,7 +526,11 @@ namespace RiftWard.Client
             if (actorViews.TryGetValue(shot.Shooter, out var shooterView) && shooterView.activeSelf)
             {
                 var shooterRig = shooterView.GetComponent<CharacterRig>();
-                if (shooterRig != null) { shooterRig.Fire(); if (shooterRig.Muzzle != null) origin = shooterRig.Muzzle.position; }
+                bool blade = Sim.Actors.TryGetValue(shot.Shooter, out var holder) && holder.Melee;
+                // A swing is one event per enemy hit: animate it once per batch. Guns kick on every shot.
+                if (shooterRig != null && blade && !firedThisBatch.Contains(shot.Shooter)) shooterRig.Swing();
+                else if (shooterRig != null && !blade) shooterRig.Fire();
+                if (shooterRig != null && shooterRig.Muzzle != null) origin = shooterRig.Muzzle.position;
             }
             if (Sim.Actors.TryGetValue(shot.Shooter, out var swinger) && swinger.Melee) { SwingEffect(shot, swinger); return; }
             // A miss that stopped short of full range hit a wall or the ground.
@@ -1065,7 +1069,8 @@ namespace RiftWard.Client
         /// for up to four seconds; run out and the sway doubles until the lungs refill halfway.
         void UpdateSway(bool scoped, float dt)
         {
-            bool wantHold = scoped && Active && Bindings.Held(Bindings.Action.Dash);
+            if (!Active) return;   // paused or typing: the view holds still
+            bool wantHold = scoped && Bindings.Held(Bindings.Action.Dash);
             holdingBreath = wantHold && !breathSpent && breath > 0f;
             breath = Mathf.Clamp01(breath + (holdingBreath ? -dt / 4f : dt / 3f));
             if (holdingBreath && breath <= 0f) { breathSpent = true; holdingBreath = false; Sfx.Play("breath_out", 0.5f); }

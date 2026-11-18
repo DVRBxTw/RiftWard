@@ -900,6 +900,18 @@ namespace RiftWard.Client
             yield return Shot(folder, "unity-sniper-scope");
             Client.AimForCapture = false;
             yield return Settle(0.3f);
+            // Saber swing seen from outside (what teammates see): mid-sweep in third person.
+            me.Loadout.Equipped[1] = "saber"; kit.Equipped[1] = "saber";
+            Client.Sim.RefreshWeapon(me);
+            Client.SetThirdPerson(true);
+            yield return Settle(0.3f);
+            sim.Swing(me);
+            yield return Settle(0.11f);
+            yield return Shot(folder, "unity-saber-third");
+            Client.SetThirdPerson(false);
+            me.Loadout.Equipped[1] = "sniper"; kit.Equipped[1] = "sniper";
+            Client.Sim.RefreshWeapon(me);
+            yield return Settle(0.3f);
             Client.Menus.OpenPause();
             float pausedAt = sim.Elapsed;
             yield return Settle(0.6f);

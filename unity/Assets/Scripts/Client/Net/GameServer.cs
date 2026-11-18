@@ -543,10 +543,10 @@ namespace RiftWard.Client
         }
 
         /// Trims, removes control characters and masks filtered words.
-        string CleanChat(string text)
+        string CleanChat(string text, int max = ChatChannel.MaxLength)
         {
             string clean = new string((text ?? "").Where(c => !char.IsControl(c)).ToArray()).Trim();
-            if (clean.Length > ChatChannel.MaxLength) clean = clean.Substring(0, ChatChannel.MaxLength);
+            if (clean.Length > max) clean = clean.Substring(0, max);
             foreach (var word in chatFilter)
             {
                 int at;
@@ -558,7 +558,8 @@ namespace RiftWard.Client
 
         void HandleChat(Player p, byte channel, string text)
         {
-            text = CleanChat(text);
+            // A whisper carries the recipient's name in front, so it gets that much more room.
+            text = CleanChat(text, channel == ChatChannel.Whisper ? ChatChannel.MaxLength + 24 : ChatChannel.MaxLength);
             if (text.Length == 0) return;
             if (p.Profile.Admin && text.StartsWith("/") && AdminCommand(p, text)) return;
             if (mutedUntil.TryGetValue(p.AccountId, out var until) && clock < until)
@@ -576,6 +577,7 @@ namespace RiftWard.Client
                 int space = text.IndexOf(' ');
                 string to = space > 0 ? text.Substring(0, space) : text, body = space > 0 ? text.Substring(space + 1).Trim() : "";
                 if (body.Length == 0) { SystemLine(p, "私訊格式：/w 帳號 訊息"); return; }
+                if (body.Length > ChatChannel.MaxLength) body = body.Substring(0, ChatChannel.MaxLength);
                 var target = players.Values.FirstOrDefault(o => o.Profile != null && string.Equals(o.ChatName, to, StringComparison.OrdinalIgnoreCase));
                 if (target == null) { SystemLine(p, $"{to} 目前不在線上，私訊未送出"); return; }
                 if (target == p) { SystemLine(p, "不能私訊自己"); return; }

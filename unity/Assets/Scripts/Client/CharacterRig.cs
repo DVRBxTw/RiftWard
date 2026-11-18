@@ -58,6 +58,11 @@ namespace RiftWard.Client
         }
 
         public void Fire() => recoil = 1f;
+
+        /// A blade swing: a fast horizontal sweep of the sword arm, alternating sides, with a torso twist.
+        public void Swing() { swingTime = 0f; swingSide = -swingSide; }
+        float swingTime = 9f, swingSide = 1f;
+        const float SwingDuration = 0.3f;
         public void Hit() => flinch = 1f;
 
         static Quaternion E(float x, float y = 0, float z = 0) => Quaternion.Euler(x, y, z);
@@ -76,6 +81,14 @@ namespace RiftWard.Client
             phase += speed * dt * 2.3f * stride;
             idle += dt;
             recoil = Mathf.MoveTowards(recoil, 0, dt * 9f);
+            swingTime += dt;
+            // 0 → 1 over the swing: wind-up for the first 15%, a fast eased sweep, then a short recovery back to rest.
+            float st = swingTime / SwingDuration;
+            float sweep = st >= 1f ? 0f : st < 0.15f ? -st / 0.15f : Mathf.Clamp01((st - 0.15f) / 0.55f);
+            float swingAmount = st >= 1f ? 0f : st < 0.7f ? 1f : 1f - (st - 0.7f) / 0.3f;   // pose weight
+            float arc = st < 0.15f ? Mathf.Lerp(0f, 75f, -sweep) : Mathf.Lerp(75f, -80f, 1f - Mathf.Pow(1f - sweep, 3f));   // degrees of yaw
+            arc *= swingSide;
+            bool swinging = swingAmount > 0f && weaponShown == "saber";
             flinch = Mathf.MoveTowards(flinch, 0, dt * 5f);
             if (!Alive) { move = 0; }
 
@@ -102,7 +115,7 @@ namespace RiftWard.Client
             {
                 float lean = 7f * move + (Kind == Style.Boss ? Mathf.Abs(s) * 4f * move : 0f);
                 float twist = s * 6f * move;
-                torso.localRotation = E(lean - flinch * 16f - recoil * 3f, twist, Kind == Style.Boss ? s * 3f * move : 0f);
+                torso.localRotation = E(lean - flinch * 16f - recoil * 3f, twist + (swinging ? arc * 0.35f * swingAmount : 0f), Kind == Style.Boss ? s * 3f * move : 0f);
             }
             if (head != null) head.localRotation = E(-Mathf.Rad2Deg * Pitch * 0.5f - 7f * move * 0.5f + flinch * 8f, -s * 3f * move);
 
@@ -119,6 +132,17 @@ namespace RiftWard.Client
                 float toBelt = Reload > 0 ? Mathf.Clamp01(Mathf.Sin(Mathf.PI * Mathf.Clamp01((Reload - 0.1f) / 0.7f))) : 0f;
                 if (armL != null) armL.localRotation = Quaternion.Slerp(E(-80f + aim * 0.8f, 32f, -10f), E(-10f, 10f, -8f), toBelt);
                 if (elbowL != null) elbowL.localRotation = Quaternion.Slerp(E(-30f, 0, 0), E(-70f, 0, 0), toBelt);
+                if (swinging)
+                {
+                    // Sword swing: the blade sweeps across the body at chest height, tipped toward the swing.
+                    var swingRot = E(-25f + aim * 0.4f, arc, -swingSide * 55f);
+                    gunMount.localRotation = Quaternion.Slerp(gunMount.localRotation, swingRot, swingAmount);
+                    var swingPos = new Vector3(Mathf.Sin(arc * Mathf.Deg2Rad) * 0.32f, 0.42f, 0.22f + Mathf.Cos(arc * Mathf.Deg2Rad) * 0.18f);
+                    gunMount.localPosition = Vector3.Lerp(gunMount.localPosition, swingPos, swingAmount);
+                    if (armR != null) armR.localRotation = Quaternion.Slerp(armR.localRotation, E(-80f, arc * 0.9f, 4f), swingAmount);
+                    if (elbowR != null) elbowR.localRotation = Quaternion.Slerp(elbowR.localRotation, E(-20f, 0, 0), swingAmount);
+                    if (armL != null) armL.localRotation = Quaternion.Slerp(armL.localRotation, E(-30f, -arc * 0.3f, -18f), swingAmount);
+                }
             }
             else
             {
