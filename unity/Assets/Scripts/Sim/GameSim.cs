@@ -85,6 +85,8 @@ namespace RiftWard.Sim
             RefreshWeapon(a);
             a.Ammo = a.Mag;
             ApplyAdmin(a);
+            // Talents and gear outlive the reset: a player added before the mission starts keeps them.
+            ApplyBonusStats(a);
         }
 
         public void StartMission(int region, int difficulty = 0)
@@ -107,6 +109,15 @@ namespace RiftWard.Sim
             if (!Actors.TryGetValue(id, out var a)) return;
             hp = Mathf.Clamp(hp, 0, 400); damagePct = Mathf.Clamp(damagePct, 0, 200); speedPct = Mathf.Clamp(speedPct, 0, 60);
             reloadPct = Mathf.Clamp(reloadPct, 0, 60); critPct = Mathf.Clamp(critPct, 0, 60);
+            a.ProfileBonus = new[] { hp, damagePct, speedPct, reloadPct, critPct };
+            ApplyBonusStats(a);
+        }
+
+        /// Adds the stored account bonus on top of the actor's current (freshly reset) stats.
+        void ApplyBonusStats(Actor a)
+        {
+            if (a.ProfileBonus == null) return;
+            float hp = a.ProfileBonus[0], damagePct = a.ProfileBonus[1], speedPct = a.ProfileBonus[2], reloadPct = a.ProfileBonus[3], critPct = a.ProfileBonus[4];
             a.MaxHp += hp;
             a.Hp = a.MaxHp;
             a.DamageMult *= 1f + damagePct / 100f;

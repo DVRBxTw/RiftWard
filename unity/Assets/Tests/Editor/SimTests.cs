@@ -28,6 +28,28 @@ namespace RiftWard.Tests
         }
 
         [Test]
+        public void ProfileBonusSurvivesMissionStart()
+        {
+            // Online order: the server adds players and applies talents + gear before StartMission resets stats.
+            var sim = new GameSim(1234) { EnemyVariety = false };
+            sim.AddActor(1, new Loadout(), false);
+            sim.ApplyProfileBonus(1, 20f, 10f, 5f, 8f, 4f);
+            sim.StartMission(0);
+            var a = sim.Actors[1];
+            Assert.AreEqual(120f, a.MaxHp, 0.001f);
+            Assert.AreEqual(120f, a.Hp, 0.001f);
+            Assert.AreEqual(1.1f, a.DamageMult, 0.001f);
+            Assert.AreEqual(Defs.BaseSpeed * 1.05f, a.Speed, 0.001f);
+            Assert.AreEqual(0.92f, a.ReloadMult, 0.001f);
+            Assert.AreEqual(0.04f, a.Critical, 0.001f);
+            // Offline order (bonus after start) gives the same result, not a doubled one.
+            var solo = NewMission(new Loadout());
+            solo.ApplyProfileBonus(1, 20f, 10f, 5f, 8f, 4f);
+            Assert.AreEqual(120f, solo.Actors[1].MaxHp, 0.001f);
+            Assert.AreEqual(1.1f, solo.Actors[1].DamageMult, 0.001f);
+        }
+
+        [Test]
         public void PistolIsStarterAndUpgradesApply()
         {
             var lo = new Loadout();
