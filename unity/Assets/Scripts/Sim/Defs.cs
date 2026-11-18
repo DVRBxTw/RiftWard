@@ -87,7 +87,15 @@ namespace RiftWard.Sim
         public const float XpBase = 100f;
         public const float XpGrowth = 1.35f;
         public const float BuffTimeout = 30f;
-        public const int MaxUpgradeLevel = 5;
+        /// Weapon enhancement per stat; mirrors MAX_UPGRADE / SOFT_UPGRADE / OVERLOAD_* in server/service.py.
+        /// Levels past SoftUpgradeLevel cost x1.5 per level more and count as half a step.
+        public const int MaxUpgradeLevel = 10, SoftUpgradeLevel = 5;
+        /// 超載: three extra tiers for 傳奇+ copies with every stat maxed, each +5% damage, fire rate and reload speed.
+        public const int OverloadMax = 3, OverloadMinRarity = 3;
+        public const float OverloadStep = 0.05f;
+        public static readonly int[] OverloadShards = { 1, 2, 4 };
+        public static readonly int[] OverloadGold = { 5000, 10000, 20000 };
+        public static float EffectiveLevel(int level) => Mathf.Min(level, SoftUpgradeLevel) + 0.5f * Mathf.Max(0, level - SoftUpgradeLevel);
 
         public static int XpForLevel(int level) => Mathf.RoundToInt(XpBase * Mathf.Pow(XpGrowth, level - 1));
 
@@ -138,7 +146,8 @@ namespace RiftWard.Sim
         public static readonly float[] RarityUpgradeMult = { 0.6f, 1.0f, 1.4f, 2.0f, 3.0f };
 
         public static int UpgradeCost(string weapon, int level, int rarity = 1) =>
-            (int)System.Math.Round(120.0 * (level + 1) * Weapons[weapon].UpgradeFactor * RarityUpgradeMult[Mathf.Clamp(rarity, 0, RarityUpgradeMult.Length - 1)], System.MidpointRounding.ToEven);
+            (int)System.Math.Round(120.0 * (level + 1) * Weapons[weapon].UpgradeFactor * RarityUpgradeMult[Mathf.Clamp(rarity, 0, RarityUpgradeMult.Length - 1)]
+                * System.Math.Pow(1.5, System.Math.Max(0, level - SoftUpgradeLevel + 1)), System.MidpointRounding.ToEven);
 
         public static readonly KindDef[] Kinds =
         {
@@ -274,15 +283,20 @@ namespace RiftWard.Sim
 
         /// Stats after armory upgrades (before in-mission buffs). On a melee weapon the 彈匣 upgrade lengthens the
         /// reach (+8% per level) and the 換彈 upgrade quickens the swing (-8% per level).
-        public WeaponStats StatsAt(int damageLevel, int magLevel, int reloadLevel) => new WeaponStats
+        public WeaponStats StatsAt(int damageLevel, int magLevel, int reloadLevel, int overload = 0)
         {
-            Damage = Damage * (1f + 0.12f * damageLevel),
-            Interval = Melee ? Interval * (1f - 0.08f * reloadLevel) : Interval,
-            Mag = Melee ? 1 : Mathf.CeilToInt(Mag * (1f + 0.15f * magLevel)),
-            Reload = Melee ? 0f : Reload * (1f - 0.08f * reloadLevel),
-            Range = Melee ? Range * (1f + 0.08f * magLevel) : 0f,
-            Pellets = Pellets, Spread = Spread, HeadMultiplier = HeadMultiplier, Zoom = Zoom,
-        };
+            float d = Defs.EffectiveLevel(damageLevel), m = Defs.EffectiveLevel(magLevel), r = Defs.EffectiveLevel(reloadLevel);
+            float over = Mathf.Clamp(overload, 0, Defs.OverloadMax) * Defs.OverloadStep;
+            return new WeaponStats
+            {
+                Damage = Damage * (1f + 0.12f * d) * (1f + over),
+                Interval = (Melee ? Interval * (1f - 0.08f * r) : Interval) * (1f - over),
+                Mag = Melee ? 1 : Mathf.CeilToInt(Mag * (1f + 0.15f * m)),
+                Reload = Melee ? 0f : Reload * (1f - 0.08f * r) * (1f - over),
+                Range = Melee ? Range * (1f + 0.08f * m) : 0f,
+                Pellets = Pellets, Spread = Spread, HeadMultiplier = HeadMultiplier, Zoom = Zoom,
+            };
+        }
     }
 
     public struct WeaponStats

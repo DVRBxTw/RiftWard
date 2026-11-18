@@ -72,7 +72,7 @@ namespace RiftWard.Client
             {
                 bool active = ids[i] == tab;
                 var b = Ui.Button(bar, names[i], go[i], 19, active ? Palette.Bone : Palette.Muted, new Color(0, 0, 0, 0), new Color(0, 0, 0, 0));
-                b.GetComponent<RectTransform>().Place(new Vector2(0, 0.5f), new Vector2(226 + i * 84, 0), new Vector2(80, NavHeight), new Vector2(0, 0.5f));
+                b.GetComponent<RectTransform>().Place(new Vector2(0, 0.5f), new Vector2(196 + i * 74, 0), new Vector2(72, NavHeight), new Vector2(0, 0.5f));
                 if (active)
                 {
                     b.GetComponentInChildren<Text>().fontStyle = FontStyle.Bold;
@@ -117,16 +117,18 @@ namespace RiftWard.Client
                 app.Quit();
             }, 13, Palette.Muted, new Color(0, 0, 0, 0), new Color(0, 0, 0, 0));
             quit.gameObject.AddComponent<RevertCaption>().Arm(() => Time.unscaledTime - armedAt > 3f, "離開遊戲", Palette.Muted);
-            var chips = new[] { ("金幣", $"{p.Gold}", Palette.Amber), ("裝備鑰匙", p.Keys.ToString(), Gear.GearKeyColor), ("武器鑰匙", p.WeaponKeys.ToString(), Gear.WeaponKeyColor) };
+            var chips = new[] { ("金幣", $"{p.Gold}", Palette.Amber), ("裂隙碎片", p.Shards.ToString(), Gear.ShardColor), ("裝備鑰匙", p.Keys.ToString(), Gear.GearKeyColor), ("武器鑰匙", p.WeaponKeys.ToString(), Gear.WeaponKeyColor) };
             for (int i = 0; i < chips.Length; i++)
             {
                 var (label, value, color) = chips[chips.Length - 1 - i];
-                var chip = Ui.Rect(bar, "Chip").Place(new Vector2(1, 0.5f), new Vector2(-300 - i * 112, 0), new Vector2(100, 46), new Vector2(1, 0.5f));
+                // Four currencies: tight chips so the row clears the tabs at 1280 wide.
+                var chip = Ui.Rect(bar, "Chip").Place(new Vector2(1, 0.5f), new Vector2(-300 - i * 94, 0), new Vector2(88, 46), new Vector2(1, 0.5f));
                 Ui.Box(chip, color, "Mark").rectTransform.Place(new Vector2(0, 0.5f), Vector2.zero, new Vector2(2, 34), new Vector2(0, 0.5f));
-                Ui.Label(chip, label, 11, Palette.Muted).rectTransform.Place(new Vector2(0, 1), new Vector2(12, -2), new Vector2(90, 16), new Vector2(0, 1));
-                var icon = i == chips.Length - 1 ? Icons.Coin(chip, 22) : Icons.Key(chip, 22, color);
+                Ui.Label(chip, label, 11, Palette.Muted).rectTransform.Place(new Vector2(0, 1), new Vector2(12, -2), new Vector2(76, 16), new Vector2(0, 1));
+                var icon = i == chips.Length - 1 ? Icons.Coin(chip, 22) : i == chips.Length - 2 ? Icons.Shard(chip, 22) : Icons.Key(chip, 22, color);
                 icon.rectTransform.Place(new Vector2(0, 1), new Vector2(10, -20), new Vector2(22, 22), new Vector2(0, 1));
-                Ui.Label(chip, value, 20, color, TextAnchor.UpperLeft, true).rectTransform.Place(new Vector2(0, 1), new Vector2(36, -18), new Vector2(70, 26), new Vector2(0, 1));
+                var amount = Ui.Label(chip, value, value.Length > 5 ? 16 : 19, color, TextAnchor.UpperLeft, true);
+                amount.rectTransform.Place(new Vector2(0, 1), new Vector2(34, value.Length > 5 ? -20 : -18), new Vector2(56, 26), new Vector2(0, 1));
             }
 
             var body = Ui.Rect(r, "Body").Fill();
@@ -479,6 +481,7 @@ namespace RiftWard.Client
                 Ui.Label(row.transform, $"0{i + 1}", 13, current ? Palette.Amber : Palette.Muted).rectTransform.Place(new Vector2(0, 0.5f), new Vector2(18, 0), new Vector2(30, 20), new Vector2(0, 0.5f));
                 Ui.Label(row.transform, owned ? $"{w.Name}  ·  {Gear.RarityNames[p.Loadout.RarityOf(id)]}" : w.Name, 18, owned ? Gear.RarityColors[p.Loadout.RarityOf(id)] : Palette.Hex("a9abae"), TextAnchor.UpperLeft, owned).rectTransform.Place(new Vector2(0, 1), new Vector2(60, -8), new Vector2(300, 24), new Vector2(0, 1));
                 string detail = owned ? string.Join(" · ", Defs.UpgradeKeys.Where(k => p.Loadout.Level(id, k) > 0).Select(k => $"{UpgradeName(k, Defs.Weapons[id].Melee)} Lv {p.Loadout.Level(id, k)}")) : "未持有";
+                if (owned && p.Loadout.Level(id, "over") > 0) detail += $" · 超載 {p.Loadout.Level(id, "over")}";
                 Ui.Label(row.transform, detail == "" ? "已擁有" : detail, 12, Palette.Muted).rectTransform.Place(new Vector2(0, 1), new Vector2(60, -33), new Vector2(260, 18), new Vector2(0, 1));
                 var tag = Ui.Label(row.transform, owned ? (slot >= 0 ? $"{slot + 1} 號" : "") : "武器補給", 13, owned ? Palette.Bone : Palette.Muted, TextAnchor.MiddleRight);
                 tag.rectTransform.Place(new Vector2(1, 0.5f), new Vector2(-16, 0), new Vector2(80, 20), new Vector2(1, 0.5f));
@@ -504,6 +507,12 @@ namespace RiftWard.Client
                     bool using_ = index == activeCopy;
                     var row = Ui.Rect(copyList, "Copy").Sized(36);
                     Ui.Label(row, Gear.WeaponName(armoryPick, rarity), 14, Gear.RarityColors[rarity], TextAnchor.MiddleLeft, true).rectTransform.Fill().offsetMin = new Vector2(10, 0);
+                    // Each copy keeps its own enhancement: show it so the player knows what a switch or a salvage means.
+                    var copyLv = p.Loadout.CopyLevel(armoryPick, index);
+                    int lvSum = Defs.UpgradeKeys.Sum(k => copyLv.TryGetValue(k, out var v) ? v : 0), lvOver = copyLv.TryGetValue("over", out var ov) ? ov : 0;
+                    if (lvSum > 0)
+                        Ui.Label(row, lvOver > 0 ? $"強化 {lvSum} · 超載 {lvOver}" : $"強化 {lvSum}", 11, lvOver > 0 ? Gear.ShardColor : Palette.Muted, TextAnchor.MiddleLeft)
+                            .rectTransform.Place(new Vector2(0, 0.5f), new Vector2(170, 0), new Vector2(110, 20), new Vector2(0, 0.5f));
                     if (using_)
                     {
                         Ui.Label(row, "使用中", 12, Palette.Amber, TextAnchor.MiddleRight).rectTransform.Fill().offsetMax = new Vector2(-10, 0);
@@ -571,7 +580,7 @@ namespace RiftWard.Client
                     13, active ? Gear.RarityColors[shownRarity] : Palette.Muted, TextAnchor.UpperLeft, active).Sized(20);
             }
             Ui.Label(ds, wd.Description, 15, Palette.Hex("c9c5bb")).Sized(22);
-            var st = wd.StatsAt(p.Loadout.Level(armoryPick, "damage"), p.Loadout.Level(armoryPick, "mag"), p.Loadout.Level(armoryPick, "reload"));
+            var st = wd.StatsAt(p.Loadout.Level(armoryPick, "damage"), p.Loadout.Level(armoryPick, "mag"), p.Loadout.Level(armoryPick, "reload"), p.Loadout.Level(armoryPick, "over"));
             st.Damage *= Defs.WeaponRarityMult[own ? p.Loadout.RarityOf(armoryPick) : 1];
             float dps = st.Damage * st.Pellets / st.Interval;
             var stats = Ui.HStack(ds, 22).Sized(70);
@@ -595,20 +604,53 @@ namespace RiftWard.Client
             }
             else
             {
+                int rarityNow = p.Loadout.RarityOf(armoryPick);
+                bool allMaxed = true;
                 foreach (var key in Defs.UpgradeKeys)
                 {
                     int lv = p.Loadout.Level(armoryPick, key);
-                    var row = Ui.Rect(ds, "Upgrade").Sized(48);
+                    allMaxed &= lv >= Defs.MaxUpgradeLevel;
+                    var row = Ui.Rect(ds, "Upgrade").Sized(40);
                     Ui.Label(row, UpgradeName(key, wd.Melee), 16, Palette.Bone, TextAnchor.MiddleLeft, true).rectTransform.Place(new Vector2(0, 0.5f), Vector2.zero, new Vector2(80, 24), new Vector2(0, 0.5f));
-                    Ui.Label(row, key == "damage" ? "每級 +12%" : key == "mag" ? (wd.Melee ? "每級 +8%" : "每級 +15%") : "每級 -8%", 12, Palette.Muted, TextAnchor.MiddleLeft)
-                        .rectTransform.Place(new Vector2(0, 0.5f), new Vector2(80, 0), new Vector2(110, 20), new Vector2(0, 0.5f));
+                    string step = key == "damage" ? "+12%" : key == "mag" ? (wd.Melee ? "+8%" : "+15%") : "-8%";
+                    Ui.Label(row, lv >= Defs.SoftUpgradeLevel ? $"每級 {step} · 6 級起減半" : $"每級 {step}", 12, Palette.Muted, TextAnchor.MiddleLeft)
+                        .rectTransform.Place(new Vector2(0, 0.5f), new Vector2(80, 0), new Vector2(150, 20), new Vector2(0, 0.5f));
+                    // Ten pips; the second five (half-step, steeper price) sit after a gap and read darker when lit.
                     for (int k = 0; k < Defs.MaxUpgradeLevel; k++)
-                        Ui.Box(row, k < lv ? Palette.Amber : Palette.Line, "Pip").rectTransform.Place(new Vector2(0, 0.5f), new Vector2(200 + k * 32, 0), new Vector2(28, 6), new Vector2(0, 0.5f));
+                    {
+                        bool deep = k >= Defs.SoftUpgradeLevel;
+                        var lit = deep ? Palette.Hex("ff7a2e") : Palette.Amber;
+                        Ui.Box(row, k < lv ? lit : Palette.Line, "Pip").rectTransform.Place(new Vector2(0, 0.5f), new Vector2(236 + k * 20 + (deep ? 10 : 0), 0), new Vector2(16, 6), new Vector2(0, 0.5f));
+                    }
+                    Ui.Label(row, $"{lv}/{Defs.MaxUpgradeLevel}", 13, lv >= Defs.MaxUpgradeLevel ? Palette.Amber : Palette.Muted, TextAnchor.MiddleLeft)
+                        .rectTransform.Place(new Vector2(0, 0.5f), new Vector2(246 + Defs.MaxUpgradeLevel * 20, 0), new Vector2(50, 20), new Vector2(0, 0.5f));
                     bool maxed = lv >= Defs.MaxUpgradeLevel;
-                    int cost = Defs.UpgradeCost(armoryPick, lv, p.Loadout.RarityOf(armoryPick));
+                    int cost = Defs.UpgradeCost(armoryPick, lv, rarityNow);
                     var up = Ui.Button(row, maxed ? "已滿級" : $"升級  {cost} G", () => ArmoryRequest("/api/shop/upgrade", new Dictionary<string, object> { ["weapon"] = armoryPick, ["stat"] = key }), 14, Palette.Amber, new Color(0, 0, 0, 0), Palette.Amber);
-                    up.GetComponent<RectTransform>().Place(new Vector2(1, 0.5f), Vector2.zero, new Vector2(150, 44), new Vector2(1, 0.5f));
+                    up.GetComponent<RectTransform>().Place(new Vector2(1, 0.5f), Vector2.zero, new Vector2(160, 38), new Vector2(1, 0.5f));
                     up.interactable = !maxed && p.Gold >= cost;
+                }
+                // 超載: the shard-paid top tier, only for 傳奇+ copies with all three stats maxed.
+                {
+                    int over = p.Loadout.Level(armoryPick, "over");
+                    bool eligible = rarityNow >= Defs.OverloadMinRarity;
+                    var row = Ui.Rect(ds, "Overload").Sized(40);
+                    Ui.Label(row, "超載", 16, eligible ? Gear.ShardColor : Palette.Muted, TextAnchor.MiddleLeft, true).rectTransform.Place(new Vector2(0, 0.5f), Vector2.zero, new Vector2(80, 24), new Vector2(0, 0.5f));
+                    string why = !eligible ? "傳奇以上的武器才能超載" : !allMaxed ? "三項強化滿級後開放" : "每級 傷害、射速、換彈 +5%";
+                    Ui.Label(row, why, 12, Palette.Muted, TextAnchor.MiddleLeft).rectTransform.Place(new Vector2(0, 0.5f), new Vector2(80, 0), new Vector2(160, 20), new Vector2(0, 0.5f));
+                    for (int k = 0; k < Defs.OverloadMax; k++)
+                        Ui.Box(row, k < over ? Gear.ShardColor : Palette.Line, "Pip").rectTransform.Place(new Vector2(0, 0.5f), new Vector2(256 + k * 42, 0), new Vector2(36, 6), new Vector2(0, 0.5f));
+                    Ui.Label(row, $"{over}/{Defs.OverloadMax}", 13, over >= Defs.OverloadMax ? Gear.ShardColor : Palette.Muted, TextAnchor.MiddleLeft)
+                        .rectTransform.Place(new Vector2(0, 0.5f), new Vector2(246 + Defs.MaxUpgradeLevel * 20, 0), new Vector2(50, 20), new Vector2(0, 0.5f));
+                    if (eligible)
+                    {
+                        bool full = over >= Defs.OverloadMax;
+                        int shards = full ? 0 : Defs.OverloadShards[over], gold = full ? 0 : Defs.OverloadGold[over];
+                        var go = Ui.Button(row, full ? "超載已滿" : $"{shards} 碎片 + {gold / 1000}K G",
+                            () => ArmoryRequest("/api/shop/overload", new Dictionary<string, object> { ["weapon"] = armoryPick }), 14, Gear.ShardColor, new Color(0, 0, 0, 0), Gear.ShardColor);
+                        go.GetComponent<RectTransform>().Place(new Vector2(1, 0.5f), Vector2.zero, new Vector2(160, 38), new Vector2(1, 0.5f));
+                        go.interactable = !full && allMaxed && p.Shards >= shards && p.Gold >= gold;
+                    }
                 }
                 var equip = Ui.HStack(ds, 12).Sized(48);
                 for (int s = 0; s < 2; s++)
@@ -814,13 +856,21 @@ namespace RiftWard.Client
             int tiers = Gear.RarityNames.Length;
             var counts = new int[tiers];
             var refunds = new int[tiers];   // half of the enhancement gold comes back on salvage
+            var shardRefunds = new int[tiers];
             if (weapons)
             {
                 foreach (var w in p.Loadout.Owned)
                 {
                     if (!p.Loadout.Copies.TryGetValue(w, out var list)) continue;
                     int active = p.Loadout.Active.TryGetValue(w, out var a) ? a : 0;
-                    for (int i = 0; i < list.Count; i++) if (i != active) counts[Mathf.Clamp(list[i], 0, tiers - 1)]++;
+                    for (int i = 0; i < list.Count; i++)
+                    {
+                        if (i == active) continue;
+                        int rr = Mathf.Clamp(list[i], 0, tiers - 1);
+                        counts[rr]++;
+                        var (ig, ish) = Gear.WeaponInvested(w, rr, p.Loadout.CopyLevel(w, i));
+                        refunds[rr] += ig / 2; shardRefunds[rr] += ish / 2;
+                    }
                 }
             }
             else
@@ -853,9 +903,11 @@ namespace RiftWard.Client
             float armedUntil = -1f;
             void Refresh()
             {
-                int n = 0, g = 0, high = 0;
-                for (int r = 0; r < tiers; r++) if (chosen[r]) { n += counts[r]; g += counts[r] * gold[r] + refunds[r]; if (r >= 3) high += counts[r]; }
-                summary.text = n > 0 ? $"將分解 {n} {(weapons ? "把" : "件")}  ·  獲得 {g} 金幣" : "沒有符合條件的項目";
+                int n = 0, g = 0, sh = 0, high = 0;
+                for (int r = 0; r < tiers; r++)
+                    if (chosen[r]) { n += counts[r]; g += counts[r] * gold[r] + refunds[r]; sh += counts[r] * Gear.SalvageShards[r] + shardRefunds[r]; if (r >= 3) high += counts[r]; }
+                string gain = sh > 0 ? (g > 0 ? $"{g} 金幣 + {sh} 碎片" : $"{sh} 碎片") : $"{g} 金幣";
+                summary.text = n > 0 ? $"將分解 {n} {(weapons ? "把" : "件")}  ·  獲得 {gain}" : "沒有符合條件的項目";
                 warning.text = high > 0 ? $"注意：包含 {high} {(weapons ? "把" : "件")}傳奇以上，分解後無法復原" : "";
                 armedUntil = -1f;
                 go.SetCaption("分解");
@@ -865,7 +917,8 @@ namespace RiftWard.Client
             for (int r = 0; r < tiers; r++)
             {
                 int tier = r;
-                var row = Widgets.Toggle(s, $"{Gear.RarityNames[r]}    {counts[r]} {(weapons ? "把" : "件")}", chosen[r], on => { chosen[tier] = on; Refresh(); }, "分解", "保留").Sized(40);
+                string yields = Gear.SalvageShards[r] > 0 ? $"每{(weapons ? "把" : "件")} {Gear.SalvageShards[r]} 碎片" : $"每{(weapons ? "把" : "件")} {gold[r]} G";
+                var row = Widgets.Toggle(s, $"{Gear.RarityNames[r]}    {counts[r]} {(weapons ? "把" : "件")}  ·  {yields}", chosen[r], on => { chosen[tier] = on; Refresh(); }, "分解", "保留").Sized(40);
                 row.GetComponentInChildren<Text>().color = Gear.RarityColors[r];
             }
             summary = Ui.Label(s, "", 16, Palette.Bone, TextAnchor.MiddleLeft, true).Sized(26);
@@ -895,7 +948,8 @@ namespace RiftWard.Client
                     salvageDialog = null;
                     if (weapons) ShowArmory(); else ShowCharacter();
                     var status = weapons ? armoryStatus : characterStatus;
-                    if (status != null) { status.color = Palette.Amber; status.text = $"已分解 {result.Int("count")} {(weapons ? "把" : "件")}，獲得 {result.Int("gold")} 金幣"; }
+                    int gotShards = result.Int("shards");
+                    if (status != null) { status.color = Palette.Amber; status.text = $"已分解 {result.Int("count")} {(weapons ? "把" : "件")}，獲得 {result.Int("gold")} 金幣" + (gotShards > 0 ? $"、{gotShards} 碎片" : ""); }
                 });
             }, 15, Palette.Amber);
             Refresh();
@@ -1052,6 +1106,7 @@ namespace RiftWard.Client
             if (reward.Gold > 0) Item(Icons.Coin(parent, icon), compact ? $"+{reward.Gold}" : $"+{reward.Gold} 金幣", Palette.Amber);
             if (reward.Keys > 0) Item(Icons.Key(parent, icon, Gear.GearKeyColor), compact ? $"+{reward.Keys}" : $"+{reward.Keys} 裝備鑰匙", Gear.GearKeyColor);
             if (reward.WeaponKeys > 0) Item(Icons.Key(parent, icon, Gear.WeaponKeyColor), compact ? $"+{reward.WeaponKeys}" : $"+{reward.WeaponKeys} 武器鑰匙", Gear.WeaponKeyColor);
+            if (reward.Shards > 0) Item(Icons.Shard(parent, icon), compact ? $"+{reward.Shards}" : $"+{reward.Shards} 碎片", Gear.ShardColor);
             if (!string.IsNullOrEmpty(extra)) Item(null, "+" + extra, Palette.Bone);
         }
 
@@ -1767,7 +1822,7 @@ namespace RiftWard.Client
                 string name = weapon ? Gear.WeaponName(item, rarity) : $"{Gear.RarityNames[rarity]} {(Gear.SlotNames.TryGetValue(item, out var slot) ? slot : item)}";
                 Ui.Label(rt, name, 15, Gear.RarityColors[rarity], TextAnchor.MiddleLeft, rarity >= 3).rectTransform.Place(new Vector2(0, 0.5f), new Vector2(216, 0), new Vector2(360, 30), new Vector2(0, 0.5f));
                 string outcome = h.Str("outcome");
-                string result = !weapon ? "存入背包" : outcome == "new" ? "新武器" : outcome == "copy" ? "存入武器庫" : outcome == "full" ? "轉為金幣" : "";
+                string result = !weapon ? "存入背包" : outcome == "new" ? "新武器" : outcome == "copy" ? "存入武器庫" : outcome == "full" ? "武器庫已滿 · 轉換" : "";
                 var res = Ui.Label(rt, result, 13, outcome == "new" ? Palette.Amber : Palette.Muted, TextAnchor.MiddleRight);
                 res.rectTransform.Fill(); res.rectTransform.offsetMax = new Vector2(-12, 0);
             }
@@ -1872,7 +1927,7 @@ namespace RiftWard.Client
                         {
                             Id = id, Slot = "weapon", Rarity = Mathf.Clamp(d.Int("rarity"), 0, Gear.RarityNames.Length - 1),
                             Title = Gear.WeaponName(id, d.Int("rarity")),
-                            Detail = outcome == "new" ? "新武器！已解鎖" : outcome == "copy" ? "已存入武器庫" : $"武器庫已滿 · 轉為 {d.Int("gold")} G",
+                            Detail = outcome == "new" ? "新武器！已解鎖" : outcome == "copy" ? "已存入武器庫" : d.Int("shards") > 0 ? $"武器庫已滿 · 轉為 {d.Int("shards")} 碎片" : $"武器庫已滿 · 轉為 {d.Int("gold")} G",
                         });
                     }
                 }

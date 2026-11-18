@@ -42,16 +42,29 @@ namespace RiftWard.Client
     public static class Gear
     {
         /// Currency colours shared by the nav chips, shop and icons.
-        public static readonly Color GearKeyColor = Palette.Hex("b07cff"), WeaponKeyColor = Palette.Hex("e5534b");
+        public static readonly Color GearKeyColor = Palette.Hex("b07cff"), WeaponKeyColor = Palette.Hex("e5534b"), ShardColor = Palette.Hex("4fd6e8");
         public static readonly string[] RarityNames = { "劣質", "普通", "稀世", "傳奇", "神話" };
         /// Gear enhancement; mirrors GEAR_UPGRADE_BASE / GEAR_MAX_LEVEL in server/service.py.
         public const int MaxLevel = 5;
-        public static readonly int[] UpgradeBase = { 40, 70, 120, 200, 320 };
+        public static readonly int[] UpgradeBase = { 100, 175, 300, 500, 800 };
         public static int UpgradeCost(int rarity, int level) => UpgradeBase[Mathf.Clamp(rarity, 0, 4)] * (level + 1);
 
-        /// Gold per salvaged piece; mirrors GEAR_SALVAGE_GOLD / DUPLICATE_GOLD in server/service.py.
-        public static readonly int[] GearSalvageGold = { 10, 25, 60, 150, 400 };
-        public static readonly int[] WeaponSalvageGold = { 20, 50, 120, 300, 800 };
+        /// Salvage value per piece; mirrors GEAR_SALVAGE_GOLD / DUPLICATE_GOLD / SALVAGE_SHARDS in server/service.py.
+        /// 傳奇 and 神話 break down into shards instead of gold.
+        public static readonly int[] GearSalvageGold = { 20, 50, 120, 0, 0 };
+        public static readonly int[] WeaponSalvageGold = { 40, 100, 240, 0, 0 };
+        public static readonly int[] SalvageShards = { 0, 0, 0, 1, 4 };
+
+        /// (gold, shards) invested in one weapon copy: enhancement levels plus overload tiers.
+        public static (int gold, int shards) WeaponInvested(string weapon, int rarity, Dictionary<string, int> levels)
+        {
+            int gold = 0, shards = 0;
+            foreach (var stat in Defs.UpgradeKeys)
+                for (int n = 0; n < (levels.TryGetValue(stat, out var lv) ? lv : 0); n++) gold += Defs.UpgradeCost(weapon, n, rarity);
+            int over = levels.TryGetValue("over", out var o) ? Mathf.Clamp(o, 0, Defs.OverloadMax) : 0;
+            for (int n = 0; n < over; n++) { gold += Defs.OverloadGold[n]; shards += Defs.OverloadShards[n]; }
+            return (gold, shards);
+        }
         public static readonly Color[] RarityColors =
         {
             Palette.Hex("e8e6e1"), Palette.Hex("5fd17a"), Palette.Hex("b07cff"), Palette.Hex("ff9a3c"), Palette.Hex("ff4b4b"),

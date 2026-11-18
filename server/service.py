@@ -29,7 +29,12 @@ VERSION = "0.4.2-beta.1"
 # every purchase is priced and validated here.
 WEAPON_PRICES = {"pistol": 0, "rifle": 400, "shotgun": 600, "sniper": 800, "saber": 0}
 UPGRADE_STATS = ("damage", "mag", "reload")
-MAX_UPGRADE = 5
+MAX_UPGRADE = 10      # weapon enhancement cap per stat; levels past SOFT_UPGRADE cost more and give half a step
+SOFT_UPGRADE = 5
+OVERLOAD_MAX = 3      # 超載: extra tiers for 傳奇+ copies with every stat at MAX_UPGRADE, paid in shards + gold
+OVERLOAD_SHARDS = [1, 2, 4]
+OVERLOAD_GOLD = [5000, 10000, 20000]
+OVERLOAD_MIN_RARITY = 3
 MAX_REWARD = 12000   # mirrors GameSim.MaxMissionGold (地獄 multiplies the gold of a cleared mission)
 
 # Difficulty tiers (普通, 困難, 噩夢, 地獄); mirrors Defs.Difficulties in the game client.
@@ -77,7 +82,7 @@ DAILY_BONUS = {"keys": 2, "weapon_keys": 1}
 # ---- achievements: lifetime goals in three tiers (銅 / 銀 / 金). Progress is derived from the account's records,
 # each reached tier is claimed once for its reward, and the 金 tier of some achievements grants a title.
 ACHIEVEMENT_TIER_NAMES = ["銅", "銀", "金"]
-ACHIEVEMENT_REWARDS = [{"gold": 300}, {"gold": 600, "keys": 2}, {"keys": 3, "weapon_keys": 2}]
+ACHIEVEMENT_REWARDS = [{"gold": 300}, {"gold": 600, "keys": 2}, {"keys": 3, "weapon_keys": 2, "shards": 1}]
 ACHIEVEMENTS = [
     # id, category, name, description ({goal} = tier goal), progress source, tier goals, title at 金 (or None)
     ("kills",       "combat",  "殲滅行動",   "累計擊殺 {goal} 名敵人",            "kills",               [500, 2500, 10000], "殲滅者"),
@@ -118,14 +123,22 @@ def roll_daily(account_id, day, veteran):
 
 # Upgrade prices scale with rarity (劣質 .. 神話): better items cost more to improve.
 RARITY_UPGRADE_MULT = [0.6, 1.0, 1.4, 2.0, 3.0]
-GEAR_UPGRADE_BASE = [40, 70, 120, 200, 320]   # gold for gear +1; level n -> n+1 costs base * (n + 1)
+GEAR_UPGRADE_BASE = [100, 175, 300, 500, 800]   # gold for gear +1; level n -> n+1 costs base * (n + 1)
 GEAR_MAX_LEVEL = 5
 GEAR_LEVEL_BONUS = 0.12                        # every enhancement level adds 12% to all of an item's stats (+60% at +5)
 
 
 def upgrade_cost(weapon: str, level: int, rarity: int = 1) -> int:
     factor = {"pistol": 1.0, "rifle": 1.3, "shotgun": 1.4, "sniper": 1.6, "saber": 1.5}[weapon]
-    return int(round(120 * (level + 1) * factor * RARITY_UPGRADE_MULT[max(0, min(len(RARITY_UPGRADE_MULT) - 1, rarity))]))
+    steep = 1.5 ** max(0, level - SOFT_UPGRADE + 1)   # levels 6-10: x1.5 per level on top of the linear curve
+    return int(round(120 * (level + 1) * factor * RARITY_UPGRADE_MULT[max(0, min(len(RARITY_UPGRADE_MULT) - 1, rarity))] * steep))
+
+
+def weapon_invested(weapon: str, rarity: int, levels: dict):
+    """(gold, shards) put into one weapon copy: its enhancement levels and its overload tiers."""
+    gold = sum(upgrade_cost(weapon, n, rarity) for stat in UPGRADE_STATS for n in range(levels.get(stat, 0)))
+    over = levels.get("over", 0)
+    return gold + sum(OVERLOAD_GOLD[:over]), sum(OVERLOAD_SHARDS[:over])
 
 
 def gear_upgrade_cost(rarity: int, level: int) -> int:
@@ -201,13 +214,15 @@ def roll_item(rng, rarity=None):
 
 
 WEAPON_WEIGHTS = {"pistol": 30, "rifle": 30, "shotgun": 20, "sniper": 20, "saber": 5}   # the 光劍 is a rare find: 5 / 105 ≈ 4.8% of draws
-DUPLICATE_GOLD = [20, 50, 120, 300, 800]
-GEAR_SALVAGE_GOLD = [10, 25, 60, 150, 400]
+DUPLICATE_GOLD = [40, 100, 240, 0, 0]       # 傳奇+ salvage into shards instead
+GEAR_SALVAGE_GOLD = [20, 50, 120, 0, 0]
+SALVAGE_SHARDS = [0, 0, 0, 1, 4]
 
 
 def default_loadout():
     # New recruits start with a worn (劣質) AR-27; better guns come from weapon supply draws.
-    return {"owned": ["rifle"], "levels": {}, "equipped": ["rifle"], "rarity": {"rifle": 0}, "copies": {"rifle": [0]}, "active": {"rifle": 0}}
+    return {"owned": ["rifle"], "levels": {}, "equipped": ["rifle"], "rarity": {"rifle": 0}, "copies": {"rifle": [0]}, "active": {"rifle": 0},
+            "copy_levels": {"rifle": [{}]}}
 
 
 WEAPON_COPY_LIMIT = 50
@@ -216,6 +231,27 @@ WEAPON_COPY_LIMIT = 50
 def sync_rarity(loadout):
     """The active copy decides each weapon's rarity."""
     loadout["rarity"] = {w: loadout["copies"][w][loadout["active"][w]] for w in loadout["owned"]}
+    # Every copy keeps its own enhancement; "levels" is the active copy's, which is what the game reads.
+    rows = loadout.setdefault("copy_levels", {})
+    for w in loadout["owned"]:
+        n = len(loadout["copies"][w])
+        rows[w] = (rows.get(w) or [])[:n]
+        rows[w] += [{} for _ in range(n - len(rows[w]))]
+    for w in [w for w in rows if w not in loadout["owned"]]:
+        del rows[w]
+    loadout["levels"] = {w: dict(loadout["copy_levels"][w][loadout["active"][w]]) for w in loadout["owned"]
+                         if loadout["copy_levels"][w][loadout["active"][w]]}
+
+
+def add_copy(loadout, weapon, rarity):
+    loadout["copies"][weapon].append(rarity)
+    loadout["copy_levels"][weapon].append({})
+
+
+def copy_refund(weapon, rarity, levels):
+    """What salvaging a copy pays: its base value plus half of what was invested in it."""
+    gold, shards = weapon_invested(weapon, rarity, levels)
+    return DUPLICATE_GOLD[rarity] + gold // 2, SALVAGE_SHARDS[rarity] + shards // 2
 
 
 def _locked(method):
@@ -298,7 +334,8 @@ class Store:
             for column, ddl in (("xp", "INTEGER NOT NULL DEFAULT 0"), ("keys", "INTEGER NOT NULL DEFAULT 0"), ("weapon_keys", "INTEGER NOT NULL DEFAULT 0"),
                                 ("talents", "TEXT NOT NULL DEFAULT '{}'"), ("gear", "TEXT NOT NULL DEFAULT '{}'"), ("pity", "TEXT NOT NULL DEFAULT '{}'"),
                                 ("cleared", "TEXT NOT NULL DEFAULT '[]'"), ("daily", "TEXT NOT NULL DEFAULT '{}'"),
-                                ("achievements", "TEXT NOT NULL DEFAULT '{}'"), ("last_seen", "INTEGER NOT NULL DEFAULT 0")):
+                                ("achievements", "TEXT NOT NULL DEFAULT '{}'"), ("last_seen", "INTEGER NOT NULL DEFAULT 0"),
+                                ("shards", "INTEGER NOT NULL DEFAULT 0")):
                 if column not in columns:
                     db.execute(f"ALTER TABLE progress ADD COLUMN {column} {ddl}")
 
@@ -360,7 +397,7 @@ class Store:
     def _profile(self, account_id: int):
         with self.connect() as db:
             row = db.execute(
-                "SELECT a.id,a.username,p.unlocked,p.tutorial_complete,p.gold,p.loadout,p.stats,p.xp,p.keys,p.weapon_keys,p.talents,p.gear,p.cleared FROM accounts a "
+                "SELECT a.id,a.username,p.unlocked,p.tutorial_complete,p.gold,p.shards,p.loadout,p.stats,p.xp,p.keys,p.weapon_keys,p.talents,p.gear,p.cleared FROM accounts a "
                 "JOIN progress p ON p.account_id=a.id WHERE a.id=?", (account_id,)
             ).fetchone()
         if row is None:
@@ -482,8 +519,8 @@ class Store:
             state["title"] = achievement   # the first title earned is worn automatically
         self._save_achievements(account_id, state)
         with self.connect() as db:
-            db.execute("UPDATE progress SET gold=gold+?, keys=keys+?, weapon_keys=weapon_keys+? WHERE account_id=?",
-                       (reward.get("gold", 0), reward.get("keys", 0), reward.get("weapon_keys", 0), account_id))
+            db.execute("UPDATE progress SET gold=gold+?, keys=keys+?, weapon_keys=weapon_keys+?, shards=shards+? WHERE account_id=?",
+                       (reward.get("gold", 0), reward.get("keys", 0), reward.get("weapon_keys", 0), reward.get("shards", 0), account_id))
         return {"tier": claimed, "reward": reward, "title": title or ""}, self.profile(account_id)
 
     @_locked
@@ -596,8 +633,8 @@ class Store:
             self._bump_stats(account_id, daily_claimed=1)
         self._save_daily(account_id, data)
         with self.connect() as db:
-            db.execute("UPDATE progress SET gold=gold+?, keys=keys+?, weapon_keys=weapon_keys+? WHERE account_id=?",
-                       (reward.get("gold", 0), reward.get("keys", 0), reward.get("weapon_keys", 0), account_id))
+            db.execute("UPDATE progress SET gold=gold+?, keys=keys+?, weapon_keys=weapon_keys+?, shards=shards+? WHERE account_id=?",
+                       (reward.get("gold", 0), reward.get("keys", 0), reward.get("weapon_keys", 0), reward.get("shards", 0), account_id))
         return reward, self.profile(account_id)
 
     @staticmethod
@@ -740,27 +777,31 @@ class Store:
         rng = random.SystemRandom()
         loadout = self.profile(account_id)["loadout"]
         pity = self._pity(account_id)
-        results, gold, refund = [], 0, 0
+        results, gold, shards = [], 0, 0
         for _ in range(count):
             weapon = rng.choices(list(WEAPON_WEIGHTS), weights=list(WEAPON_WEIGHTS.values()))[0]
             rarity, pity["weapon"] = roll_rarity(rng, pity["weapon"])
             if weapon not in loadout["owned"]:
                 loadout["owned"].append(weapon)
                 loadout["copies"][weapon] = [rarity]
+                loadout["copy_levels"][weapon] = [{}]
                 loadout["active"][weapon] = 0
                 if len(loadout["equipped"]) < 2:
                     loadout["equipped"].append(weapon)
                 outcome = "new"
             elif len(loadout["copies"][weapon]) < WEAPON_COPY_LIMIT:
-                loadout["copies"][weapon].append(rarity)
+                add_copy(loadout, weapon, rarity)
                 outcome = "copy"
             else:
-                outcome, refund = "full", DUPLICATE_GOLD[rarity]
-                gold += refund
-            results.append({"weapon": weapon, "rarity": rarity, "outcome": outcome, "gold": DUPLICATE_GOLD[rarity] if outcome == "full" else 0})
+                outcome = "full"
+                gold += DUPLICATE_GOLD[rarity]
+                shards += SALVAGE_SHARDS[rarity]
+            results.append({"weapon": weapon, "rarity": rarity, "outcome": outcome,
+                            "gold": DUPLICATE_GOLD[rarity] if outcome == "full" else 0, "shards": SALVAGE_SHARDS[rarity] if outcome == "full" else 0})
         sync_rarity(loadout)
         with self.connect() as db:
-            db.execute("UPDATE progress SET loadout=?, gold=gold+?, pity=? WHERE account_id=?", (json.dumps(loadout), gold, json.dumps(pity), account_id))
+            db.execute("UPDATE progress SET loadout=?, gold=gold+?, shards=shards+?, pity=? WHERE account_id=?",
+                       (json.dumps(loadout), gold, shards, json.dumps(pity), account_id))
         self._bump_stats(account_id, draws=count)
         self._log_draws(account_id, "weapon", [(w["weapon"], w["rarity"], w["outcome"]) for w in results])
         return results, self.profile(account_id)
@@ -776,10 +817,10 @@ class Store:
             raise ValueError("武器庫已變動，請重新選擇")
         return loadout
 
-    def _save_loadout(self, account_id, loadout, gold=0):
+    def _save_loadout(self, account_id, loadout, gold=0, shards=0):
         sync_rarity(loadout)
         with self.connect() as db:
-            db.execute("UPDATE progress SET loadout=?, gold=gold+? WHERE account_id=?", (json.dumps(loadout), gold, account_id))
+            db.execute("UPDATE progress SET loadout=?, gold=gold+?, shards=shards+? WHERE account_id=?", (json.dumps(loadout), gold, shards, account_id))
         return self.profile(account_id)
 
     @_locked
@@ -794,9 +835,11 @@ class Store:
         if index == loadout["active"][weapon]:
             raise ValueError("使用中的武器無法分解")
         rarity = loadout["copies"][weapon].pop(index)
+        levels = loadout["copy_levels"][weapon].pop(index)
         if loadout["active"][weapon] > index:
             loadout["active"][weapon] -= 1
-        return self._save_loadout(account_id, loadout, DUPLICATE_GOLD[rarity])
+        gold, shards = copy_refund(weapon, rarity, levels)
+        return self._save_loadout(account_id, loadout, gold, shards)
 
     @_locked
     def upgrade_gear(self, account_id: int, item_id):
@@ -841,7 +884,8 @@ class Store:
         gear["inventory"].remove(item)
         self._save_gear(account_id, gear)
         with self.connect() as db:
-            db.execute("UPDATE progress SET gold=gold+? WHERE account_id=?", (GEAR_SALVAGE_GOLD[item["rarity"]] + gear_invested(item) // 2, account_id))
+            db.execute("UPDATE progress SET gold=gold+?, shards=shards+? WHERE account_id=?",
+                       (GEAR_SALVAGE_GOLD[item["rarity"]] + gear_invested(item) // 2, SALVAGE_SHARDS[item["rarity"]], account_id))
         return self.profile(account_id)
 
     @_locked
@@ -855,7 +899,7 @@ class Store:
         chosen = set(rarities)
         if max(chosen) >= 3 and confirm is not True:
             raise ValueError("包含傳奇以上，請先確認")
-        count, gold = 0, 0
+        count, gold, shards = 0, 0, 0
         if kind == "gear":
             gear = self._raw_gear(account_id)
             worn = set(gear["equipped"].values())
@@ -864,27 +908,32 @@ class Store:
                 if item["rarity"] in chosen and item["id"] not in worn:
                     count += 1
                     gold += GEAR_SALVAGE_GOLD[item["rarity"]] + gear_invested(item) // 2
+                    shards += SALVAGE_SHARDS[item["rarity"]]
                 else:
                     kept.append(item)
             gear["inventory"] = kept
             self._save_gear(account_id, gear)
             with self.connect() as db:
-                db.execute("UPDATE progress SET gold=gold+? WHERE account_id=?", (gold, account_id))
-            return count, gold, self.profile(account_id)
+                db.execute("UPDATE progress SET gold=gold+?, shards=shards+? WHERE account_id=?", (gold, shards, account_id))
+            return count, gold, shards, self.profile(account_id)
         loadout = self.profile(account_id)["loadout"]
         for weapon in loadout["owned"]:
             copies, active = loadout["copies"][weapon], loadout["active"][weapon]
-            kept = []
+            kept, kept_levels = [], []
             for i, rarity in enumerate(copies):
+                levels = loadout["copy_levels"][weapon][i]
                 if rarity in chosen and i != active:
                     count += 1
-                    gold += DUPLICATE_GOLD[rarity]
+                    g, sh = copy_refund(weapon, rarity, levels)
+                    gold += g
+                    shards += sh
                 else:
                     if i == active:
                         loadout["active"][weapon] = len(kept)
                     kept.append(rarity)
-            loadout["copies"][weapon] = kept
-        return count, gold, self._save_loadout(account_id, loadout, gold)
+                    kept_levels.append(levels)
+            loadout["copies"][weapon], loadout["copy_levels"][weapon] = kept, kept_levels
+        return count, gold, shards, self._save_loadout(account_id, loadout, gold, shards)
 
     @_locked
     def add_xp(self, account_id: int, xp: int):
@@ -1263,11 +1312,12 @@ class Store:
                 if weapon not in loadout["owned"]:
                     loadout["owned"].append(weapon)
                     loadout["copies"][weapon] = [rarity]
+                    loadout["copy_levels"][weapon] = [{}]
                     loadout["active"][weapon] = 0
                     if len(loadout["equipped"]) < 2:
                         loadout["equipped"].append(weapon)
                 elif len(loadout["copies"][weapon]) < WEAPON_COPY_LIMIT:
-                    loadout["copies"][weapon].append(rarity)   # kept in the armory; the player picks which to use
+                    add_copy(loadout, weapon, rarity)   # kept in the armory; the player picks which to use
                 else:
                     continue
                 sync_rarity(loadout)
@@ -1296,14 +1346,29 @@ class Store:
                 loadout["copies"][w] = kept or [loadout["rarity"][w]]
                 index = active.get(w)
                 loadout["active"][w] = index if isinstance(index, int) and 0 <= index < len(loadout["copies"][w]) else 0
-            sync_rarity(loadout)
             loadout["equipped"] = []
-            levels = data.get("levels", {})
-            if isinstance(levels, dict):
-                for weapon, stats in levels.items():
-                    if weapon in loadout["owned"] and isinstance(stats, dict):
-                        loadout["levels"][weapon] = {k: max(0, min(MAX_UPGRADE, int(v))) for k, v in stats.items()
-                                                     if k in UPGRADE_STATS and isinstance(v, int)}
+
+            def clean(stats):
+                if not isinstance(stats, dict):
+                    return {}
+                out = {k: max(0, min(MAX_UPGRADE, v)) for k, v in stats.items() if k in UPGRADE_STATS and isinstance(v, int) and v > 0}
+                over = stats.get("over")
+                if isinstance(over, int) and over > 0:
+                    out["over"] = min(OVERLOAD_MAX, over)
+                return out
+
+            stored = data.get("copy_levels") if isinstance(data.get("copy_levels"), dict) else None
+            legacy = data.get("levels") if isinstance(data.get("levels"), dict) else {}
+            loadout["copy_levels"] = {}
+            for w in loadout["owned"]:
+                count = len(loadout["copies"][w])
+                if stored is not None and isinstance(stored.get(w), list):
+                    rows = [clean(x) for x in stored[w]][:count]
+                else:
+                    # Before per-copy enhancement every copy shared one set of levels: the copy in use keeps them.
+                    rows = [clean(legacy.get(w)) if i == loadout["active"][w] else {} for i in range(count)]
+                loadout["copy_levels"][w] = rows + [{} for _ in range(count - len(rows))]
+            sync_rarity(loadout)
             equipped = data.get("equipped")
             if isinstance(equipped, list):
                 loadout["equipped"] = [w for w in dict.fromkeys(equipped) if w in loadout["owned"]][:2]
@@ -1355,12 +1420,40 @@ class Store:
         loadout = profile["loadout"]
         if weapon not in loadout["owned"]:
             raise ValueError("尚未擁有此武器")
-        levels = loadout["levels"].setdefault(weapon, {})
+        levels = loadout["copy_levels"][weapon][loadout["active"][weapon]]   # the copy in use
         level = levels.get(stat, 0)
         if level >= MAX_UPGRADE:
             raise ValueError("已達最高等級")
         levels[stat] = level + 1
-        return self._spend(account_id, upgrade_cost(weapon, level, loadout["rarity"].get(weapon, 1)), loadout)
+        sync_rarity(loadout)
+        return self._spend(account_id, upgrade_cost(weapon, level, loadout["rarity"][weapon]), loadout)
+
+    @_locked
+    def overload_weapon(self, account_id: int, weapon):
+        """超載: one more tier on the copy in use, for 傳奇+ copies whose three stats are all maxed."""
+        profile = self.profile(account_id)
+        if profile is None or weapon not in WEAPON_PRICES:
+            raise ValueError("找不到此武器")
+        loadout = profile["loadout"]
+        if weapon not in loadout["owned"]:
+            raise ValueError("尚未擁有此武器")
+        levels = loadout["copy_levels"][weapon][loadout["active"][weapon]]
+        if loadout["rarity"][weapon] < OVERLOAD_MIN_RARITY:
+            raise ValueError("只有傳奇以上的武器可以超載")
+        if any(levels.get(s, 0) < MAX_UPGRADE for s in UPGRADE_STATS):
+            raise ValueError("三項強化都滿級後才能超載")
+        over = levels.get("over", 0)
+        if over >= OVERLOAD_MAX:
+            raise ValueError("已達最高超載")
+        gold, shards = OVERLOAD_GOLD[over], OVERLOAD_SHARDS[over]
+        levels["over"] = over + 1
+        sync_rarity(loadout)
+        with self.connect() as db:
+            cursor = db.execute("UPDATE progress SET gold=gold-?, shards=shards-?, loadout=? WHERE account_id=? AND gold>=? AND shards>=?",
+                                (gold, shards, json.dumps(loadout), account_id, gold, shards))
+            if cursor.rowcount != 1:
+                raise ValueError("碎片或金幣不足")
+        return self.profile(account_id)
 
     @_locked
     def reward(self, account_id: int, gold):
@@ -1772,8 +1865,8 @@ class Handler(BaseHTTPRequestHandler):
                 elif self.path == "/api/weapon/select":
                     result = store.select_weapon_copy(profile["id"], data.get("weapon"), data.get("index"), data.get("rarity"))
                 elif self.path == "/api/salvage/bulk":
-                    count, gold, result = store.salvage_bulk(profile["id"], data.get("kind"), data.get("rarities"), data.get("confirm", False))
-                    extra.update(count=count, gold=gold)
+                    count, gold, shards, result = store.salvage_bulk(profile["id"], data.get("kind"), data.get("rarities"), data.get("confirm", False))
+                    extra.update(count=count, gold=gold, shards=shards)
                 elif self.path == "/api/weapon/salvage":
                     result = store.salvage_weapon_copy(profile["id"], data.get("weapon"), data.get("index"), data.get("rarity"))
                 elif self.path == "/api/gear/equip":
@@ -1793,10 +1886,12 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(400, {"ok": False, "error": str(exc)})
                 return
             self._json(200, {"ok": True, "profile": result})
-        elif self.path in ("/api/shop/buy", "/api/shop/upgrade"):
+        elif self.path in ("/api/shop/buy", "/api/shop/upgrade", "/api/shop/overload"):
             try:
                 if self.path.endswith("buy"):
                     result = store.buy_weapon(profile["id"], data.get("weapon"))
+                elif self.path.endswith("overload"):
+                    result = store.overload_weapon(profile["id"], data.get("weapon"))
                 else:
                     result = store.upgrade_weapon(profile["id"], data.get("weapon"), data.get("stat"))
             except ValueError as exc:

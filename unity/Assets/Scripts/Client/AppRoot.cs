@@ -699,7 +699,7 @@ namespace RiftWard.Client
                 ("forged", "collect", "千錘百鍊", "將 {0} 件裝備強化到 +5", 1, new[] { 1, 3, 8 }, 0, ""),
                 ("draws", "collect", "補給常客", "開啟補給 {0} 次", 64, new[] { 10, 100, 500 }, 1, ""),
             };
-            DailyReward[] tierRewards = { new DailyReward { Gold = 300 }, new DailyReward { Gold = 600, Keys = 2 }, new DailyReward { Keys = 3, WeaponKeys = 2 } };
+            DailyReward[] tierRewards = { new DailyReward { Gold = 300 }, new DailyReward { Gold = 600, Keys = 2 }, new DailyReward { Keys = 3, WeaponKeys = 2, Shards = 1 } };
             foreach (var (id, cat, name, text, progress, goals, claimed, title) in specs)
                 demo.Achievements.Add(new Achievement
                 {
@@ -821,6 +821,27 @@ namespace RiftWard.Client
             Screens.ShowArmory();
             yield return Settle(0.5f);
             yield return Shot(folder, "unity-armory-rarity");
+            {
+                // A maxed 神話 copy with one overload tier, beside a fresh 普通 copy: per-copy enhancement and 超載.
+                var l = Profile.Loadout;
+                if (!l.Owned.Contains("sniper")) l.Owned.Add("sniper");
+                var maxed = new Dictionary<string, int> { ["damage"] = 10, ["mag"] = 10, ["reload"] = 10, ["over"] = 1 };
+                l.Copies["sniper"] = new List<int> { 4, 1, 3 };
+                l.CopyLevels["sniper"] = new List<Dictionary<string, int>> { maxed, new Dictionary<string, int>(), new Dictionary<string, int> { ["damage"] = 6, ["mag"] = 2 } };
+                l.Active["sniper"] = 0; l.Rarity["sniper"] = 4; l.Levels["sniper"] = maxed;
+                int gold0 = Profile.Gold, shards0 = Profile.Shards;
+                Profile.Gold = 48000; Profile.Shards = 5;
+                Screens.ShowArmoryFor("sniper");
+                yield return Settle(0.6f);
+                yield return Shot(folder, "unity-armory-overload");
+                // The same weapon mid-way: levels 6+ cost more, overload still locked.
+                var mid = new Dictionary<string, int> { ["damage"] = 7, ["mag"] = 5, ["reload"] = 3 };
+                l.CopyLevels["sniper"][0] = mid; l.Levels["sniper"] = mid;
+                Screens.ShowArmoryFor("sniper");
+                yield return Settle(0.4f);
+                yield return Shot(folder, "unity-armory-levels");
+                Profile.Gold = gold0; Profile.Shards = shards0;
+            }
             Screens.ShowArmoryFor("saber");
             yield return Settle(0.6f);
             yield return Shot(folder, "unity-armory-saber");

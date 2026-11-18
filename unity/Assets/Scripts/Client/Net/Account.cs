@@ -22,7 +22,7 @@ namespace RiftWard.Client
         public int Kills, Headshots, Shots, Hits, Missions, Victories, BestWave;
 
         public float Accuracy => Shots > 0 ? (float)Hits / Shots : 0f;
-        public int Level = 1, LevelXp, LevelNeed = 150, Keys, WeaponKeys, TalentPoints;
+        public int Level = 1, LevelXp, LevelNeed = 150, Keys, WeaponKeys, TalentPoints, Shards;
         /// Draws left until 傳奇+ is guaranteed, per pool.
         public int GearPity = 50, WeaponPity = 50;
         public Dictionary<string, int> Talents = new Dictionary<string, int>();
@@ -78,6 +78,20 @@ namespace RiftWard.Client
                     if (kv.Value is List<object> items) foreach (var o in items) list.Add(o is double cv ? (int)cv : 1);
                     p.Loadout.Copies[kv.Key] = list;
                 }
+            var copyLevels = lo?.Obj("copy_levels");
+            if (copyLevels != null)
+                foreach (var kv in copyLevels)
+                {
+                    var rows = new List<Dictionary<string, int>>();
+                    if (kv.Value is List<object> items)
+                        foreach (var o in items)
+                        {
+                            var stats = new Dictionary<string, int>();
+                            if (o is Dictionary<string, object> s) foreach (var st in s) stats[st.Key] = st.Value is double n ? (int)n : 0;
+                            rows.Add(stats);
+                        }
+                    p.Loadout.CopyLevels[kv.Key] = rows;
+                }
             var active = lo?.Obj("active");
             if (active != null) foreach (var kv in active) p.Loadout.Active[kv.Key] = kv.Value is double av ? (int)av : 0;
             p.Loadout.Normalize();
@@ -88,7 +102,7 @@ namespace RiftWard.Client
                 p.Missions = record.Int("missions"); p.Victories = record.Int("victories"); p.BestWave = record.Int("best_wave");
             }
             p.Level = Mathf.Max(1, d.Int("level", 1)); p.LevelXp = d.Int("level_xp"); p.LevelNeed = Mathf.Max(1, d.Int("level_need", 150));
-            p.Keys = d.Int("keys"); p.WeaponKeys = d.Int("weapon_keys"); p.TalentPoints = d.Int("talent_points");
+            p.Keys = d.Int("keys"); p.WeaponKeys = d.Int("weapon_keys"); p.Shards = d.Int("shards"); p.TalentPoints = d.Int("talent_points");
             var pity = d.Obj("pity");
             if (pity != null) { p.GearPity = pity.Int("gear", 50); p.WeaponPity = pity.Int("weapon", 50); }
             var talents = d.Obj("talents");
@@ -141,10 +155,10 @@ namespace RiftWard.Client
     /// Reward bundle of a daily task or the all-tasks bonus.
     public struct DailyReward
     {
-        public int Gold, Keys, WeaponKeys;
+        public int Gold, Keys, WeaponKeys, Shards;
 
         public static DailyReward From(Dictionary<string, object> d) =>
-            d == null ? default : new DailyReward { Gold = d.Int("gold"), Keys = d.Int("keys"), WeaponKeys = d.Int("weapon_keys") };
+            d == null ? default : new DailyReward { Gold = d.Int("gold"), Keys = d.Int("keys"), WeaponKeys = d.Int("weapon_keys"), Shards = d.Int("shards") };
     }
 
     public sealed class DailyTask

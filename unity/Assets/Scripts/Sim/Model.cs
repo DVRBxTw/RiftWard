@@ -27,6 +27,11 @@ namespace RiftWard.Sim
         /// Every copy drawn per weapon (rarities) and which copy is in use.
         public Dictionary<string, List<int>> Copies = new Dictionary<string, List<int>>();
         public Dictionary<string, int> Active = new Dictionary<string, int>();
+        /// Enhancement of every copy (same order as Copies); Levels holds the active copy's.
+        public Dictionary<string, List<Dictionary<string, int>>> CopyLevels = new Dictionary<string, List<Dictionary<string, int>>>();
+
+        public Dictionary<string, int> CopyLevel(string weapon, int index) =>
+            CopyLevels.TryGetValue(weapon, out var rows) && index >= 0 && index < rows.Count ? rows[index] : new Dictionary<string, int>();
 
         public int RarityOf(string weapon) => Rarity.TryGetValue(weapon, out var r) ? Mathf.Clamp(r, 0, Defs.WeaponRarityMult.Length - 1) : 1;
 

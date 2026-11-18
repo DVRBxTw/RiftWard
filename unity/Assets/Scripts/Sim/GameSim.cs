@@ -130,7 +130,7 @@ namespace RiftWard.Sim
         public void RefreshWeapon(Actor a)
         {
             string id = a.WeaponId;
-            var st = Defs.Weapons[id].StatsAt(a.Loadout.Level(id, "damage"), a.Loadout.Level(id, "mag"), a.Loadout.Level(id, "reload"));
+            var st = Defs.Weapons[id].StatsAt(a.Loadout.Level(id, "damage"), a.Loadout.Level(id, "mag"), a.Loadout.Level(id, "reload"), a.Loadout.Level(id, "over"));
             float adminDamage = a.IsAdmin ? a.Admin.Damage : 1f;
             a.Damage = st.Damage * a.DamageMult * adminDamage * Defs.WeaponRarityMult[a.Loadout.RarityOf(id)];
             a.FireInterval = Mathf.Max(0.045f, st.Interval * a.RateMult);

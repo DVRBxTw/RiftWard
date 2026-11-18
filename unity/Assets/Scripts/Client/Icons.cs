@@ -24,6 +24,29 @@ namespace RiftWard.Client
             return Place(parent, sprite, size);
         }
 
+        static Sprite shard;
+
+        /// Rift shard: a faceted cyan crystal.
+        public static Image Shard(Transform parent, float size)
+        {
+            if (shard == null) shard = Make(ShardPixel);
+            return Place(parent, shard, size);
+        }
+
+        static Color ShardPixel(float x, float y)
+        {
+            float d = Mathf.Abs(x) * 1.55f + Mathf.Abs(y) - 0.92f;           // tall diamond
+            var tint = Gear.ShardColor;
+            Color deep = new Color(tint.r * 0.25f, tint.g * 0.3f, tint.b * 0.38f);
+            var c = Over(new Color(0, 0, 0, 0), deep, Cover(d - 0.07f));
+            // Left facets lit, right facets in shade; a bright ridge down the middle.
+            float light = x < 0 ? (y > 0 ? 1f : 0.7f) : (y > 0 ? 0.55f : 0.35f);
+            c = Over(c, Color.Lerp(tint * 0.55f, Color.Lerp(tint, Color.white, 0.55f), light), Cover(d));
+            c = Over(c, new Color(0.9f, 1f, 1f), 0.8f * Cover(Mathf.Abs(x) - 0.025f) * Cover(d + 0.08f));
+            c = Over(c, deep, 0.5f * Cover(Mathf.Abs(y) - 0.02f) * Cover(d + 0.04f));
+            return c;
+        }
+
         static Image Place(Transform parent, Sprite sprite, float size)
         {
             var image = Ui.Box(parent, Color.white, "Icon");

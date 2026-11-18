@@ -473,6 +473,25 @@ namespace RiftWard.Tests
         }
 
         [Test]
+        public void EnhancementPastFiveIsHalfStepAndOverloadAddsFivePercent()
+        {
+            var w = Defs.Weapons["rifle"];
+            // Levels 6-10 count half: level 10 = 7.5 effective steps.
+            Assert.AreEqual(w.Damage * (1f + 0.12f * 7.5f), w.StatsAt(10, 0, 0).Damage, 1e-3f);
+            var over = w.StatsAt(10, 10, 10, 3);
+            Assert.AreEqual(w.Damage * (1f + 0.12f * 7.5f) * 1.15f, over.Damage, 1e-3f);
+            Assert.AreEqual(w.Interval * 0.85f, over.Interval, 1e-4f);
+            Assert.AreEqual(w.Reload * (1f - 0.08f * 7.5f) * 0.85f, over.Reload, 1e-4f);
+            // Prices mirror upgrade_cost in server/service.py.
+            int[] expected = { 72, 360, 360, 1800, 648, 3240, 5468, 27338, 115, 576, 576, 2880, 1037, 5184, 8748, 43740, 108, 540, 540, 2700, 972, 4860, 8201, 41006 };
+            int i = 0;
+            foreach (var id in new[] { "pistol", "sniper", "saber" })
+                foreach (var level in new[] { 0, 4, 5, 9 })
+                    foreach (var rarity in new[] { 0, 4 })
+                        Assert.AreEqual(expected[i++], Defs.UpgradeCost(id, level, rarity), $"{id} lv{level} r{rarity}");
+        }
+
+        [Test]
         public void CompactSnapshotsRoundTripAndShrink()
         {
             var sim = new GameSim(21);

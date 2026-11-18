@@ -143,7 +143,7 @@ class ServiceTests(unittest.TestCase):
             db.execute("UPDATE progress SET weapon_keys=1 WHERE account_id=?", (aid,))
         code, drawn = self.call("/api/gacha/weapon", {"count": 1}, {"Authorization": "Bearer " + account["token"]})
         self.assertEqual((code, drawn["weapons"][0]["outcome"]), (200, "full"))
-        self.assertGreater(drawn["weapons"][0]["gold"], 0)
+        self.assertGreater(drawn["weapons"][0]["gold"] + drawn["weapons"][0]["shards"], 0)   # 傳奇+ turn into shards
         # Salvaging a copy in front of the active one shifts the active index back.
         lo = self.store.profile(aid)["loadout"]
         lo["copies"]["rifle"] = [0, 1, 2]; lo["active"]["rifle"] = 2
@@ -215,6 +215,53 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(self.call("/api/admin/grant",{"username":"*","gold":10},auth)[1]["profile"]["gold"],260)
         self.assertEqual(self.call("/api/admin/grant",{"username":"nobody_here","gold":10},auth)[0],400)
         self.assertEqual(self.call("/api/admin/grant",{"username":"Beta_Test","gold":-5},auth)[0],400)
+
+    def test_per_copy_enhancement_overload_and_shards(self):
+        account = self.register()
+        auth = {"Authorization": "Bearer " + account["token"]}
+        aid = account["profile"]["id"]
+        # A legacy account: shared levels and no copy_levels; the copy in use inherits them, the others start at 0.
+        legacy = {"owned": ["rifle"], "equipped": ["rifle"], "rarity": {"rifle": 0}, "copies": {"rifle": [0, 4]}, "active": {"rifle": 0},
+                  "levels": {"rifle": {"damage": 5, "mag": 3}}}
+        with self.store.connect() as db:
+            db.execute("UPDATE progress SET loadout=?, gold=10000000 WHERE account_id=?", (json.dumps(legacy), aid))
+        lo = self.store.profile(aid)["loadout"]
+        self.assertEqual(lo["copy_levels"]["rifle"], [{"damage": 5, "mag": 3}, {}])
+        self.assertEqual(lo["levels"]["rifle"], {"damage": 5, "mag": 3})
+        # Switching to the 神話 copy does not carry the levels over: no cheap enhancement through a 劣質 copy.
+        self.assertEqual(self.call("/api/weapon/select", {"weapon": "rifle", "index": 1, "rarity": 4}, auth)[0], 200)
+        lo = self.store.profile(aid)["loadout"]
+        self.assertNotIn("rifle", lo["levels"])
+        gold = self.store.profile(aid)["gold"]
+        code, up = self.call("/api/shop/upgrade", {"weapon": "rifle", "stat": "damage"}, auth)
+        self.assertEqual((code, up["profile"]["gold"]), (200, gold - service.upgrade_cost("rifle", 0, 4)))
+        self.assertEqual(up["profile"]["loadout"]["copy_levels"]["rifle"], [{"damage": 5, "mag": 3}, {"damage": 1}])
+        # Levels past 5 get steeper; the cap is 10.
+        self.assertEqual(service.upgrade_cost("pistol", 5, 1), round(120 * 6 * 1.5))
+        self.assertGreater(service.upgrade_cost("pistol", 9, 1), service.upgrade_cost("pistol", 4, 1) * 7)
+        # Overload needs every stat maxed, then shards + gold.
+        self.assertEqual(self.call("/api/shop/overload", {"weapon": "rifle"}, auth)[0], 400)
+        for stat in service.UPGRADE_STATS:
+            while self.store.profile(aid)["loadout"]["levels"]["rifle"].get(stat, 0) < service.MAX_UPGRADE:
+                self.assertEqual(self.call("/api/shop/upgrade", {"weapon": "rifle", "stat": stat}, auth)[0], 200)
+        self.assertEqual(self.call("/api/shop/upgrade", {"weapon": "rifle", "stat": "damage"}, auth)[0], 400)
+        self.assertEqual(self.call("/api/shop/overload", {"weapon": "rifle"}, auth)[0], 400)   # no shards yet
+        with self.store.connect() as db:
+            db.execute("UPDATE progress SET shards=7 WHERE account_id=?", (aid,))
+        for tier in range(service.OVERLOAD_MAX):
+            self.assertEqual(self.call("/api/shop/overload", {"weapon": "rifle"}, auth)[0], 200)
+        self.assertEqual(self.call("/api/shop/overload", {"weapon": "rifle"}, auth)[0], 400)
+        p = self.store.profile(aid)
+        self.assertEqual((p["shards"], p["loadout"]["levels"]["rifle"]["over"]), (0, 3))
+        # A 劣質 copy cannot be overloaded; salvaging the 神話 copy returns 4 shards plus half of what went into it.
+        self.assertEqual(self.call("/api/weapon/select", {"weapon": "rifle", "index": 0, "rarity": 0}, auth)[0], 200)
+        gold_spent, shards_spent = service.weapon_invested("rifle", 4, p["loadout"]["copy_levels"]["rifle"][1])
+        gold = self.store.profile(aid)["gold"]
+        code, out = self.call("/api/weapon/salvage", {"weapon": "rifle", "index": 1, "rarity": 4}, auth)
+        self.assertEqual(code, 200)
+        self.assertEqual(out["profile"]["shards"], 4 + shards_spent // 2)
+        self.assertEqual(out["profile"]["gold"], gold + gold_spent // 2)
+        self.assertEqual(out["profile"]["loadout"]["copy_levels"]["rifle"], [{"damage": 5, "mag": 3}])
 
     def test_levels_talents_keys_and_gear(self):
         account = self.register()
