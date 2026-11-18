@@ -182,6 +182,34 @@ namespace RiftWard.Tests
         }
 
         [Test]
+        public void EveryUpgradeHasAStackLimitExceptEndlessDamageAndShield()
+        {
+            Assert.AreEqual(Defs.Buffs.Length, Defs.BuffMaxStacks.Length);
+            var sim = NewMission();
+            var a = sim.Actors[1];
+            for (int i = 0; i < Defs.BuffMaxStacks[0]; i++) sim.ApplyBuff(1, 0);
+            for (int n = 0; n < 300; n++)
+            {
+                sim.PendingLevels = 1;
+                sim.Tick(0.02f);
+                if (sim.BuffOffers.TryGetValue(1, out var offer))
+                {
+                    Assert.IsFalse(offer.Any(c => Defs.BuffIndex(c) == 0), "maxed 超載彈芯 is not offered again");
+                    sim.ChooseBuff(1, offer[0]);
+                }
+            }
+            for (int i = 0; i < Defs.Buffs.Length; i++)
+                Assert.LessOrEqual(a.BuffStacks[i], Defs.BuffMaxStacks[i], Defs.Buffs[i].Name);
+            // Endless: damage and shield keep stacking.
+            Assert.AreEqual(int.MaxValue, Defs.BuffStackLimit(0, true));
+            Assert.AreEqual(int.MaxValue, Defs.BuffStackLimit(3, true));
+            Assert.AreEqual(Defs.BuffMaxStacks[1], Defs.BuffStackLimit(1, true));
+            // Dropped supplies stay 45 s.
+            sim.SpawnPickup(a.Position + Vector3.forward * 5, PickupKind.Health);
+            Assert.AreEqual(GameSim.SupplyLife, sim.Pickups.Values.Last().Life, 0.01f);
+        }
+
+        [Test]
         public void LifestealIsCappedAndRateLimited()
         {
             var sim = NewMission();

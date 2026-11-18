@@ -83,6 +83,9 @@ namespace RiftWard.Client
                 Ui.Label(stack, Defs.RarityNames[tier], 13, rarity, TextAnchor.MiddleCenter).Sized(20);
                 Ui.Label(stack, Defs.Buffs[Defs.BuffIndex(code)].Name, 26, Palette.Bone, TextAnchor.MiddleCenter, true).Sized(36);
                 Ui.Label(stack, Defs.BuffDescription(code), 17, Palette.Hex("d6d1c6"), TextAnchor.MiddleCenter).Sized(60);
+                int limit = Defs.BuffStackLimit(Defs.BuffIndex(code), client.Sim != null && client.Sim.Endless);
+                if (limit < 99) Ui.Label(stack, $"最多 {limit} 層", 12, Palette.Muted, TextAnchor.MiddleCenter).Sized(18);
+                else if (limit == int.MaxValue) Ui.Label(stack, "無盡模式 · 無上限", 12, Palette.Hex("ff6a8a"), TextAnchor.MiddleCenter).Sized(18);
             }
             Ui.Label(root, "選擇後等待隊友；所有人選完就繼續作戰。", 14, Palette.Muted, TextAnchor.MiddleCenter)
                 .rectTransform.Place(new Vector2(0.5f, 0.5f), new Vector2(0, -180), new Vector2(700, 22));

@@ -81,7 +81,7 @@ namespace RiftWard.Sim
             a.Hp = a.MaxHp = 100f;
             a.Yaw = 0; a.VerticalVelocity = 0; a.FireCooldown = 0; a.DashCooldown = 0; a.DashLeft = 0;
             a.Speed = Defs.BaseSpeed; a.DamageMult = 1; a.RateMult = 1; a.ReloadMult = 1; a.SkillMult = 1;
-            a.MagBonus = 0; a.Regen = 0; a.Critical = 0; a.Lifesteal = 0; a.Explode = 0; a.HealBudget = 0;
+            a.MagBonus = 0; a.Regen = 0; a.Critical = 0; a.Lifesteal = 0; a.Explode = 0; a.HealBudget = 0; System.Array.Clear(a.BuffStacks, 0, a.BuffStacks.Length);
             a.SkillCooldown = 0; a.Revive = 0; a.Slot = 0; a.Reload = 0;
             a.StatKills = 0; a.StatHeadshots = 0; a.StatShots = 0; a.StatHits = 0;
             a.StatDowns = 0; a.StatRevives = 0; a.StatBossKills = 0; a.StatEliteKills = 0; a.WasAlive = true; a.AimFlags = 0;
@@ -1370,6 +1370,7 @@ namespace RiftWard.Sim
         void OpenChest(Actor a)
         {
             var offer = RollOffer(a);
+            if (offer.Length == 0) { Hp(a); return; }   // every upgrade maxed: the chest patches you up instead
             int code = offer[rng.Next(offer.Length)];
             code = Defs.BuffIndex(code) + 100 * Mathf.Max(1, Defs.BuffTier(code));
             ApplyBuff(a.Id, code);
@@ -1377,9 +1378,15 @@ namespace RiftWard.Sim
             Announcements.Add($"{who}開啟寶箱：{Defs.Buffs[Defs.BuffIndex(code)].Name}（{Defs.RarityNames[Defs.BuffTier(code)]}）");
         }
 
+        void Hp(Actor a) => a.Hp = a.MaxHp;
+
+        /// Health and ammo stay on the ground long enough to walk back for them.
+        public const float SupplyLife = 45f;
+
         public void SpawnPickup(Vector3 position, PickupKind kind)
         {
-            var p = new Pickup { Id = nextPickup++, Position = new Vector3(position.x, 0, position.z), Kind = kind };
+            var p = new Pickup { Id = nextPickup++, Position = new Vector3(position.x, 0, position.z), Kind = kind,
+                Life = kind == PickupKind.Health || kind == PickupKind.Ammo ? SupplyLife : 20f };
             Pickups[p.Id] = p;
         }
 
@@ -1462,7 +1469,12 @@ namespace RiftWard.Sim
             BuffPending = true;
             BuffWait = 0;
             BuffOffers.Clear();
-            foreach (var a in Actors.Values.Where(a => a.Alive)) BuffOffers[a.Id] = RollOffer(a);
+            foreach (var a in Actors.Values.Where(a => a.Alive))
+            {
+                var offer = RollOffer(a);
+                if (offer.Length > 0) BuffOffers[a.Id] = offer;   // a fully maxed player skips the pick
+                else a.Hp = a.MaxHp;
+            }
             if (BuffOffers.Count == 0) ResolveBuffs();
         }
 
@@ -1479,7 +1491,8 @@ namespace RiftWard.Sim
                 (i != Defs.BuffLightning || a.LightningLevel < Defs.MaxGadgetLevel) &&
                 (i != Defs.BuffMagnet || a.Magnet < 10f) &&
                 (i != Defs.BuffArmor || a.Armor < Defs.MaxArmor) &&
-                (i != 8 || a.Lifesteal < Defs.MaxLifesteal)).OrderBy(_ => rng.Next()).Take(3).ToArray();
+                (i != 8 || a.Lifesteal < Defs.MaxLifesteal) &&
+                a.BuffStacks[i] < Defs.BuffStackLimit(i, Endless)).OrderBy(_ => rng.Next()).Take(3).ToArray();
             for (int i = 0; i < pool.Length; i++)
             {
                 float roll = Rand01();
@@ -1504,6 +1517,7 @@ namespace RiftWard.Sim
             BuffOffers.Remove(id);
             if (!Actors.TryGetValue(id, out var a)) return;
             int index = Defs.BuffIndex(code);
+            if (index >= 0 && index < a.BuffStacks.Length) a.BuffStacks[index]++;
             float m = Defs.RarityMultiplier[Defs.BuffTier(code)];
             int steps = Defs.BuffTier(code) == 2 ? 2 : 1;
             switch (index)

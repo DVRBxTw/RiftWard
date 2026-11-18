@@ -265,6 +265,12 @@ namespace RiftWard.Sim
         public static readonly float[] RarityMultiplier = { 1f, 1.6f, 2.5f };
         public static readonly Color32[] RarityColors = { new Color32(0xa7, 0xa9, 0xac, 255), new Color32(0x7f, 0xb2, 0xe5, 255), new Color32(0xf0, 0xb2, 0x4a, 255) };
 
+        /// How many times each upgrade can be taken in one mission (gadgets also stop at their own level cap).
+        /// In 無盡模式 the weapon damage (超載彈芯) and shield (強化護盾) upgrades keep stacking.
+        public static readonly int[] BuffMaxStacks = { 6, 5, 4, 6, 4, 3, 4, 4, 4, 4, 99, 5, 4, 5, 4, 99, 99, 99, 99, 3, 5 };
+        public static int BuffStackLimit(int index, bool endless) =>
+            endless && (index == 0 || index == 3) ? int.MaxValue : index >= 0 && index < BuffMaxStacks.Length ? BuffMaxStacks[index] : 99;
+
         public static string BuffDescription(int code)
         {
             var buff = Buffs[BuffIndex(code)];

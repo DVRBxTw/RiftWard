@@ -100,6 +100,8 @@ namespace RiftWard.Sim
         public float Regen, Critical, Lifesteal, Explode;
         /// Healing still available from kills and hits (refills over time, see Defs.HealPerSecond).
         public float HealBudget;
+        /// Times each upgrade has been taken this mission (see Defs.BuffMaxStacks).
+        public int[] BuffStacks = new int[32];
         public float SkillCooldown, Revive;
 
         // Companion gadgets (mission upgrades)
