@@ -15,7 +15,7 @@ $version = $Matches[1]
 if (Test-Path $unityOut) { Remove-Item $unityOut -Recurse -Force }
 $env:RIFTWARD_BUILD_DIR = $unityOut
 $log = Join-Path $build 'unity-build.log'
-$p = Start-Process -FilePath $editor -ArgumentList @('-batchmode','-quit','-projectPath',"`"$unityProject`"",'-executeMethod','RiftWard.EditorTools.BuildTools.BuildWindows','-logFile',"`"$log`"") -PassThru -Wait
+$p = Start-Process -WindowStyle Hidden -FilePath $editor -ArgumentList @('-batchmode','-quit','-projectPath',"`"$unityProject`"",'-executeMethod','RiftWard.EditorTools.BuildTools.BuildWindows','-logFile',"`"$log`"") -PassThru -Wait
 if ($p.ExitCode -ne 0 -or -not (Test-Path (Join-Path $unityOut 'RiftWard.exe'))) { throw "Unity build failed, see $log" }
 Get-ChildItem $unityOut -Directory | Where-Object { $_.Name -like '*DoNotShip' } | Remove-Item -Recurse -Force
 

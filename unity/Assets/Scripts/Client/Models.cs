@@ -557,7 +557,6 @@ namespace RiftWard.Client
             if (!melee)   // the gun details and rarity finish are shaped for guns; the blade shows rarity itself
             {
                 Detail(holder, muzzleZ);
-                Edges(holder);
                 Emblem(holder, rarity);
                 WeaponFinish(holder, rarity, muzzleZ);
                 if (rarity >= 3) Signature(holder, weapon, rarity, muzzleZ);
@@ -566,6 +565,7 @@ namespace RiftWard.Client
                 Part(holder, "Eject", ejectAt);
             }
             Surfaces(holder);
+            EquipmentArt.DressWeapon(holder, weapon, Mathf.Clamp(rarity, 0, 4), muzzleZ);
             if (firstPerson && !melee)
             {
                 AmmoBar(holder);
@@ -607,15 +607,15 @@ namespace RiftWard.Client
                 if (m == null || m.IsKeywordEnabled("_EMISSION") || m.color.a < 1f) continue;   // keep glow and glass
                 Color c = m.color;
                 float lum = c.r * 0.3f + c.g * 0.59f + c.b * 0.11f;
-                r.sharedMaterial = Build.Mat(lum < 0.2f ? Color.Lerp(dark, c, 0.25f) : metal, lum < 0.2f ? 0f : 0.5f);
+                r.sharedMaterial = Build.Mat(lum < 0.2f ? Color.Lerp(dark, c, 0.25f) : metal);
             }
             Color hot = Color.Lerp(glow, Color.white, 0.35f);
 
             // Engraved trim along the top and both flanks.
-            P(h, new Vector3(0, 0.047f, length * 0.25f), new Vector3(0.012f, 0.005f, length * 0.6f), metal, 1.2f);
+            P(h, new Vector3(0, 0.047f, length * 0.25f), new Vector3(0.012f, 0.005f, length * 0.6f), metal);
             foreach (float x in new[] { -0.047f, 0.047f })
             {
-                P(h, new Vector3(x, -0.022f, length * 0.1f), new Vector3(0.004f, 0.006f, length * 0.5f), metal, 1.2f);
+                P(h, new Vector3(x, -0.022f, length * 0.1f), new Vector3(0.004f, 0.006f, length * 0.5f), metal);
                 // Pulsing energy vein in the rarity colour.
                 var vein = P(h, new Vector3(x * 1.02f, 0.0f, length * 0.4f), new Vector3(0.005f, 0.01f, length * 0.62f), hot, 6f);
                 vein.AddComponent<Spinner>().Pulse = 0.12f;
@@ -693,7 +693,7 @@ namespace RiftWard.Client
                     for (int i = 0; i < 3; i++) C(new Vector3(0, -0.12f - i * 0.13f, 0.21f), new Vector3(0.6f - i * 0.06f, 0.1f, 0.05f), body * 1.15f);
                     if (rarity >= 1) C(new Vector3(0, 0.2f, 0.235f), new Vector3(0.18f, 0.18f, 0.02f), glow, g);
                     if (rarity >= 2) foreach (float x in new[] { -0.3f, 0.3f }) C(new Vector3(x, -0.1f, 0.23f), new Vector3(0.03f, 0.5f, 0.02f), glow, g);
-                    if (rarity >= 3) foreach (float x in new[] { -0.55f, 0.55f }) C(new Vector3(x, 0.52f, 0), new Vector3(0.32f, 0.04f, 0.52f), Palette.Hex("c9a24a"), 0.6f);
+                    if (rarity >= 3) foreach (float x in new[] { -0.55f, 0.55f }) C(new Vector3(x, 0.52f, 0), new Vector3(0.32f, 0.04f, 0.52f), Palette.Hex("c9a24a"));
                     break;
                 case "module":
                     C(Vector3.zero, new Vector3(0.36f, 0.3f, 0.9f), body);
@@ -703,7 +703,7 @@ namespace RiftWard.Client
                     C(new Vector3(0, 0.02f, 0.57f), new Vector3(0.2f, 0.2f, 0.02f), rarity == 0 ? Palette.Hex("4a5058") : glow, rarity == 0 ? 0.3f : g + 1f);
                     C(new Vector3(0, 0.2f, -0.1f), new Vector3(0.12f, 0.1f, 0.3f), trim);
                     if (rarity >= 2) foreach (float x in new[] { -0.185f, 0.185f }) C(new Vector3(x, 0.05f, 0), new Vector3(0.02f, 0.04f, 0.7f), glow, g);
-                    if (rarity >= 3) C(new Vector3(0, 0.16f, 0.2f), new Vector3(0.3f, 0.03f, 0.3f), Palette.Hex("c9a24a"), 0.6f);
+                    if (rarity >= 3) C(new Vector3(0, 0.16f, 0.2f), new Vector3(0.3f, 0.03f, 0.3f), Palette.Hex("c9a24a"));
                     break;
                 case "boots":
                     foreach (float x in new[] { -0.26f, 0.26f })
@@ -714,7 +714,7 @@ namespace RiftWard.Client
                         C(new Vector3(x, 0.3f, 0.12f), new Vector3(0.26f, 0.14f, 0.04f), trim);
                         if (rarity >= 1) C(new Vector3(x, -0.18f, 0.41f), new Vector3(0.2f, 0.05f, 0.02f), glow, g);
                         if (rarity >= 2) C(new Vector3(x, -0.05f, -0.23f), new Vector3(0.14f, 0.3f, 0.06f), glow, g);
-                        if (rarity >= 3) C(new Vector3(x, 0.44f, -0.05f), new Vector3(0.32f, 0.04f, 0.36f), Palette.Hex("c9a24a"), 0.6f);
+                        if (rarity >= 3) C(new Vector3(x, 0.44f, -0.05f), new Vector3(0.32f, 0.04f, 0.36f), Palette.Hex("c9a24a"));
                     }
                     break;
                 default: // chip
@@ -728,7 +728,7 @@ namespace RiftWard.Client
                         C(new Vector3(off, 0.045f, -0.33f), new Vector3(0.04f, 0.02f, 0.18f), Palette.Hex("c9a24a"), 0.3f);
                     }
                     if (rarity >= 2) foreach (float z in new[] { -0.15f, 0.15f }) C(new Vector3(0.28f, 0.05f, z), new Vector3(0.24f, 0.02f, 0.02f), glow, g);
-                    if (rarity >= 3) C(new Vector3(0, 0.05f, 0), new Vector3(0.94f, 0.02f, 0.04f), Palette.Hex("c9a24a"), 0.6f);
+                    if (rarity >= 3) C(new Vector3(0, 0.05f, 0), new Vector3(0.94f, 0.02f, 0.04f), Palette.Hex("c9a24a"));
                     break;
             }
             if (rarity >= 4)
@@ -741,6 +741,7 @@ namespace RiftWard.Client
                     shard.transform.localRotation = Quaternion.Euler(30, a * Mathf.Rad2Deg, 20);
                 }
             }
+            EquipmentArt.DressGear(root, slot, rarity);
             foreach (var c in root.GetComponentsInChildren<Collider>()) Object.Destroy(c);
         }
 
@@ -751,30 +752,6 @@ namespace RiftWard.Client
             holder.SetParent(root, false);
             holder.localRotation = Quaternion.Euler(0, -90, 0);
             Viewmodel(weapon, holder, rarity, false, enhance, overload, pierce);
-        }
-
-        /// Bevel highlight: a thin, lighter strip along the two top edges of every large block, so up close the
-        /// gun reads as machined parts instead of flat boxes. Glowing and translucent parts are skipped.
-        static void Edges(Transform h)
-        {
-            var blocks = new List<MeshRenderer>();
-            foreach (var r in h.GetComponentsInChildren<MeshRenderer>())
-            {
-                var mf = r.GetComponent<MeshFilter>();
-                var m = r.sharedMaterial;
-                if (mf == null || mf.sharedMesh == null || !mf.sharedMesh.name.StartsWith("Cube") || m == null || m.IsKeywordEnabled("_EMISSION") || m.color.a < 1f) continue;
-                var sc = r.transform.localScale;
-                if (sc.x < 0.04f || sc.y < 0.025f || sc.z < 0.07f) continue;
-                blocks.Add(r);
-            }
-            const float e = 0.0022f;
-            foreach (var r in blocks)
-            {
-                var sc = r.transform.localScale;
-                Color edge = Color.Lerp(r.sharedMaterial.color, Color.white, 0.22f);
-                foreach (float side in new[] { -0.5f, 0.5f })
-                    Build.Cube(r.transform, new Vector3(side, 0.5f, 0), new Vector3(e / sc.x, e / sc.y, 0.96f), edge, 0f, false).name = "Edge";
-            }
         }
 
         /// Rarity emblem: a small plate on the left flank in the rarity colour (unlit for 劣質 / 普通, glowing above).
@@ -941,12 +918,12 @@ namespace RiftWard.Client
         {
             if (surfaces.TryGetValue(c, out var m)) return m;
             Color.RGBToHSV(c, out float hue, out float sat, out float val);
-            m = new Material(Build.Mat(c));
             bool wood = sat > 0.3f && hue > 0.03f && hue < 0.12f && val < 0.45f;
             bool metal = sat < 0.2f && val < 0.3f;
-            float smooth = wood ? 0.22f : metal ? (val > 0.14f ? 0.72f : 0.6f) : 0.42f;
-            m.SetFloat("_Glossiness", smooth);
-            m.SetFloat("_Metallic", wood ? 0f : metal ? 0.75f : 0.15f);
+            bool polymer = c == GunPolymer || c == GunInk;
+            bool gold = hue > 0.07f && hue < 0.16f && sat > 0.35f && val > 0.6f;
+            float smooth = polymer ? 0.26f : wood ? 0.22f : metal || gold ? 0.62f : 0.38f;
+            m = EquipmentArt.Coat(c, polymer || wood ? 0f : metal || gold ? 0.75f : 0.2f, smooth);
             surfaces[c] = m;
             return m;
         }
