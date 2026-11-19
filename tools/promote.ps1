@@ -1,4 +1,4 @@
-# 正式服 release: moves the build the 測試服 is running (build/) to the 正式服 (prod/), unchanged. Backs up the 正式服
+﻿# 正式服 release: moves the build the 測試服 is running (build/) to the 正式服 (prod/), unchanged. Backs up the 正式服
 # database first, restarts only the 正式服, waits for it to publish the version, then publishes a GitHub release
 # (marked latest) with the 正式服 download. Run after tools\release.ps1 and testing on the 測試服:
 #   powershell -ExecutionPolicy Bypass -File tools\promote.ps1 -Notes path\to\notes.md
