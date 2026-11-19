@@ -213,6 +213,18 @@ namespace RiftWard.Tests
         }
 
         [Test]
+        public void ShieldTalentScalesBaseAndEveryShieldPick()
+        {
+            var sim = NewMission();
+            var a = sim.Actors[1];
+            sim.ApplyProfileBonus(1, 20f, 0, 0, 0, 0, 30f);   // gear +20 flat, talent +30%
+            Assert.AreEqual((100f + 20f) * 1.3f, a.MaxHp, 0.01f);
+            float before = a.MaxHp;
+            sim.ApplyBuff(1, 3);   // 強化護盾, common: +30 × 1.3
+            Assert.AreEqual(before + Mathf.Round(30f * 1.3f), a.MaxHp, 0.01f);
+        }
+
+        [Test]
         public void EmptyMagazineAutoReloads()
         {
             var sim = NewMission();

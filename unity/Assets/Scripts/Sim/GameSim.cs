@@ -108,12 +108,12 @@ namespace RiftWard.Sim
         // ------------------------------------------------------------ weapons
 
         /// Permanent account bonuses (talents + equipped gear) applied when a player joins a mission.
-        public void ApplyProfileBonus(int id, float hp, float damagePct, float speedPct, float reloadPct, float critPct)
+        public void ApplyProfileBonus(int id, float hp, float damagePct, float speedPct, float reloadPct, float critPct, float hpPct = 0f)
         {
             if (!Actors.TryGetValue(id, out var a)) return;
             hp = Mathf.Clamp(hp, 0, 400); damagePct = Mathf.Clamp(damagePct, 0, 200); speedPct = Mathf.Clamp(speedPct, 0, 60);
-            reloadPct = Mathf.Clamp(reloadPct, 0, 60); critPct = Mathf.Clamp(critPct, 0, 60);
-            a.ProfileBonus = new[] { hp, damagePct, speedPct, reloadPct, critPct };
+            reloadPct = Mathf.Clamp(reloadPct, 0, 60); critPct = Mathf.Clamp(critPct, 0, 60); hpPct = Mathf.Clamp(hpPct, 0, 60);
+            a.ProfileBonus = new[] { hp, damagePct, speedPct, reloadPct, critPct, hpPct };
             ApplyBonusStats(a);
         }
 
@@ -122,7 +122,8 @@ namespace RiftWard.Sim
         {
             if (a.ProfileBonus == null) return;
             float hp = a.ProfileBonus[0], damagePct = a.ProfileBonus[1], speedPct = a.ProfileBonus[2], reloadPct = a.ProfileBonus[3], critPct = a.ProfileBonus[4];
-            a.MaxHp += hp;
+            a.HpPct = a.ProfileBonus.Length > 5 ? a.ProfileBonus[5] / 100f : 0f;
+            a.MaxHp = (a.MaxHp + hp) * (1f + a.HpPct);
             a.Hp = a.MaxHp;
             a.DamageMult *= 1f + damagePct / 100f;
             a.Speed *= 1f + speedPct / 100f;
@@ -1573,7 +1574,7 @@ namespace RiftWard.Sim
                 case 1: a.RateMult = Mathf.Max(0.3f, a.RateMult * (1f - 0.15f * m)); break;
                 case 2: a.Speed = Mathf.Min(12f, a.Speed * (1f + 0.12f * m)); break;
                 case 3:
-                    float bonus = Mathf.Round(30 * m);
+                    float bonus = Mathf.Round(30 * m * (1f + a.HpPct));   // the shield talent grows every pick too
                     a.MaxHp += bonus;
                     a.Hp = Mathf.Min(a.MaxHp, a.Hp + bonus);
                     break;

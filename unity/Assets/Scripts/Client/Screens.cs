@@ -824,7 +824,7 @@ namespace RiftWard.Client
                     allMaxed &= lv >= Defs.MaxUpgradeLevel;
                     var row = Ui.Rect(ds, "Upgrade").Sized(34);
                     Ui.Label(row, UpgradeName(key, wd.Melee), 16, Palette.Bone, TextAnchor.MiddleLeft, true).rectTransform.Place(new Vector2(0, 0.5f), Vector2.zero, new Vector2(80, 24), new Vector2(0, 0.5f));
-                    string step = key == "damage" ? "+12%" : key == "mag" ? (wd.Melee ? "+8%" : "+15%") : "-8%";
+                    string step = key == "damage" ? "+12%" : key == "mag" ? (wd.Melee ? "+8%" : "+15%") : (wd.Melee ? "-4%" : "-8%");
                     Ui.Label(row, lv >= Defs.SoftUpgradeLevel ? $"每級 {step} · 6 級起減半" : $"每級 {step}", 12, Palette.Muted, TextAnchor.MiddleLeft)
                         .rectTransform.Place(new Vector2(0, 0.5f), new Vector2(80, 0), new Vector2(150, 20), new Vector2(0, 0.5f));
                     // Ten pips; the second five (half-step, steeper price) sit after a gap and read darker when lit.

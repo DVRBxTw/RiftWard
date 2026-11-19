@@ -222,7 +222,10 @@ def set_bonus(items) -> dict:
 
 
 # ---- account level, talents, gear and supply draws
-TALENTS = {"hp": 5, "damage": 2, "speed": 1.5, "reload": 3, "crit": 1}   # bonus per point
+TALENTS = {"hp": 3, "damage": 2, "speed": 1.5, "reload": 3, "crit": 1}   # bonus per point (hp: % of max shield)
+# The shield talent multiplies max shield (start and in-mission upgrades alike), so it is reported as "hp_pct",
+# apart from the flat shield gear gives under "hp".
+TALENT_BONUS_KEY = {"hp": "hp_pct"}
 TALENT_MAX = 10
 GEAR_SLOTS = {"armor": "hp", "module": "damage", "boots": "speed", "chip": "crit"}
 RARITIES = ["劣質", "普通", "稀世", "傳奇", "神話"]
@@ -485,7 +488,7 @@ class Store:
         result["pity"] = {pool: PITY_LIMIT - count for pool, count in pity.items()}   # draws left until 傳奇+ is guaranteed
         result["inventory"] = [dict(item, stats=gear_stats(item), base=item["stats"], level=item.get("level", 0)) for item in gear["inventory"]]
         result["equipment"] = gear["equipped"]
-        bonus = {k: talents[k] * per for k, per in TALENTS.items()}
+        bonus = {TALENT_BONUS_KEY.get(k, k): talents[k] * per for k, per in TALENTS.items()}
         worn = [item for item in gear["inventory"] if gear["equipped"].get(item["slot"]) == item["id"]]
         for item in worn:
             for k, v in gear_stats(item).items():

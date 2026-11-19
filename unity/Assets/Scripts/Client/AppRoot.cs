@@ -531,7 +531,7 @@ namespace RiftWard.Client
             int offlineRegion = Mathf.Clamp(SelectedRegion, 0, Profile.Unlocked);
             Client.StartOffline(offlineRegion, Profile.Loadout, Profile.Admin, AdminSettings, OpenTier(offlineRegion, SelectedDifficulty));
             if (Client.Sim != null) Client.Sim.Endless = SelectedEndless && EndlessOpen(offlineRegion);
-            Client.Sim?.ApplyProfileBonus(Client.LocalId, Profile.BonusOf("hp"), Profile.BonusOf("damage"), Profile.BonusOf("speed"), Profile.BonusOf("reload"), Profile.BonusOf("crit"));
+            Client.Sim?.ApplyProfileBonus(Client.LocalId, Profile.BonusOf("hp"), Profile.BonusOf("damage"), Profile.BonusOf("speed"), Profile.BonusOf("reload"), Profile.BonusOf("crit"), Profile.BonusOf("hp_pct"));
         }
 
         void ReturnHome()

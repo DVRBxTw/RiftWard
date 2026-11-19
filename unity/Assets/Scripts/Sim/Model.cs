@@ -88,6 +88,8 @@ namespace RiftWard.Sim
         public bool Blocking;
         /// Account bonus from talents + equipped gear [hp, damage%, speed%, reload%, crit%]; reapplied after every reset.
         public float[] ProfileBonus;
+        /// Shield talent: max shield × (1 + HpPct), applied at mission start and to every 強化護盾 pick.
+        public float HpPct;
         /// Aiming down sights (right mouse with a gun): tighter spread, slower walk.
         public bool Aiming;
         public bool Melee => Defs.Weapons.TryGetValue(WeaponId, out var w) && w.Melee;

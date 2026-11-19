@@ -103,7 +103,7 @@ namespace RiftWard.Client
         public static readonly string[] Talents = { "hp", "damage", "speed", "reload", "crit" };
         public static readonly Dictionary<string, (string name, string per)> TalentInfo = new Dictionary<string, (string, string)>
         {
-            ["hp"] = ("強韌體魄", "護盾上限 +5"), ["damage"] = ("火力專精", "傷害 +2%"), ["speed"] = ("機動訓練", "移動速度 +1.5%"),
+            ["hp"] = ("強韌體魄", "護盾上限 +3%"), ["damage"] = ("火力專精", "傷害 +2%"), ["speed"] = ("機動訓練", "移動速度 +1.5%"),
             ["reload"] = ("快速裝填", "換彈速度 +3%"), ["crit"] = ("致命直覺", "爆擊率 +1%"),
         };
         public const int TalentMax = 10;
@@ -129,6 +129,7 @@ namespace RiftWard.Client
         public static string StatText(string key, float value) => key switch
         {
             "hp" => $"護盾 +{value:0}",
+            "hp_pct" => $"護盾 +{value:0}%",
             "damage" => $"傷害 +{value:0.#}%",
             "speed" => $"移速 +{value:0.#}%",
             "reload" => $"換彈 +{value:0.#}%",
