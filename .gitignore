@@ -15,4 +15,4 @@ ui-font.ttc*
 launcher/ui-font.ttf
 preview.png*
 *.zip
-prod/
+/prod/
