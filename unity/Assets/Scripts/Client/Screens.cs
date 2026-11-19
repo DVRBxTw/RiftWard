@@ -448,7 +448,8 @@ namespace RiftWard.Client
             var stack = Ui.VStack(column, 0);
             stack.Fill();
             stack.GetComponent<VerticalLayoutGroup>().padding = new RectOffset(48, 48, 26, 20);
-            Ui.Label(stack, "選擇關卡", 34, Palette.Bone, TextAnchor.UpperLeft, true).Sized(42);
+            Ui.Label(stack, "選擇關卡", 34, Palette.Bone, TextAnchor.UpperLeft, true).Sized(48);
+            Ui.Rect(stack, "Gap").Sized(8);
             // Chapter tabs: a chapter opens once its first region is unlocked.
             int chapter = Defs.ChapterOf(selected);
             var chapters = Ui.HStack(stack, 8).Sized(40);
@@ -521,13 +522,13 @@ namespace RiftWard.Client
             endlessRow.interactable = endlessOpen && app.CanDeploy && (!app.InRoom || app.IsLeader);
             if (endless) endlessRow.GetComponentInChildren<Text>().color = Palette.Hex("ff6a8a");
             Ui.Rect(stack, "Gap").Sized(8);
-            var deploy = PrimaryButton(stack, "", app.Deploy).Sized(64);
+            var deploy = PrimaryButton(stack, "", app.Deploy).Sized(56);
             string mode = endless ? " · 無盡" : "";
             deploy.SetCaption(tierIndex > 0 || endless ? $"部署          0{selected + 1} {region.Name} · {tier.Name}{mode}" : $"部署          0{selected + 1} {region.Name}");
             deploy.interactable = app.CanDeploy;
             Ui.DefaultButton = deploy;   // Enter deploys
-            Ui.Rect(stack, "Gap").Sized(12);
-            Ui.Button(stack, chapter == 0 ? "故事與教學" : "第二章劇情回顧", () => { if (chapter == 0) ShowStory(0); else ShowPages(ChapterTwo, 0, "返回基地", app.ShowHome); }, 14, Palette.Muted).Sized(40);
+            Ui.Rect(stack, "Gap").Sized(8);
+            Ui.Button(stack, chapter == 0 ? "故事與教學" : "第二章劇情回顧", () => { if (chapter == 0) ShowStory(0); else ShowPages(ChapterTwo, 0, "返回基地", app.ShowHome); }, 14, Palette.Muted).Sized(36);
             if (app.Net.Welcomed || PreviewRoom)
             {
                 Ui.Rect(stack, "Gap").Sized(10);
@@ -561,7 +562,7 @@ namespace RiftWard.Client
             // Briefing sheet over the live region backdrop.
             var brief = Ui.Box(body, new Color(0.063f, 0.067f, 0.075f, 0.92f), "Briefing").rectTransform;
             // Top-aligned with the left column's title, so the two read as one layout.
-            float briefHeight = endless ? 596 : 500;
+            float briefHeight = endless ? 552 : 456;   // the key-hint row moved out: the HUD and Settings show controls
             brief.Place(new Vector2(1, 1), new Vector2(-40, -32), new Vector2(520, briefHeight), new Vector2(1, 1));
             // In a room, the party lineup sits under the briefing, in the same column.
             if ((app.Net.Welcomed && app.InRoom) || PreviewRoom) PartyRow(body, 32 + briefHeight + 12, endless ? 92 : 168);
@@ -604,7 +605,6 @@ namespace RiftWard.Client
                 Ui.Label(cell, value, 22, Palette.Bone, TextAnchor.UpperLeft, true).Sized(28);
             }
             }
-            Caps(b2, Bindings.Summary()).Sized(40);
         }
 
         /// 無盡排行榜 on the briefing sheet: top five, then your own rank. Fetched at most every 30 s, cached between redraws.
@@ -1035,7 +1035,7 @@ namespace RiftWard.Client
                 }
             }
             var bagHead = Ui.Rect(g, "BagHead").Sized(28);
-            Ui.Label(bagHead, $"背包  {p.Inventory.Count} 件    點選裝備可穿上 / 卸下，強化可提升屬性與防禦（每級 +0.5%）", 13, Palette.Muted, TextAnchor.MiddleLeft).rectTransform.Fill().offsetMax = new Vector2(-110, 0);
+            Ui.Label(bagHead, $"背包  {p.Inventory.Count} 件    點選穿上 / 卸下 · 改造內可重鑄、突破、升階、分解", 13, Palette.Muted, TextAnchor.MiddleLeft).rectTransform.Fill().offsetMax = new Vector2(-110, 0);
             Ui.Button(bagHead, "一鍵分解", () => BulkSalvage("gear"), 12, Palette.Amber).GetComponent<RectTransform>().Place(new Vector2(1, 0.5f), Vector2.zero, new Vector2(100, 28), new Vector2(1, 0.5f));
             // Category tabs, like the weapon list: all, then one per slot with its count.
             var tabs = Ui.HStack(g, 6).Sized(34);
@@ -1061,24 +1061,21 @@ namespace RiftWard.Client
                 bool worn = p.Equipment.TryGetValue(item.Slot, out var wid) && wid == item.Id;
                 var row = Ui.Rect(list, "Item").Sized(44);
                 var hit = Ui.Button(row, "", () => CharacterRequest("/api/gear/equip", new Dictionary<string, object> { ["item"] = item.Id }), 14, null,
-                    worn ? new Color(item.Color.r, item.Color.g, item.Color.b, 0.1f) : new Color(0, 0, 0, 0), worn ? item.Color : new Color(0, 0, 0, 0));
-                hit.GetComponent<RectTransform>().Fill().offsetMax = new Vector2(-226, 0);
-                Ui.Label(hit.transform, item.Name + (worn ? "  · 已裝備" : ""), 15, item.Color, TextAnchor.UpperLeft, true).rectTransform.Place(new Vector2(0, 1), new Vector2(10, -4), new Vector2(260, 20), new Vector2(0, 1));
+                    worn ? new Color(item.Color.r, item.Color.g, item.Color.b, 0.07f) : new Color(0, 0, 0, 0));
+                hit.GetComponent<RectTransform>().Fill().offsetMax = new Vector2(-160, 0);
+                // Worn: a thin bar in the rarity colour on the left edge instead of a filled, outlined row.
+                if (worn) Ui.Box(hit.transform, item.Color, "Worn").rectTransform.Place(new Vector2(0, 0.5f), Vector2.zero, new Vector2(3, 44), new Vector2(0, 0.5f));
+                Ui.Label(hit.transform, item.Name + (worn ? "  · 已裝備" : ""), 15, item.Color, TextAnchor.UpperLeft, worn).rectTransform.Place(new Vector2(0, 1), new Vector2(10, -4), new Vector2(260, 20), new Vector2(0, 1));
                 var statLine = Ui.Label(hit.transform, item.StatText() + (item.Set != "" ? $"  ·  <color=#{ColorUtility.ToHtmlStringRGB(Gear.Sets[item.Set].color)}>{item.SetName}套裝</color>" : ""), 12, Palette.Muted);
                 statLine.supportRichText = true;
                 statLine.rectTransform.Place(new Vector2(0, 1), new Vector2(10, -24), new Vector2(340, 16), new Vector2(0, 1));
                 var craft = Ui.Button(row, "改造", () => CraftDialog(item.Id), 12, Gear.ShardColor);
-                craft.GetComponent<RectTransform>().Place(new Vector2(1, 0.5f), new Vector2(-150, 0), new Vector2(68, 34), new Vector2(1, 0.5f));
+                craft.GetComponent<RectTransform>().Place(new Vector2(1, 0.5f), new Vector2(-84, 0), new Vector2(68, 34), new Vector2(1, 0.5f));
                 // Enhance: price depends on rarity and current level.
                 var enhance = Ui.Button(row, item.Maxed ? "已滿強化" : $"強化 {item.UpgradeCost}G", () => CharacterRequest("/api/gear/upgrade", new Dictionary<string, object> { ["item"] = item.Id }),
                     12, item.Maxed ? Palette.Muted : Palette.Amber);
                 enhance.interactable = !item.Maxed && p.Gold >= item.UpgradeCost;
-                enhance.GetComponent<RectTransform>().Place(new Vector2(1, 0.5f), new Vector2(-68, 0), new Vector2(78, 34), new Vector2(1, 0.5f));
-                if (!worn)
-                {
-                    var scrap = Ui.Button(row, "分解", () => CharacterRequest("/api/gear/salvage", new Dictionary<string, object> { ["item"] = item.Id }), 12, Palette.Muted);
-                    scrap.GetComponent<RectTransform>().Place(new Vector2(1, 0.5f), Vector2.zero, new Vector2(62, 34), new Vector2(1, 0.5f));
-                }
+                enhance.GetComponent<RectTransform>().Place(new Vector2(1, 0.5f), Vector2.zero, new Vector2(78, 34), new Vector2(1, 0.5f));
             }
 
         }
@@ -1160,9 +1157,22 @@ namespace RiftWard.Client
 
             Ui.Rect(st, "Spacer").gameObject.AddComponent<LayoutElement>().flexibleHeight = 1;
             var foot = Ui.Rect(st, "Foot").Sized(40);
-            Ui.Label(foot, message, 14, error ? Palette.Danger : Palette.Amber, TextAnchor.MiddleLeft).rectTransform.Fill().offsetMax = new Vector2(-130, 0);
+            Ui.Label(foot, message, 14, error ? Palette.Danger : Palette.Amber, TextAnchor.MiddleLeft).rectTransform.Fill().offsetMax = new Vector2(-250, 0);
             Ui.Button(foot, "關閉", () => { UnityEngine.Object.Destroy(craftDialog.gameObject); craftDialog = null; }, 15, Palette.Muted)
                 .GetComponent<RectTransform>().Place(new Vector2(1, 0.5f), Vector2.zero, new Vector2(120, 40), new Vector2(1, 0.5f));
+            if (!worn.Contains(item.Id))
+            {
+                Button scrap = null;
+                bool armed = false;
+                scrap = Ui.DangerButton(foot, "分解", () =>
+                {
+                    if (!armed) { armed = true; scrap.SetCaption("確定分解？"); return; }
+                    if (craftDialog != null) UnityEngine.Object.Destroy(craftDialog.gameObject);
+                    craftDialog = null;
+                    CharacterRequest("/api/gear/salvage", new Dictionary<string, object> { ["item"] = itemId });
+                }, 14);
+                scrap.GetComponent<RectTransform>().Place(new Vector2(1, 0.5f), new Vector2(-130, 0), new Vector2(110, 40), new Vector2(1, 0.5f));
+            }
         }
 
         /// Automated screenshots only: the crafting dialog for the first item in the bag.

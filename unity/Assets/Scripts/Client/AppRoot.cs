@@ -1281,6 +1281,37 @@ namespace RiftWard.Client
                 }
                 yield return Shot(folder, "unity-chapter2-foes");
                 foreach (var go in new[] { guard, calm, emperor }) Destroy(go);
+                // Model detail check: the soldier and every regular enemy, standing still, close and facing the camera;
+                // first at 低 quality (the plain models), then at the current quality with fine detail.
+                int keptQuality = GameSettings.Quality;
+                foreach (int pass in new[] { 0, 1 })
+                {
+                GameSettings.Quality = pass == 0 ? 0 : keptQuality;
+                string suffix = pass == 0 ? "-low" : "";
+                var lineup = new List<GameObject> { Models.Soldier(Palette.Player) };
+                lineup[0].GetComponent<CharacterRig>().SetWeapon("rifle", 3);
+                foreach (int kind in new[] { Defs.KindGrunt, Defs.KindCharger, Defs.KindSniper, Defs.KindBomber, Defs.KindShield, Defs.KindGuard, Defs.KindSplitter, Defs.KindMedic })
+                    lineup.Add(Models.Enemy(kind));
+                for (int li = 0; li < lineup.Count; li++)
+                {
+                    lineup[li].transform.position = new Vector3(-7.2f + li * 1.8f, 0, 16f);
+                    lineup[li].transform.rotation = Quaternion.Euler(0, 160, 0);
+                }
+                for (int f = 0; f < 20; f++)
+                {
+                    Client.Camera.transform.position = new Vector3(0f, 3.4f, 8.2f);
+                    Client.Camera.transform.LookAt(new Vector3(0f, 1.1f, 16f));
+                    yield return null;
+                }
+                yield return Shot(folder, "unity-lineup" + suffix);
+                Client.Camera.transform.position = new Vector3(-5.4f, 2.6f, 12.4f);
+                Client.Camera.transform.LookAt(new Vector3(-5.4f, 1.1f, 16f));
+                yield return Settle(0.2f);
+                yield return Shot(folder, "unity-lineup-close" + suffix);
+                foreach (var go in lineup) Destroy(go);
+                yield return null;
+                }
+                GameSettings.Quality = keptQuality;
                 // 光劍 at every rarity, left to right 劣質 → 神話, standing upright with their light motes.
                 var sabers = new List<GameObject>();
                 for (int k = 0; k < 5; k++)

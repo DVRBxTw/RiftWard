@@ -7,6 +7,17 @@ namespace RiftWard.Client
     /// Blocky character, enemy and weapon models. Everything faces +Z.
     public static class Models
     {
+        /// Fine detail (panel seams, pads, straps, lights) is added at 高 quality and up; 低 and 中 keep the plain
+        /// silhouette. Detail never casts shadows: dozens of enemies carry it.
+        static bool Fine => GameSettings.Quality >= 2;
+
+        static GameObject D(Transform parent, Vector3 position, Vector3 size, Color color, float glow = 0f, float rx = 0f, float ry = 0f, float rz = 0f)
+        {
+            var go = Build.Cube(parent, position, size, color, glow, false);
+            if (rx != 0f || ry != 0f || rz != 0f) go.transform.localRotation = Quaternion.Euler(rx, ry, rz);
+            return go;
+        }
+
         static Transform Joint(Transform parent, string name, Vector3 local)
         {
             var t = new GameObject(name).transform;
@@ -61,9 +72,115 @@ namespace RiftWard.Client
             Build.Cube(head, new Vector3(-0.17f, 0.53f, -0.08f), new Vector3(0.04f, 0.04f, 0.04f), color, 4f, false).AddComponent<Spinner>().Blink = 1.2f;
             for (int i = 0; i < 3; i++) Build.Cube(torso, new Vector3(0, 0.2f + i * 0.09f, -0.375f), new Vector3(0.3f, 0.025f, 0.02f), Palette.Hex("15171a"), 0f, false);
             Build.Cube(torso, new Vector3(0.24f, 0.03f, 0.195f), new Vector3(0.06f, 0.04f, 0.02f), color, 2.5f, false);
+            if (Fine) SoldierDetail(root, hips, torso, head, color, body, dark, boot, pouch);
             Joint(torso, "GunMount", new Vector3(0.1f, 0.36f, 0.3f)).localScale = Vector3.one * 1.35f;
             CharacterRig.Attach(root.gameObject, CharacterRig.Style.Soldier);
             return root.gameObject;
+        }
+
+        /// Soldier detail: plate seams and edges, a chest rig with magazines and a radio, knee and elbow pads,
+        /// gloves, a thigh holster, boot soles, helmet ear cups and a visor rim, backpack straps and a canister.
+        static void SoldierDetail(Transform root, Transform hips, Transform torso, Transform head, Color color, Color body, Color dark, Color boot, Color pouch)
+        {
+            Color seam = Palette.Hex("15171a"), edge = Palette.Hex("5a6069"), strap = Palette.Hex("2c2f2a"), metal = Palette.Hex("7d838b");
+            // Chest plate: a raised rim, two seams and a small unit badge in the soldier colour.
+            D(torso, new Vector3(0, 0.55f, 0.215f), new Vector3(0.5f, 0.025f, 0.02f), edge);
+            D(torso, new Vector3(0, 0.14f, 0.215f), new Vector3(0.5f, 0.025f, 0.02f), edge);
+            foreach (float x in new[] { -0.12f, 0.12f }) D(torso, new Vector3(x, 0.34f, 0.213f), new Vector3(0.012f, 0.36f, 0.012f), seam);
+            D(torso, new Vector3(-0.17f, 0.46f, 0.214f), new Vector3(0.07f, 0.05f, 0.012f), color, 1.2f);
+            // Chest rig: three magazines with lighter tops, a diagonal strap and a radio on the left shoulder.
+            foreach (float x in new[] { -0.13f, 0f, 0.13f })
+            {
+                D(torso, new Vector3(x, 0.24f, 0.235f), new Vector3(0.1f, 0.16f, 0.05f), pouch);
+                D(torso, new Vector3(x, 0.325f, 0.235f), new Vector3(0.1f, 0.02f, 0.055f), strap);
+            }
+            D(torso, new Vector3(0.05f, 0.38f, 0.205f), new Vector3(0.06f, 0.62f, 0.02f), strap, 0f, 0f, 0f, 38f);
+            D(torso, new Vector3(-0.27f, 0.6f, 0.12f), new Vector3(0.1f, 0.14f, 0.08f), dark);
+            D(torso, new Vector3(-0.3f, 0.72f, 0.12f), new Vector3(0.015f, 0.14f, 0.015f), seam);
+            D(torso, new Vector3(-0.25f, 0.6f, 0.162f), new Vector3(0.03f, 0.03f, 0.01f), Palette.Hex("6fe06f"), 3f);
+            // Shoulder plates: a lighter edge so they read as separate armour.
+            foreach (float x in new[] { -0.42f, 0.42f }) D(torso, new Vector3(x, 0.47f, 0), new Vector3(0.25f, 0.02f, 0.37f), edge);
+            // Backpack: straps over the shoulders, a side canister and a pull handle.
+            foreach (float x in new[] { -0.16f, 0.16f }) D(torso, new Vector3(x, 0.6f, 0.0f), new Vector3(0.06f, 0.03f, 0.4f), strap);
+            D(torso, new Vector3(-0.27f, 0.28f, -0.3f), new Vector3(0.09f, 0.3f, 0.09f), metal);
+            D(torso, new Vector3(-0.27f, 0.45f, -0.3f), new Vector3(0.06f, 0.04f, 0.06f), seam);
+            D(torso, new Vector3(0, 0.6f, -0.38f), new Vector3(0.18f, 0.03f, 0.04f), seam);
+            // Belt buckle and a thigh holster on the right.
+            D(torso, new Vector3(0, 0.02f, 0.2f), new Vector3(0.08f, 0.06f, 0.02f), metal);
+            var legR = hips.Find("LegR");
+            if (legR != null)
+            {
+                D(legR, new Vector3(0.13f, -0.22f, 0.0f), new Vector3(0.06f, 0.2f, 0.14f), strap);
+                D(legR, new Vector3(0.13f, -0.12f, 0.0f), new Vector3(0.07f, 0.03f, 0.15f), seam);
+            }
+            foreach (string side in new[] { "L", "R" })
+            {
+                var knee = hips.Find("Leg" + side + "/Knee" + side);
+                if (knee != null)
+                {
+                    // Knee pad with a hard cap; boot sole and toe guard.
+                    D(knee, new Vector3(0, 0.0f, 0.15f), new Vector3(0.16f, 0.1f, 0.02f), edge);
+                    D(knee, new Vector3(0, -0.405f, 0.05f), new Vector3(0.27f, 0.03f, 0.37f), Palette.Hex("0e0f11"));
+                    D(knee, new Vector3(0, -0.33f, 0.235f), new Vector3(0.24f, 0.07f, 0.02f), edge);
+                }
+                var elbow = torso.Find("Arm" + side + "/Elbow" + side);
+                if (elbow != null)
+                {
+                    D(elbow, new Vector3(0, 0.0f, -0.09f), new Vector3(0.13f, 0.08f, 0.03f), edge);
+                    D(elbow, new Vector3(0, -0.22f, 0), new Vector3(0.155f, 0.03f, 0.175f), seam);   // glove cuff
+                }
+            }
+            // Helmet: ear cups, a visor rim, a top ridge and a rear light.
+            foreach (float x in new[] { -0.19f, 0.19f }) D(head, new Vector3(x, 0.17f, 0.02f), new Vector3(0.04f, 0.14f, 0.16f), dark);
+            D(head, new Vector3(0, 0.255f, 0.205f), new Vector3(0.34f, 0.02f, 0.025f), edge);
+            D(head, new Vector3(0, 0.115f, 0.205f), new Vector3(0.34f, 0.02f, 0.025f), edge);
+            D(head, new Vector3(0, 0.395f, 0.0f), new Vector3(0.06f, 0.03f, 0.4f), edge);
+            D(head, new Vector3(0, 0.22f, -0.195f), new Vector3(0.1f, 0.03f, 0.01f), color, 2.5f);
+        }
+
+        /// Trooper detail shared by every regular enemy: armour seams, glowing joint nodes in the kind's colour,
+        /// a jaw plate and side vents on the head, cables on the back, forearm bands, knee caps and toe plates.
+        static void TrooperDetail(Transform hips, Transform torso, Transform head, Transform armL, Transform armR, Color color, Color shell, Color dark)
+        {
+            Color seam = Palette.Hex("140f0e"), plate = Color.Lerp(shell, Color.white, 0.18f), metal = Palette.Hex("6b605a");
+            // Torso: a belt of plates, a collar ring and two vertical seams beside the core.
+            D(torso, new Vector3(0, 0.12f, 0), new Vector3(0.74f, 0.08f, 0.74f), dark);
+            for (int i = 0; i < 4; i++)
+            {
+                float a = (i - 1.5f) * 0.36f;
+                D(torso, new Vector3(Mathf.Sin(a) * 0.37f, 0.02f, Mathf.Cos(a) * 0.37f), new Vector3(0.2f, 0.16f, 0.04f), plate, 0f, 0f, a * Mathf.Rad2Deg, 0f);
+            }
+            D(torso, new Vector3(0, 0.86f, 0), new Vector3(0.44f, 0.06f, 0.44f), dark);
+            foreach (float x in new[] { -0.16f, 0.16f }) D(torso, new Vector3(x, 0.55f, 0.33f), new Vector3(0.02f, 0.32f, 0.03f), seam, 0f, 0f, 0f, x > 0 ? -6f : 6f);
+            // Back: two cables from the vent down into the waist.
+            foreach (float x in new[] { -0.1f, 0.1f }) D(torso, new Vector3(x, 0.33f, -0.36f), new Vector3(0.035f, 0.4f, 0.035f), seam, 0f, -12f, 0f, 0f);
+            // Head: jaw plate, side vents with a thin light, and a brow ridge over the visor.
+            D(head, new Vector3(0, -0.06f, 0.33f), new Vector3(0.36f, 0.1f, 0.12f), dark);
+            D(head, new Vector3(0, 0.215f, 0.38f), new Vector3(0.5f, 0.04f, 0.05f), plate);
+            foreach (float x in new[] { -0.285f, 0.285f })
+            {
+                for (int i = 0; i < 3; i++) D(head, new Vector3(x, 0.03f + i * 0.07f, 0.12f), new Vector3(0.02f, 0.03f, 0.28f), seam);
+                D(head, new Vector3(x, 0.22f, 0.12f), new Vector3(0.02f, 0.015f, 0.3f), color, 2.5f);
+            }
+            // Arms: a forearm band and a glowing elbow node; the gun arm gets a magazine and a vent.
+            var elbowL = armL.Find("ElbowL");
+            if (elbowL != null)
+            {
+                D(elbowL, new Vector3(0, -0.2f, 0), new Vector3(0.24f, 0.04f, 0.32f), dark);
+                D(elbowL, new Vector3(0, 0.0f, -0.16f), new Vector3(0.07f, 0.07f, 0.02f), color, 3f);
+            }
+            D(armR, new Vector3(0, -0.47f, 0.3f), new Vector3(0.12f, 0.14f, 0.18f), dark);
+            D(armR, new Vector3(0.13f, -0.3f, 0.25f), new Vector3(0.02f, 0.2f, 0.5f), metal);
+            D(armR, new Vector3(0, -0.12f, 0.2f), new Vector3(0.27f, 0.03f, 0.82f), plate);
+            // Legs: knee caps with a glowing node, toe plates.
+            foreach (string side in new[] { "L", "R" })
+            {
+                var knee = hips.Find("Leg" + side + "/Knee" + side);
+                if (knee == null) continue;
+                D(knee, new Vector3(0, 0.0f, 0.14f), new Vector3(0.18f, 0.12f, 0.04f), plate);
+                D(knee, new Vector3(0, 0.0f, 0.165f), new Vector3(0.05f, 0.05f, 0.01f), color, 3f);
+                D(knee, new Vector3(0, -0.27f, 0.24f), new Vector3(0.24f, 0.06f, 0.03f), plate);
+            }
         }
 
         public static GameObject Enemy(int kind)
@@ -104,6 +221,7 @@ namespace RiftWard.Client
             var armR = Joint(torso, "ArmR", new Vector3(0.48f, 0.85f, 0));
             Build.Cube(armR, new Vector3(0, -0.3f, 0.2f), new Vector3(0.25f, 0.38f, 0.8f), dark);
             Build.Cube(armR, new Vector3(0, -0.3f, 0.61f), new Vector3(0.12f, 0.12f, 0.04f), color, 2.5f);
+            if (Fine) TrooperDetail(hips, torso, head, armL, armR, color, shell, dark);
             switch (kind)
             {
                 case Defs.KindCharger:

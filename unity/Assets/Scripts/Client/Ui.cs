@@ -123,7 +123,9 @@ namespace RiftWard.Client
 
         public static Button Button(Transform parent, string text, Action onClick, int size = 18, Color? textColor = null, Color? fill = null, Color? border = null)
         {
-            var bg = Box(parent, fill ?? new Color(1, 1, 1, 0.035f), "Button");
+            // Flat by default: a faint fill and no outline. Callers that pass a border (selected tab, primary,
+            // danger) keep theirs, so emphasis comes from those few instead of every button being framed.
+            var bg = Box(parent, fill ?? new Color(1, 1, 1, 0.055f), "Button");
             var button = bg.gameObject.AddComponent<Button>();
             var colors = button.colors;
             colors.normalColor = Color.white;
@@ -133,7 +135,7 @@ namespace RiftWard.Client
             button.colors = colors;
             button.onClick.AddListener(() => onClick?.Invoke());
             var line = bg.gameObject.AddComponent<Outline>();
-            line.effectColor = border ?? Palette.Line;
+            line.effectColor = border ?? new Color(0, 0, 0, 0);
             line.effectDistance = new Vector2(1, -1);
             var label = Label(bg.transform, text, size, textColor ?? Palette.Bone, TextAnchor.MiddleCenter);
             label.rectTransform.Fill();
