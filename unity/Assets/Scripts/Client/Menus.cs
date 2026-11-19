@@ -84,9 +84,29 @@ namespace RiftWard.Client
                 Ui.Label(stack, Defs.RarityNames[tier], 13, rarity, TextAnchor.MiddleCenter).Sized(20);
                 Ui.Label(stack, Defs.Buffs[Defs.BuffIndex(code)].Name, 26, Palette.Bone, TextAnchor.MiddleCenter, true).Sized(36);
                 Ui.Label(stack, Defs.BuffDescription(code), 17, Palette.Hex("d6d1c6"), TextAnchor.MiddleCenter).Sized(60);
-                int limit = Defs.BuffStackLimit(Defs.BuffIndex(code), client.Sim != null && client.Sim.Endless);
-                if (limit < 99) Ui.Label(stack, $"最多 {limit} 層", 12, Palette.Muted, TextAnchor.MiddleCenter).Sized(18);
-                else if (limit == int.MaxValue) Ui.Label(stack, "無盡模式 · 無上限", 12, Palette.Hex("ff6a8a"), TextAnchor.MiddleCenter).Sized(18);
+                int index = Defs.BuffIndex(code);
+                int limit = Defs.BuffStackLimit(index, client.Sim != null && client.Sim.Endless);
+                int owned = client.Sim != null && client.Sim.Actors.TryGetValue(client.LocalId, out var me) && index >= 0 && index < me.BuffStacks.Length ? me.BuffStacks[index] : 0;
+                int gain = Defs.IsLevelBuff(index) && tier == 2 ? 2 : 1;
+                if (limit < 99)
+                {
+                    // One pip per level: owned filled, the ones this pick adds outlined in the rarity colour.
+                    var pips = Ui.HStack(stack, 5).Sized(12);
+                    pips.GetComponent<HorizontalLayoutGroup>().childAlignment = TextAnchor.MiddleCenter;
+                    pips.GetComponent<HorizontalLayoutGroup>().childForceExpandWidth = false;
+                    for (int n = 0; n < limit; n++)
+                    {
+                        bool have = n < owned, adds = !have && n < owned + gain;
+                        var pip = Ui.Box(pips, have ? rarity : adds ? new Color(rarity.r, rarity.g, rarity.b, 0.25f) : new Color(1, 1, 1, 0.1f), "Pip");
+                        pip.Sized(10, 22);
+                        if (adds) { var o = pip.gameObject.AddComponent<Outline>(); o.effectColor = rarity; o.effectDistance = new Vector2(1, -1); }
+                    }
+                    Ui.Label(stack, owned > 0 ? $"已選 {owned} / {limit}" : $"最多 {limit} 層", 12, owned > 0 ? Palette.Bone : Palette.Muted, TextAnchor.MiddleCenter).Sized(18);
+                }
+                else if (limit == int.MaxValue)
+                    Ui.Label(stack, owned > 0 ? $"已選 {owned} 次 · 無盡模式無上限" : "無盡模式 · 無上限", 12, Palette.Hex("ff6a8a"), TextAnchor.MiddleCenter).Sized(18);
+                else if (owned > 0)
+                    Ui.Label(stack, $"已選 {owned} 次", 12, Palette.Bone, TextAnchor.MiddleCenter).Sized(18);
             }
             Ui.Label(root, "選擇後等待隊友；所有人選完就繼續作戰。", 14, Palette.Muted, TextAnchor.MiddleCenter)
                 .rectTransform.Place(new Vector2(0.5f, 0.5f), new Vector2(0, -180), new Vector2(700, 22));

@@ -196,7 +196,11 @@ namespace RiftWard.Client
             {
                 if (!sim.BuffPending || !sim.BuffOffers.TryGetValue(kv.Key, out var offer) || kv.Value.OfferSent == offer) continue;
                 kv.Value.OfferSent = offer;
-                kv.Value.Conn.Send(Protocol.Frame(Msg.BuffOffer, w => { w.Write(sim.Level); w.Write((byte)sim.SuperPick); w.Write(offer.Length); foreach (var c in offer) w.Write(c); }));
+                kv.Value.Conn.Send(Protocol.Frame(Msg.BuffOffer, w => { w.Write(sim.Level); w.Write((byte)sim.SuperPick); w.Write(offer.Length); foreach (var c in offer) w.Write(c);
+                    // How many of each offered upgrade this player already has (the client's mirror does not track stacks).
+                    var mine = sim.Actors.TryGetValue(kv.Key, out var pa) ? pa : null;
+                    foreach (var c in offer) { int bi = Defs.BuffIndex(c); w.Write((byte)(mine != null && bi >= 0 && bi < mine.BuffStacks.Length ? Mathf.Min(255, mine.BuffStacks[bi]) : 0)); }
+                }));
             }
             room.SnapshotTimer += Time.fixedDeltaTime;
             if (room.SnapshotTimer >= 0.05f)

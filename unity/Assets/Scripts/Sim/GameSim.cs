@@ -581,6 +581,8 @@ namespace RiftWard.Sim
                     ApplyKind(e, kind);
                 }
                 e.Hp *= tier.Hp * Defs.EndlessHp(Wave);
+                // 無盡: tougher enemies are worth more, so levels keep coming past wave 20.
+                if (Endless && !boss) e.Xp = Mathf.RoundToInt(e.Xp * Mathf.Sqrt(Defs.EndlessHp(Wave)));
                 e.Damage *= tier.Damage * Defs.EndlessDamage(Wave);
                 e.MaxHp = e.Hp;
                 e.Wave = Wave;
@@ -1499,7 +1501,7 @@ namespace RiftWard.Sim
             {
                 Xp -= XpNeed;
                 Level++;
-                XpNeed = Defs.XpForLevel(Level);
+                XpNeed = Defs.XpNeed(Level, Endless);
                 PendingLevels++;
             }
         }
@@ -1563,7 +1565,11 @@ namespace RiftWard.Sim
             int steps = Defs.BuffTier(code) == 2 ? 2 : 1;
             switch (index)
             {
-                case 0: a.DamageMult += 0.2f * m; break;
+                // 無盡: past the normal cap each damage pick compounds, so it keeps pace with multiplicative enemy scaling.
+                case 0:
+                    if (Endless && a.BuffStacks[0] > Defs.BuffMaxStacks[0]) a.DamageMult *= 1f + Defs.EndlessDamagePick * m;
+                    else a.DamageMult += 0.2f * m;
+                    break;
                 case 1: a.RateMult = Mathf.Max(0.3f, a.RateMult * (1f - 0.15f * m)); break;
                 case 2: a.Speed = Mathf.Min(12f, a.Speed * (1f + 0.12f * m)); break;
                 case 3:

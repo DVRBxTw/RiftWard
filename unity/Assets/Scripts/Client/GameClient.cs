@@ -211,9 +211,15 @@ namespace RiftWard.Client
 
         public void ApplyEvents(System.IO.BinaryReader r) { if (Sim != null) Protocol.ReadEvents(r, Sim); }
 
-        public void ApplyBuffOffer(int level, int[] offer, int superPick = 0)
+        public void ApplyBuffOffer(int level, int[] offer, int superPick = 0, int[] owned = null)
         {
             if (Sim == null) return;
+            if (owned != null && Sim.Actors.TryGetValue(LocalId, out var me))
+                for (int i = 0; i < offer.Length && i < owned.Length; i++)
+                {
+                    int bi = Defs.BuffIndex(offer[i]);
+                    if (bi >= 0 && bi < me.BuffStacks.Length) me.BuffStacks[bi] = owned[i];
+                }
             Sim.Level = level;
             Sim.SuperPick = superPick;
             Sim.BuffPending = true;

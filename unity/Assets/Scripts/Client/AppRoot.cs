@@ -264,7 +264,9 @@ namespace RiftWard.Client
                     int superPick = r.ReadByte();
                     var offer = new int[r.ReadInt32()];
                     for (int i = 0; i < offer.Length; i++) offer[i] = r.ReadInt32();
-                    Client.ApplyBuffOffer(level, offer, superPick);
+                    var owned = new int[offer.Length];
+                    for (int i = 0; i < offer.Length; i++) owned[i] = r.ReadByte();
+                    Client.ApplyBuffOffer(level, offer, superPick, owned);
                     if (netTest) { Client.ChooseBuff(offer[0]); testPicks++; }
                     break;
                 case Msg.Finish:
@@ -1204,6 +1206,7 @@ namespace RiftWard.Client
                 sim.Pickups.Clear();
                 Client.SetView(0, 0);
                 // The super chest's three picks: all 稀有+.
+                for (int b = 0; b < 10; b++) me.BuffStacks[b] = b % 3 + 1;   // some picks already owned: the cards show their pips
                 sim.SuperRounds = Defs.SuperChestPicks;
                 yield return Settle(0.4f);
                 yield return Shot(folder, "unity-super-chest");

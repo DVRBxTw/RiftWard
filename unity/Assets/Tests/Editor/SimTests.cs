@@ -197,6 +197,22 @@ namespace RiftWard.Tests
         }
 
         [Test]
+        public void EndlessDamagePicksCompoundPastTheCapAndXpCurveFlattens()
+        {
+            var sim = NewMission();
+            sim.Endless = true;
+            var a = sim.Actors[1];
+            float start = a.DamageMult;
+            for (int i = 0; i < Defs.BuffMaxStacks[0]; i++) sim.ApplyBuff(1, 0);
+            Assert.AreEqual(start + 0.2f * Defs.BuffMaxStacks[0], a.DamageMult, 0.001f, "normal stacks add 20%");
+            float capped = a.DamageMult;
+            sim.ApplyBuff(1, 0);
+            Assert.AreEqual(capped * (1f + Defs.EndlessDamagePick), a.DamageMult, 0.001f, "past the cap a pick multiplies");
+            Assert.AreEqual(Defs.XpForLevel(Defs.EndlessXpLevelCap), Defs.XpNeed(Defs.EndlessXpLevelCap + 10, true));
+            Assert.AreEqual(Defs.XpForLevel(30), Defs.XpNeed(30, false), "regular missions keep the full curve");
+        }
+
+        [Test]
         public void EmptyMagazineAutoReloads()
         {
             var sim = NewMission();
