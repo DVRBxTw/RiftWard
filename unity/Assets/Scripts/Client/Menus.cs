@@ -168,6 +168,8 @@ namespace RiftWard.Client
             public int Xp, Level, LevelXp, Wave, BestWave;
             /// Difficulty tier this clear opened for the region, or -1.
             public int Unlocked = -1;
+            /// First clear of this tier here: gear and weapon keys paid (each), or 0.
+            public int FirstClearKeys;
         }
 
         public void ShowResult(bool success, int region, int kills, float elapsed, int gold, int totalGold, string grade = "", int[] record = null, ResultProgress progress = null, int difficulty = 0)
@@ -177,7 +179,8 @@ namespace RiftWard.Client
             var root = Scrim(canvas.transform, 0.9f);
             result = root.gameObject;
             bool opened = progress != null && progress.Unlocked > 0;
-            var sheet = Sheet(root, success ? Palette.Amber : Palette.Danger, new Vector2(600, (progress != null ? 500 : 480) + (opened ? 34 : 0)));
+            int firstKeys = success && progress != null ? progress.FirstClearKeys : 0;
+            var sheet = Sheet(root, success ? Palette.Amber : Palette.Danger, new Vector2(600, (progress != null ? 500 : 480) + (opened ? 34 : 0) + (firstKeys > 0 ? 34 : 0)));
             if (!string.IsNullOrEmpty(grade))
             {
                 var g = Ui.Label(sheet, grade, 96, grade == "S" ? Palette.Amber : Palette.Bone, TextAnchor.UpperRight, true);
@@ -201,6 +204,9 @@ namespace RiftWard.Client
                 var next = Defs.Difficulty(progress.Unlocked);
                 Ui.Label(stack, $"已解鎖  {next.Name}難度  ·  {Defs.Regions[region].Name}", 17, next.Accent, TextAnchor.UpperLeft, true).Sized(20);
             }
+            if (firstKeys > 0)
+                Ui.Label(stack, $"首次通關{tier.Name}獎勵  ·  裝備鑰匙 ×{firstKeys}  ·  武器鑰匙 ×{firstKeys}",
+                    17, tier.Accent, TextAnchor.UpperLeft, true).Sized(20);
             Ui.Label(stack, $"全隊擊破  {kills}      作戰時間  {(int)elapsed / 60:00}:{(int)elapsed % 60:00}", 18, Palette.Hex("d6d1c6")).Sized(26);
             if (record != null)
             {

@@ -36,6 +36,10 @@ namespace RiftWard.Sim
             new DifficultyDef("地獄", "INFERNO", "敵人血量 ×4.5、傷害 ×2.4，每波多 6 名。金幣 ×3.5、經驗 ×1.75。給頂尖裝備的挑戰。", 4.5f, 2.4f, 6, 3.5f, 1.75f, new Color32(0xff, 0x3b, 0x9a, 255)),
         };
 
+        /// Gear keys and weapon keys (each) for the first clear of a region on a tier: 困難 5, 噩夢 10, 地獄 15.
+        /// Mirrors FIRST_CLEAR_KEYS in the account service, which pays them.
+        public static int FirstClearKeys(int tier) => tier >= 1 && tier <= 3 ? tier * 5 : 0;
+
         public static DifficultyDef Difficulty(int tier) => Difficulties[Mathf.Clamp(tier, 0, Difficulties.Length - 1)];
 
         /// cleared[region] is the highest tier cleared there (-1 = none).

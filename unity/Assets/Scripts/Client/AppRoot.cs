@@ -123,6 +123,7 @@ namespace RiftWard.Client
             GameSettings.Apply(Arg("-capture") == null && !Application.isBatchMode);
             Client.Menus.SettingsPanel = GameSettings.BuildPanel;
             Client.WeaponRarity = id => Profile?.Loadout.RarityOf(id) ?? 1;
+            Client.WeaponEnhance = id => Profile == null ? (0, 0) : (Defs.UpgradeKeys.Sum(k => Profile.Loadout.Level(id, k)), Profile.Loadout.Level(id, "over"));
             Client.ShowcaseWeapon = () => Profile != null && Profile.Loadout.Equipped.Count > 0 ? Profile.Loadout.Equipped[0] : "rifle";
             Client.Menus.LeaveRequested = ReturnHome;
             Client.CanPause = () => !inNetMission || partySize <= 1;
@@ -234,6 +235,7 @@ namespace RiftWard.Client
                         Xp = Defs.MissionXp(record[0], finishedWave, success, finishedTier), Level = Profile.Level, LevelXp = Profile.LevelXp,
                         Wave = finishedWave, BestWave = Profile.BestWave,
                         Unlocked = success && finishedTier > clearedAtDeploy && finishedTier + 1 < Defs.Difficulties.Length ? finishedTier + 1 : -1,
+                        FirstClearKeys = success && finishedTier > clearedAtDeploy ? Defs.FirstClearKeys(finishedTier) : 0,
                     };
                     Client.Menus.ShowResult(success, finishedRegion, kills, elapsed, gold, (Profile?.Gold ?? 0) + gold, grade, record, progress, finishedTier);
                     RefreshMe();
@@ -645,6 +647,16 @@ namespace RiftWard.Client
             ShowHome();
             yield return Settle(0.8f);
             yield return Shot(folder, "unity-home");
+            // 16:9 at 2K with the room section on: the left column must fit without clipping.
+            Screen.SetResolution(2560, 1440, FullScreenMode.Windowed);
+            Screens.PreviewRoom = true;
+            yield return Settle(0.5f);
+            ShowHome();
+            yield return Settle(0.8f);
+            yield return Shot(folder, "unity-home-wide");
+            Screens.PreviewRoom = false;
+            Screen.SetResolution(1280, 800, FullScreenMode.Windowed);
+            yield return Settle(0.5f);
             Screens.ShowArmory();
             yield return Settle(0.4f);
             yield return Shot(folder, "unity-armory");
@@ -905,6 +917,7 @@ namespace RiftWard.Client
             var kit = new Loadout { Owned = new List<string> { "pistol", "rifle", "sniper" }, Equipped = new List<string> { "rifle", "sniper" } };
             kit.Rarity["rifle"] = 4; kit.Rarity["sniper"] = 3;
             Client.WeaponRarity = id => kit.RarityOf(id);
+            Client.WeaponEnhance = id => id == "rifle" ? (30, 2) : (20, 0);   // shots show the enhancement marks
             Client.StartOffline(0, kit, false, null, 1);
             var sim = Client.Sim;
             sim.EnemyVariety = true;
@@ -970,6 +983,11 @@ namespace RiftWard.Client
             Client.Hud.ResetTransient();
             yield return Settle(0.4f);
             yield return Shot(folder, "unity-rifle");
+            Client.InspectForCapture = 1f;
+            yield return Settle(0.3f);
+            yield return Shot(folder, "unity-rifle-inspect");
+            Client.InspectForCapture = -1f;
+            yield return Settle(0.3f);
             Client.AimForCapture = true;
             yield return Settle(0.5f);
             yield return Shot(folder, "unity-rifle-ads");
@@ -1049,7 +1067,7 @@ namespace RiftWard.Client
             Debug.Log($"PAUSE_CHECK frozen={Mathf.Approximately(sim.Elapsed, pausedAt)} elapsed={pausedAt:0.00}->{sim.Elapsed:0.00}");
             yield return Shot(folder, "unity-pause");
             Client.Menus.HideAll();
-            Client.Menus.ShowResult(true, 0, 86, 742, 740, 1980, "A", new[] { 41, 13, 290, 176 }, new Menus.ResultProgress { Xp = 301, Level = 3, LevelXp = 180, Wave = 20, BestWave = 14, Unlocked = 2 }, 1);
+            Client.Menus.ShowResult(true, 0, 86, 742, 740, 1980, "A", new[] { 41, 13, 290, 176 }, new Menus.ResultProgress { Xp = 301, Level = 3, LevelXp = 180, Wave = 20, BestWave = 14, Unlocked = 2, FirstClearKeys = 5 }, 1);
             Client.Menus.SetResultNotes(ResultNotes(Profile));
             yield return Settle(0.2f);
             yield return Shot(folder, "unity-result");

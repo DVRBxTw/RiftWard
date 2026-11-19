@@ -60,7 +60,15 @@ namespace RiftWard.Client
         Vector3 magazineRest;
 
         // Viewmodel moving parts, ammo bar and heat sleeve (found by name after each weapon swap).
-        Transform slidePart, boltPart, pumpPart;
+        Transform slidePart, boltPart, pumpPart, ejectPort;
+        /// Enhancement of a weapon for its looks: (sum of the three upgrade levels, 超載 level).
+        public Func<string, (int sum, int over)> WeaponEnhance;
+        /// Inspect (F): seconds into the turn-the-gun-to-look-at-it animation; negative = not inspecting.
+        float inspectT = -1f;
+        const float InspectTime = 2.4f;
+        bool ejected = true;
+        /// Capture only: hold the inspect pose at this blend (negative = off).
+        public float InspectForCapture = -1f;
         Vector3 slideRest, boltRest, pumpRest;
         Quaternion boltRotRest;
         MeshRenderer[] ammoCells = new MeshRenderer[0];
@@ -810,6 +818,8 @@ namespace RiftWard.Client
             recoilPending += kick * 0.65f;
             shake = 0.02f + kick * 0.9f;
             cycle = 0f;
+            ejected = me.Melee;
+            inspectT = -1f;
             this.kick = me.Melee ? 0.35f : 1f;
             if (me.Melee) return;   // a blade has no heat or magazine
             heat = Mathf.Min(1.2f, heat + (me.WeaponId == "sniper" ? 0.4f : me.WeaponId == "shotgun" ? 0.26f : me.WeaponId == "rifle" ? 0.055f : 0.08f));
@@ -1017,7 +1027,10 @@ namespace RiftWard.Client
                 if (shownSlot >= 0) Sfx.Play("switch", 0.5f);
                 shownSlot = me.Slot;
                 desiredSlot = me.Slot;
-                muzzle = Models.Viewmodel(me.WeaponId, weaponHolder, WeaponRarity?.Invoke(me.WeaponId) ?? 1, true);
+                var en = WeaponEnhance?.Invoke(me.WeaponId) ?? (0, 0);
+                muzzle = Models.Viewmodel(me.WeaponId, weaponHolder, WeaponRarity?.Invoke(me.WeaponId) ?? 1, true, en.sum, en.over);
+                ejectPort = weaponHolder.Find("Eject");
+                ejected = true;
                 magazine = weaponHolder.Find("Mag");
                 if (magazine != null) magazineRest = magazine.localPosition;
                 slidePart = weaponHolder.Find("Slide"); boltPart = weaponHolder.Find("Bolt"); pumpPart = weaponHolder.Find("Pump");
@@ -1067,10 +1080,24 @@ namespace RiftWard.Client
             }
             float seat = reload > 0.8f && reload < 0.92f ? Mathf.Sin(Mathf.PI * (reload - 0.8f) / 0.12f) : 0f;
             AnimateWeapon(me, dt);
+            // Inspect: roll the gun over to show its left flank (emblem, enhancement marks), hold, then return.
+            if (Active && showWeapon && !me.Melee && Bindings.Pressed(Bindings.Action.Inspect) && reload <= 0) inspectT = inspectT >= 0 && inspectT < InspectTime * 0.8f ? InspectTime * 0.8f : 0f;
+            if (reload > 0 || wantAds || !showWeapon || me.Melee) inspectT = -1f;
+            float look = 0f;
+            if (inspectT >= 0f)
+            {
+                inspectT += dt;
+                float u = inspectT / InspectTime;
+                look = u < 0.25f ? Mathf.SmoothStep(0, 1, u / 0.25f) : u < 0.75f ? 1f : Mathf.SmoothStep(1, 0, (u - 0.75f) / 0.25f);
+                if (u >= 1f) inspectT = -1f;
+            }
+            if (InspectForCapture >= 0f) look = InspectForCapture;
+            float idle = Mathf.Sin(Time.time * 1.7f) * look;
             var hipPos = WeaponRest + new Vector3(0.02f, -0.045f, -0.1f) * dash + new Vector3(0, 0, -shake)
-                + new Vector3(-0.03f, -0.07f, -0.04f) * tilt + new Vector3(0, 0.012f, 0) * seat + new Vector3(0, 0.006f, -0.035f) * kick + meleeOffset;
+                + new Vector3(-0.03f, -0.07f, -0.04f) * tilt + new Vector3(0, 0.012f, 0) * seat + new Vector3(0, 0.006f, -0.035f) * kick + meleeOffset
+                + new Vector3(-0.04f, 0.035f, 0.0f) * look;
             var hipRot = Quaternion.Euler(new Vector3(6f, 2f, -6f) * dash + new Vector3(-14f, 18f, 32f) * tilt + new Vector3(-4f, 0, 0) * seat
-                + new Vector3(-5f, 0, 0) * kick + meleeEuler);
+                + new Vector3(-5f, 0, 0) * kick + meleeEuler + new Vector3(-6f + 2f * idle, -38f, 22f + 3f * idle) * look);
             // Aimed: the sight sits dead centre; shots push the gun straight back and tip the muzzle up a touch.
             var adsPos = Models.AdsPose(me.WeaponId) + new Vector3(0, 0.003f, -0.03f) * kick + new Vector3(0, 0, -shake * 0.4f);
             var adsRot = Quaternion.Euler(-2.2f * kick, 0, 0);
@@ -1100,6 +1127,20 @@ namespace RiftWard.Client
             pitch = Mathf.Clamp(pitch + ny - swayPitch, -Defs.LookLimit, Defs.LookLimit);
             swayYaw = nx; swayPitch = ny;
             Hud.SetBreath(scoped, breath, holdingBreath, breathSpent);
+        }
+
+        /// A spent energy cell: brass body with a cooling glow at one end, flung up and right, tumbling and falling.
+        void EjectCasing(string weapon)
+        {
+            if (ejectPort == null || !ejectPort.gameObject.activeInHierarchy) return;
+            bool shell = weapon == "shotgun";
+            var size = shell ? new Vector3(0.022f, 0.022f, 0.05f) : weapon == "sniper" ? new Vector3(0.014f, 0.014f, 0.055f) : new Vector3(0.011f, 0.011f, 0.03f);
+            var go = Build.Cube(null, ejectPort.position, size, shell ? Palette.Hex("b8402e") : Palette.Hex("c9a24a"), 0f, false);
+            go.transform.rotation = ejectPort.rotation;
+            var tip = Build.Cube(go.transform, new Vector3(0, 0, -0.45f), new Vector3(1.02f, 1.02f, 0.18f), shell ? Palette.Hex("c9a24a") : Palette.Hex("ff8a3a"), shell ? 0f : 3f, false);
+            var cam = Camera.transform;
+            var v = cam.right * UnityEngine.Random.Range(1.4f, 2.0f) + cam.up * UnityEngine.Random.Range(1.6f, 2.2f) - cam.forward * 0.3f;
+            effects.Add((go, 0.7f, v, UnityEngine.Random.Range(700f, 1100f)));
         }
 
         /// For the automated screenshots: pose the weapon at a given heat and time since the last shot.
@@ -1153,6 +1194,12 @@ namespace RiftWard.Client
                     boltPart.localPosition = boltRest + new Vector3(0, 0, -0.07f) * pull;
                 }
                 else boltPart.localPosition = boltRest + new Vector3(0, 0, -0.03f) * Snap(cycle, 0.02f, 0.085f);
+            }
+            // Spent cell thrown from the port: right away for the rifle and pistol, on the pump / bolt for the others.
+            if (!ejected && !me.Melee)
+            {
+                float delay = me.WeaponId == "shotgun" ? 0.3f : me.WeaponId == "sniper" ? 0.5f : 0.015f;
+                if (cycle >= delay) { ejected = true; EjectCasing(me.WeaponId); }
             }
             // Ammo bar: lit cells for rounds left, red near the end, dark while reloading.
             if (ammoCells.Length > 0)

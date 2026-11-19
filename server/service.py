@@ -56,6 +56,11 @@ def mission_gold(team_kills, wave, level, victory, region, tier, endless=False) 
     return max(0, min(MAX_REWARD, int(round(base * DIFFICULTY_GOLD[tier]))))
 
 
+# First clear of a region on each tier pays both key kinds once (mirrors Defs.FirstClearKeys):
+# 困難 5 + 5, 噩夢 10 + 10, 地獄 15 + 15.
+FIRST_CLEAR_KEYS = {1: 5, 2: 10, 3: 15}
+
+
 WELCOME_MAIL = ("歡迎加入裂隙守衛",
                 "士兵，歡迎報到！\n\n這是指揮部準備的見面禮：3 把裝備鑰匙和 1 把武器鑰匙，領取後到「商城」的補給站開啟吧。\n"
                 "每天記得完成「任務」分頁的每日任務，可以持續獲得鑰匙。\n\n祝武運昌隆。\n—— 遠征軍指揮部",
@@ -1554,10 +1559,13 @@ class Store:
                 or not difficulty_open(profile["cleared"], mission, difficulty):
             raise ValueError("難度尚未解鎖")
         cleared = profile["cleared"]
-        cleared[mission] = max(cleared[mission], difficulty)
+        before = cleared[mission]
+        cleared[mission] = max(before, difficulty)
+        # Every tier cleared here for the first time pays its first-clear keys (normally just this one).
+        bonus = sum(FIRST_CLEAR_KEYS.get(t, 0) for t in range(before + 1, difficulty + 1))
         with self.connect() as db:
-            db.execute("UPDATE progress SET unlocked=MAX(unlocked,?), cleared=? WHERE account_id=?",
-                       (min(REGION_COUNT - 1, mission + 1), json.dumps(cleared), account_id))
+            db.execute("UPDATE progress SET unlocked=MAX(unlocked,?), cleared=?, keys=keys+?, weapon_keys=weapon_keys+? WHERE account_id=?",
+                       (min(REGION_COUNT - 1, mission + 1), json.dumps(cleared), bonus, bonus, account_id))
         return self.profile(account_id)
 
 

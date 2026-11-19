@@ -397,6 +397,23 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(self.call("/api/server/progress",progress)[0],403)
         self.assertEqual(self.call("/api/server/progress",progress,server_headers)[1]["profile"]["unlocked"],1)
 
+    def test_first_clear_keys_per_tier(self):
+        account = self.register()
+        key = {"X-Server-Key":self.store.server_key}
+        aid = account["profile"]["id"]
+        start = (account["profile"]["keys"], account["profile"]["weapon_keys"])
+        def keys(mission, tier):
+            p = self.call("/api/server/progress",{"account_id":aid,"mission":mission,"difficulty":tier},key)[1]["profile"]
+            return (p["keys"] - start[0], p["weapon_keys"] - start[1])
+        self.assertEqual(keys(0,0),(0,0))      # 普通 pays no keys
+        self.assertEqual(keys(0,1),(5,5))      # 困難 first clear
+        self.assertEqual(keys(0,1),(5,5))      # only once
+        self.assertEqual(keys(0,2),(15,15))    # 噩夢 +10
+        self.assertEqual(keys(0,3),(30,30))    # 地獄 +15
+        self.assertEqual(keys(0,3),(30,30))
+        self.assertEqual(keys(1,0),(30,30))    # each region pays its own
+        self.assertEqual(keys(1,1),(35,35))
+
     def test_difficulty_unlocks_per_region(self):
         account = self.register()
         key = {"X-Server-Key":self.store.server_key}

@@ -5,6 +5,20 @@ using UnityEngine.UI;
 
 namespace RiftWard.Client
 {
+    /// Keeps a canvas at least 1280 x 800: match height on screens wider than 16:10, width on narrower ones.
+    [RequireComponent(typeof(CanvasScaler))]
+    public class AspectMatch : MonoBehaviour
+    {
+        CanvasScaler scaler;
+        void Awake() { scaler = GetComponent<CanvasScaler>(); Update(); }
+        void Update()
+        {
+            if (Screen.height <= 0) return;
+            float m = (float)Screen.width / Screen.height >= 1.6f ? 1f : 0f;
+            if (scaler.matchWidthOrHeight != m) scaler.matchWidthOrHeight = m;
+        }
+    }
+
     /// Small uGUI toolkit: everything is built from code on a 1280x800 reference canvas.
     public static class Ui
     {
@@ -21,7 +35,10 @@ namespace RiftWard.Client
             var scaler = go.GetComponent<CanvasScaler>();
             scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
             scaler.referenceResolution = new Vector2(1280, 800);
-            scaler.matchWidthOrHeight = 0.5f;
+            // Wide screens scale by height, narrow by width, so the canvas is always at least 1280 x 800
+            // (a 0.5 blend left 16:9 at ~1350 x 760 and cut off the bottom of tall columns).
+            scaler.matchWidthOrHeight = 1f;
+            go.AddComponent<AspectMatch>();
             if (UnityEngine.Object.FindAnyObjectByType<EventSystem>() == null)
                 new GameObject("EventSystem", typeof(EventSystem), typeof(StandaloneInputModule));
             return canvas;

@@ -1,13 +1,16 @@
 using System;
 using UnityEngine;
+using UnityEngine.EventSystems;
 using UnityEngine.UI;
 
 namespace RiftWard.Client
 {
     /// Renders a slowly turning 3D model into a UI RawImage. Each preview owns an isolated stage far below the
     /// world on a private layer (lit by its own lights) and cleans everything up when the UI element is destroyed.
-    public sealed class ModelPreview : MonoBehaviour
+    public sealed class ModelPreview : MonoBehaviour, IBeginDragHandler, IDragHandler, IEndDragHandler
     {
+        bool draggable, dragging;
+        float yawVelocity, idleFor = 99f, pitchOffset;
         public const int Layer = 31;
         static int counter;
 
@@ -17,14 +20,17 @@ namespace RiftWard.Client
         float spin, renderTimer;
         const float RenderInterval = 1f / 30f;   // previews redraw at 30 fps instead of every frame
 
-        public static RawImage Create(Transform parent, Action<Transform> build, int resolution = 256, float spinSpeed = 35f, float tilt = 12f)
+        /// draggable: the viewer can turn the model with the mouse (it keeps a little spin after a flick, then
+        /// resumes the idle turn after a moment).
+        public static RawImage Create(Transform parent, Action<Transform> build, int resolution = 256, float spinSpeed = 35f, float tilt = 12f, bool draggable = false)
         {
             var go = new GameObject("Preview", typeof(RectTransform), typeof(RawImage));
             go.transform.SetParent(parent, false);
             var image = go.GetComponent<RawImage>();
-            image.raycastTarget = false;
+            image.raycastTarget = draggable;
             var preview = go.AddComponent<ModelPreview>();
             preview.spin = spinSpeed;
+            preview.draggable = draggable;
 
             int index = counter++ % 128;
             preview.stage = new GameObject("PreviewStage").transform;
@@ -90,9 +96,32 @@ namespace RiftWard.Client
             pivot.localRotation = Quaternion.Euler(tilt, 0, 0);
         }
 
+        public void OnBeginDrag(PointerEventData e) { if (draggable) dragging = true; }
+
+        public void OnDrag(PointerEventData e)
+        {
+            if (!draggable || pivot == null) return;
+            float yaw = -e.delta.x * 0.5f;
+            pivot.Rotate(0, yaw, 0, Space.World);
+            float pitch = Mathf.Clamp(pitchOffset + e.delta.y * 0.3f, -35f, 35f);
+            pivot.Rotate(pitch - pitchOffset, 0, 0, Space.Self);
+            pitchOffset = pitch;
+            yawVelocity = yaw / Mathf.Max(0.001f, Time.unscaledDeltaTime);
+            idleFor = 0f;
+            renderTimer = 0f;
+        }
+
+        public void OnEndDrag(PointerEventData e) { dragging = false; }
+
         void Update()
         {
-            if (pivot != null) pivot.Rotate(0, spin * Time.unscaledDeltaTime, 0, Space.World);
+            if (pivot != null && !dragging)
+            {
+                idleFor += Time.unscaledDeltaTime;
+                yawVelocity *= Mathf.Exp(-4f * Time.unscaledDeltaTime);
+                float idleSpin = idleFor > 2.5f ? spin * Mathf.Clamp01((idleFor - 2.5f) / 1.5f) : 0f;
+                pivot.Rotate(0, (yawVelocity + idleSpin) * Time.unscaledDeltaTime, 0, Space.World);
+            }
             renderTimer -= Time.unscaledDeltaTime;
             if (renderTimer > 0 || cam == null) return;
             renderTimer += RenderInterval;

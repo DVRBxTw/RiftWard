@@ -262,6 +262,12 @@ namespace RiftWard.Client
             FoundryDetail(rng);
         }
 
+        static void NoShadow(GameObject go)
+        {
+            var mr = go.GetComponent<MeshRenderer>();
+            if (mr != null) mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+        }
+
         /// Industrial clutter: floor grating, hazard stripes, pipes, gantry cranes, crucibles and glowing vents.
         void FoundryDetail(System.Random rng)
         {
@@ -291,11 +297,13 @@ namespace RiftWard.Client
                 }
             }
             // Gantry crane spanning the arena.
-            foreach (float x in new[] { -24f, 24f }) Build.Cube(dressing, new Vector3(x, 6.5f, 4f), new Vector3(0.8f, 13f, 0.8f), steel);
-            Build.Cube(dressing, new Vector3(0, 13f, 4f), new Vector3(49f, 0.9f, 1.2f), hazard);
-            Build.Cube(dressing, new Vector3(-6f, 12.2f, 4f), new Vector3(2f, 0.8f, 1.6f), steel);
-            Build.Cube(dressing, new Vector3(-6f, 9.6f, 4f), new Vector3(0.06f, 4.4f, 0.06f), Palette.Hex("1a1614"));
-            Build.Cube(dressing, new Vector3(-6f, 7.2f, 4f), new Vector3(1.4f, 0.6f, 1.4f), rust);
+            // No shadows from the crane: its beam threw a big flat rectangle across the floor that popped in and
+            // out with the shadow distance and read as an empty dialog box over the view.
+            foreach (float x in new[] { -24f, 24f }) NoShadow(Build.Cube(dressing, new Vector3(x, 6.5f, 4f), new Vector3(0.8f, 13f, 0.8f), steel));
+            NoShadow(Build.Cube(dressing, new Vector3(0, 13f, 4f), new Vector3(49f, 0.9f, 1.2f), hazard));
+            NoShadow(Build.Cube(dressing, new Vector3(-6f, 12.2f, 4f), new Vector3(2f, 0.8f, 1.6f), steel));
+            NoShadow(Build.Cube(dressing, new Vector3(-6f, 9.6f, 4f), new Vector3(0.06f, 4.4f, 0.06f), Palette.Hex("1a1614")));
+            NoShadow(Build.Cube(dressing, new Vector3(-6f, 7.2f, 4f), new Vector3(1.4f, 0.6f, 1.4f), rust));
             // Crucibles of molten metal and glowing floor vents.
             foreach (var c in new[] { new Vector3(-27, 0, -12), new Vector3(27, 0, 14), new Vector3(-26, 0, 18) })
             {

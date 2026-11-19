@@ -51,6 +51,8 @@ namespace RiftWard.Client
         }
 
         const float NavHeight = 72f;
+        /// Capture only: draw the 多人房間 section without a server connection.
+        public static bool PreviewRoom;
 
         /// Top navigation shared by the lobby pages: brand, 關卡 / 商城 / 裝備 tabs, resources and account links.
         /// Returns the content area below the bar.
@@ -308,8 +310,8 @@ namespace RiftWard.Client
             column.sizeDelta = new Vector2(500, 0);
             var stack = Ui.VStack(column, 0);
             stack.Fill();
-            stack.GetComponent<VerticalLayoutGroup>().padding = new RectOffset(48, 48, 32, 28);
-            Ui.Label(stack, "選擇關卡", 34, Palette.Bone, TextAnchor.UpperLeft, true).Sized(46);
+            stack.GetComponent<VerticalLayoutGroup>().padding = new RectOffset(48, 48, 26, 20);
+            Ui.Label(stack, "選擇關卡", 34, Palette.Bone, TextAnchor.UpperLeft, true).Sized(42);
             // Chapter tabs: a chapter opens once its first region is unlocked.
             int chapter = Defs.ChapterOf(selected);
             var chapters = Ui.HStack(stack, 8).Sized(40);
@@ -332,16 +334,16 @@ namespace RiftWard.Client
             {
                 int index = i;
                 bool locked = i > p.Unlocked, current = i == selected;
-                var b = Ui.Button(stack, "", () => { app.SelectRegion(index); }, 15, null, current ? new Color(Palette.Amber.r, Palette.Amber.g, Palette.Amber.b, 0.1f) : new Color(0, 0, 0, 0), current ? Palette.Amber : new Color(0, 0, 0, 0)).Sized(64);
+                var b = Ui.Button(stack, "", () => { app.SelectRegion(index); }, 15, null, current ? new Color(Palette.Amber.r, Palette.Amber.g, Palette.Amber.b, 0.1f) : new Color(0, 0, 0, 0), current ? Palette.Amber : new Color(0, 0, 0, 0)).Sized(58);
                 b.interactable = !locked;
                 var t = b.GetComponentInChildren<Text>();
                 t.text = "";
                 var num = Ui.Label(b.transform, $"0{i + 1}", 14, current ? Palette.Amber : Palette.Muted, TextAnchor.UpperLeft);
                 num.rectTransform.Place(new Vector2(0, 1), new Vector2(18, -15), new Vector2(40, 20), new Vector2(0, 1));
                 var name = Ui.Label(b.transform, Defs.Regions[i].Name, 22, current ? Palette.Bone : Palette.Hex("c9c5bb"), TextAnchor.UpperLeft, current);
-                name.rectTransform.Place(new Vector2(0, 1), new Vector2(64, -9), new Vector2(300, 30), new Vector2(0, 1));
+                name.rectTransform.Place(new Vector2(0, 1), new Vector2(64, -7), new Vector2(300, 30), new Vector2(0, 1));
                 var sub = Ui.Label(b.transform, locked ? "完成前一區域後解鎖" : "20 波 · 第 10、20 波 Boss", 13, Palette.Muted, TextAnchor.UpperLeft);
-                sub.rectTransform.Place(new Vector2(0, 1), new Vector2(64, -40), new Vector2(300, 20), new Vector2(0, 1));
+                sub.rectTransform.Place(new Vector2(0, 1), new Vector2(64, -36), new Vector2(300, 20), new Vector2(0, 1));
                 int best = i < p.Cleared.Count ? p.Cleared[i] : -1;
                 if (!locked && best >= 0)
                 {
@@ -349,7 +351,7 @@ namespace RiftWard.Client
                     Ui.Label(b.transform, "已通關 " + mark.Name, 12, mark.Accent, TextAnchor.UpperRight, true).rectTransform
                         .Place(new Vector2(1, 1), new Vector2(-16, -15), new Vector2(120, 18), new Vector2(1, 1));
                 }
-                if (current) Ui.Box(b.transform, Palette.Amber, "Mark").rectTransform.Place(new Vector2(0, 0.5f), Vector2.zero, new Vector2(3, 64), new Vector2(0, 0.5f));
+                if (current) Ui.Box(b.transform, Palette.Amber, "Mark").rectTransform.Place(new Vector2(0, 0.5f), Vector2.zero, new Vector2(3, 58), new Vector2(0, 0.5f));
             }
             Ui.Rect(stack, "Gap").Sized(14);
             Widgets.Section(stack, "難度").Sized(26);
@@ -389,9 +391,9 @@ namespace RiftWard.Client
             Ui.DefaultButton = deploy;   // Enter deploys
             Ui.Rect(stack, "Gap").Sized(12);
             Ui.Button(stack, chapter == 0 ? "故事與教學" : "第二章劇情回顧", () => { if (chapter == 0) ShowStory(0); else ShowPages(ChapterTwo, 0, "返回基地", app.ShowHome); }, 14, Palette.Muted).Sized(40);
-            if (app.Net.Welcomed)
+            if (app.Net.Welcomed || PreviewRoom)
             {
-                Ui.Rect(stack, "Gap").Sized(20);
+                Ui.Rect(stack, "Gap").Sized(10);
                 Widgets.Section(stack, "多人房間").Sized(26);
                 if (app.InRoom)
                 {
@@ -616,8 +618,10 @@ namespace RiftWard.Client
             ds.GetComponent<VerticalLayoutGroup>().padding = new RectOffset(32, 32, 26, 24);
             int shownRarity = own ? p.Loadout.RarityOf(armoryPick) : 1;
             string pick = armoryPick;
-            var show = ModelPreview.Create(sheet, t => Models.WeaponDisplay(t, pick, shownRarity), 384, 25f, 8f);
+            int shownEnhance = own ? Defs.UpgradeKeys.Sum(k => p.Loadout.Level(pick, k)) : 0, shownOver = own ? p.Loadout.Level(pick, "over") : 0;
+            var show = ModelPreview.Create(sheet, t => Models.WeaponDisplay(t, pick, shownRarity, shownEnhance, shownOver), 512, 25f, 8f, true);
             show.rectTransform.Place(new Vector2(1, 1), new Vector2(-24, -14), new Vector2(150, 150), new Vector2(1, 1));
+            Ui.Label(sheet, "拖曳旋轉", 11, Palette.Muted, TextAnchor.UpperCenter).rectTransform.Place(new Vector2(1, 1), new Vector2(-24, -166), new Vector2(150, 16), new Vector2(1, 1));
             if (own) RarityFx.Attach(show.rectTransform, shownRarity);
             if (!own) show.color = new Color(1, 1, 1, 0.35f);
             Ui.Label(ds, own ? Gear.WeaponName(armoryPick, shownRarity) : wd.Name, 32, own ? Gear.RarityColors[shownRarity] : Palette.Bone, TextAnchor.UpperLeft, true).Sized(44);

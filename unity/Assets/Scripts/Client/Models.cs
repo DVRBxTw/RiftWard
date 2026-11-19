@@ -366,7 +366,7 @@ namespace RiftWard.Client
             }
         }
 
-        public static Transform Viewmodel(string weapon, Transform holder, int rarity = 1, bool firstPerson = false)
+        public static Transform Viewmodel(string weapon, Transform holder, int rarity = 1, bool firstPerson = false, int enhance = 0, int overload = 0)
         {
             // Detach the old gun before destroying it: Destroy only happens at the end of the frame, and lookups by
             // name (Slide, Mag, Ammo cells) on the new gun must not find the old one's parts.
@@ -390,7 +390,12 @@ namespace RiftWard.Client
             if (!melee)   // the gun details and rarity finish are shaped for guns; the blade shows rarity itself
             {
                 Detail(holder, muzzleZ);
+                Edges(holder);
+                Emblem(holder, rarity);
                 WeaponFinish(holder, rarity, muzzleZ);
+                if (rarity >= 3) Signature(holder, weapon, rarity, muzzleZ);
+                EnhanceMarks(holder, enhance, overload);
+                Part(holder, "Eject", ejectAt);
             }
             Surfaces(holder);
             if (firstPerson && !melee)
@@ -431,7 +436,7 @@ namespace RiftWard.Client
             foreach (var r in h.GetComponentsInChildren<MeshRenderer>())
             {
                 var m = r.sharedMaterial;
-                if (m == null || m.IsKeywordEnabled("_EMISSION")) continue;
+                if (m == null || m.IsKeywordEnabled("_EMISSION") || m.color.a < 1f) continue;   // keep glow and glass
                 Color c = m.color;
                 float lum = c.r * 0.3f + c.g * 0.59f + c.b * 0.11f;
                 r.sharedMaterial = Build.Mat(lum < 0.2f ? Color.Lerp(dark, c, 0.25f) : metal, lum < 0.2f ? 0f : 0.5f);
@@ -572,12 +577,119 @@ namespace RiftWard.Client
         }
 
         /// Display model for a weapon (the first-person model with its rarity finish).
-        public static void WeaponDisplay(Transform root, string weapon, int rarity)
+        public static void WeaponDisplay(Transform root, string weapon, int rarity, int enhance = 0, int overload = 0)
         {
             var holder = new GameObject("Weapon").transform;
             holder.SetParent(root, false);
             holder.localRotation = Quaternion.Euler(0, -90, 0);
-            Viewmodel(weapon, holder, rarity);
+            Viewmodel(weapon, holder, rarity, false, enhance, overload);
+        }
+
+        /// Bevel highlight: a thin, lighter strip along the two top edges of every large block, so up close the
+        /// gun reads as machined parts instead of flat boxes. Glowing and translucent parts are skipped.
+        static void Edges(Transform h)
+        {
+            var blocks = new List<MeshRenderer>();
+            foreach (var r in h.GetComponentsInChildren<MeshRenderer>())
+            {
+                var mf = r.GetComponent<MeshFilter>();
+                var m = r.sharedMaterial;
+                if (mf == null || mf.sharedMesh == null || !mf.sharedMesh.name.StartsWith("Cube") || m == null || m.IsKeywordEnabled("_EMISSION") || m.color.a < 1f) continue;
+                var sc = r.transform.localScale;
+                if (sc.x < 0.04f || sc.y < 0.025f || sc.z < 0.07f) continue;
+                blocks.Add(r);
+            }
+            const float e = 0.0022f;
+            foreach (var r in blocks)
+            {
+                var sc = r.transform.localScale;
+                Color edge = Color.Lerp(r.sharedMaterial.color, Color.white, 0.22f);
+                foreach (float side in new[] { -0.5f, 0.5f })
+                    Build.Cube(r.transform, new Vector3(side, 0.5f, 0), new Vector3(e / sc.x, e / sc.y, 0.96f), edge, 0f, false).name = "Edge";
+            }
+        }
+
+        /// Rarity emblem: a small plate on the left flank in the rarity colour (unlit for 劣質 / 普通, glowing above).
+        static void Emblem(Transform h, int rarity)
+        {
+            Color c = Gear.RarityColors[Mathf.Clamp(rarity, 0, 4)];
+            P(h, new Vector3(-flankX - 0.0012f, markY + 0.016f, markZ - 0.01f), new Vector3(0.002f, 0.012f, 0.02f), GunInk);
+            P(h, new Vector3(-flankX - 0.0024f, markY + 0.016f, markZ - 0.01f), new Vector3(0.0015f, 0.007f, 0.013f), c, rarity >= 2 ? 2.5f : 0f);
+        }
+
+        /// 傳奇+: a part only that weapon has, so a legendary is recognisable by shape, not only colour.
+        static void Signature(Transform h, string weapon, int rarity, float muzzleZ)
+        {
+            Color glow = Gear.RarityColors[Mathf.Clamp(rarity, 0, 4)], hot = Color.Lerp(glow, Color.white, 0.4f);
+            Color metal = Palette.Hex(rarity >= 4 ? "7a1c24" : "c9a24a");
+            switch (weapon)
+            {
+                case "rifle":
+                    // Split energy muzzle: two prongs with a glowing arc between them.
+                    foreach (float x in new[] { -0.024f, 0.024f })
+                    {
+                        P(h, new Vector3(x, 0.005f, muzzleZ - 0.02f), new Vector3(0.01f, 0.016f, 0.08f), metal);
+                        P(h, new Vector3(x * 0.8f, 0.005f, muzzleZ + 0.015f), new Vector3(0.004f, 0.008f, 0.012f), hot, 6f);
+                    }
+                    P(h, new Vector3(0, 0.025f, muzzleZ - 0.01f), new Vector3(0.036f, 0.003f, 0.04f), glow, 4f).AddComponent<Spinner>().Pulse = 0.2f;
+                    break;
+                case "shotgun":
+                    // Twin plasma canisters along the receiver.
+                    foreach (float x in new[] { -0.056f, 0.056f })
+                    {
+                        Barrel(h, new Vector3(x, -0.015f, 0.0f), 0.022f, 0.14f, metal);
+                        var cell = Build.Cylinder(h, new Vector3(x, -0.015f, 0.0f), 0.016f, 0.1f, hot, 5f);
+                        cell.transform.localRotation = Quaternion.Euler(90, 0, 0);
+                        cell.AddComponent<Spinner>().Pulse = 0.25f;
+                    }
+                    break;
+                case "sniper":
+                    // Rail-gun fins above the barrel with a charge line between them.
+                    foreach (float x in new[] { -0.012f, 0.012f })
+                        P(h, new Vector3(x, 0.05f, muzzleZ * 0.6f), new Vector3(0.004f, 0.024f, muzzleZ * 0.5f), metal);
+                    P(h, new Vector3(0, 0.05f, muzzleZ * 0.6f), new Vector3(0.003f, 0.006f, muzzleZ * 0.48f), hot, 6f).AddComponent<Spinner>().Pulse = 0.3f;
+                    break;
+                default:
+                    // P-9: heat-sink fins on the slide (they ride with it).
+                    var slide = h.Find("Slide") ?? h;
+                    for (int i = 0; i < 3; i++)
+                        foreach (float x in new[] { -0.034f, 0.034f })
+                        {
+                            P(slide, new Vector3(x, 0.03f, 0.04f + i * 0.022f), new Vector3(0.006f, 0.03f, 0.008f), metal);
+                            P(slide, new Vector3(x * 1.08f, 0.03f, 0.04f + i * 0.022f), new Vector3(0.002f, 0.022f, 0.004f), hot, 5f);
+                        }
+                    break;
+            }
+        }
+
+        /// Enhancement shows on the gun: 強化 10+ a glowing line, 20+ a second line and chevrons, 30 (all maxed)
+        /// a circuit pattern on both flanks, and 超載 makes it pulse in the shard colour.
+        static void EnhanceMarks(Transform h, int enhance, int overload)
+        {
+            if (enhance < 10 && overload <= 0) return;
+            Color c = overload > 0 ? Gear.ShardColor : Palette.Hex("8fe3ff");
+            float g = overload > 0 ? 5f : 3f;
+            var root = Part(h, "Enhance", Vector3.zero);
+            void Line(float y) => P(root, new Vector3(-flankX - 0.0015f, y, markZ + markLength * 0.5f), new Vector3(0.002f, 0.0025f, markLength * 0.7f), c, g);
+            Line(markY);
+            if (enhance >= 20)
+            {
+                Line(markY - 0.008f);
+                for (int i = 0; i < 3; i++)
+                {
+                    var chev = P(root, new Vector3(-flankX - 0.0015f, markY - 0.004f, markZ + markLength * 0.95f + i * 0.01f), new Vector3(0.002f, 0.009f, 0.0025f), c, g);
+                    chev.transform.localRotation = Quaternion.Euler(35f, 0, 0);
+                }
+            }
+            if (enhance >= 30)
+                foreach (float sx in new[] { -1f, 1f })
+                    for (int i = 0; i < 6; i++)
+                    {
+                        float z = markZ + i * markLength / 6f;
+                        P(root, new Vector3(sx * (flankX + 0.0015f), markY + (i % 2 == 0 ? 0.01f : 0.006f), z), new Vector3(0.002f, 0.0022f, markLength / 6f * 0.8f), c, g);
+                        P(root, new Vector3(sx * (flankX + 0.0015f), markY + 0.008f, z + markLength / 12f), new Vector3(0.002f, 0.006f, 0.0022f), c, g);
+                    }
+            if (overload > 0) root.gameObject.AddComponent<Spinner>().Pulse = Mathf.Min(0.15f + overload * 0.05f, 0.4f);
         }
 
         static readonly Color GunInk = Palette.Hex("17191c"), GunSteel = Palette.Hex("2c3036"), GunPolymer = Palette.Hex("262a2f"),
@@ -587,7 +699,9 @@ namespace RiftWard.Client
 
         // Per-gun anchors set by the builders: where the ammo bar sits (left flank or top, the faces the
         // first-person camera sees) and where the barrel's heat sleeve goes.
-        static Vector3 ammoAt, ammoCell;
+        static Vector3 ammoAt, ammoCell, ejectAt;
+        /// Half-width of the receiver flank, and where on it the emblem and enhancement marks go.
+        static float flankX, markY, markZ, markLength;
         static float ammoLength, heatY, heatWidth, heatLength;
         public const int AmmoCells = 10;
 
@@ -708,6 +822,9 @@ namespace RiftWard.Client
             P(bolt, new Vector3(-0.012f, 0.002f, -0.018f), new Vector3(0.02f, 0.012f, 0.012f), GunSteel);   // handle knob
             ammoAt = new Vector3(-0.0405f, 0.029f, 0.225f); ammoCell = new Vector3(0.003f, 0.009f, 0); ammoLength = 0.13f;   // handguard flank, above the vents
             heatY = 0.005f; heatWidth = 0.034f; heatLength = 0.1f;
+            ejectAt = new Vector3(0.05f, 0.005f, -0.03f); flankX = 0.0425f; markY = -0.022f; markZ = -0.13f; markLength = 0.13f;
+            // Holo glass: a faint cyan pane inside the window frame, behind the floating dot.
+            P(h, new Vector3(0, 0.095f, 0.001f), new Vector3(0.04f, 0.036f, 0.001f), Palette.Hex("8fe3ff")).GetComponent<MeshRenderer>().sharedMaterial = Build.Mat(Palette.Hex("8fe3ff"), 0.4f, 0.12f);
             return 0.54f;
         }
 
@@ -737,6 +854,7 @@ namespace RiftWard.Client
             Barrel(mag, new Vector3(0, 0, -0.03f), 0.026f, 0.012f, Palette.Hex("c9a24a"));
             ammoAt = new Vector3(-0.026f, 0.046f, 0.03f); ammoCell = new Vector3(0.012f, 0.003f, 0); ammoLength = 0.12f;
             heatY = 0.025f; heatWidth = 0.048f; heatLength = 0.12f;
+            ejectAt = new Vector3(0.052f, 0.01f, 0.0f); flankX = 0.045f; markY = -0.022f; markZ = -0.12f; markLength = 0.12f;
             return 0.47f;
         }
 
@@ -776,6 +894,10 @@ namespace RiftWard.Client
             P(mag, new Vector3(0, -0.038f, 0), new Vector3(0.052f, 0.012f, 0.094f), GunSteel);
             ammoAt = new Vector3(-0.0365f, 0.016f, 0.2f); ammoCell = new Vector3(0.003f, 0.01f, 0); ammoLength = 0.13f;    // forend flank
             heatY = 0.02f; heatWidth = 0.04f; heatLength = 0.14f;
+            ejectAt = new Vector3(0.04f, 0.03f, -0.02f); flankX = 0.04f; markY = -0.018f; markZ = -0.17f; markLength = 0.12f;
+            // Rear lens with a glint so the scope reads as glass from behind.
+            P(h, new Vector3(0, 0.1f, -0.136f), new Vector3(0.05f, 0.05f, 0.002f), Palette.Hex("8a6ad8")).GetComponent<MeshRenderer>().sharedMaterial = Build.Mat(Palette.Hex("8a6ad8"), 0.8f, 0.55f);
+            P(h, new Vector3(-0.012f, 0.112f, -0.138f), new Vector3(0.012f, 0.006f, 0.001f), Color.white, 2f);
             return 0.7f;
         }
 
@@ -894,6 +1016,7 @@ namespace RiftWard.Client
             P(mag, new Vector3(0, -0.032f, -0.008f), new Vector3(0.052f, 0.014f, 0.064f), GunSteel).transform.localRotation = Quaternion.Euler(-14, 0, 0);
             ammoAt = new Vector3(-0.019f, 0.048f, 0.02f); ammoCell = new Vector3(0.009f, 0.003f, 0); ammoLength = 0.12f;   // on top of the slide
             heatY = 0.022f; heatWidth = 0.03f; heatLength = 0.025f;
+            ejectAt = new Vector3(0.036f, 0.03f, 0.05f); flankX = 0.029f; markY = -0.012f; markZ = -0.03f; markLength = 0.1f;
             return 0.17f;
         }
 
