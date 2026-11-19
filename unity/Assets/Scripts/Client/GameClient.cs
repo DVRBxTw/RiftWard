@@ -854,7 +854,7 @@ namespace RiftWard.Client
             inspectT = -1f;
             this.kick = me.Melee ? 0.35f : 1f;
             if (me.Melee) return;   // a blade has no heat or magazine
-            heat = Mathf.Min(1.2f, heat + (me.WeaponId == "sniper" ? 0.4f : me.WeaponId == "shotgun" ? 0.26f : me.WeaponId == "rifle" ? 0.055f : 0.08f));
+            heat = Mathf.Min(1.2f, heat + (me.WeaponId == "sniper" ? 0.4f : me.WeaponId == "shotgun" ? 0.26f : me.WeaponId == "rifle" ? 0.055f : me.WeaponId == "minigun" ? 0.03f : 0.08f));
             hotVented = false;
             if (me.Ammo > 0 && me.Ammo <= Mathf.Max(2, Mathf.CeilToInt(me.Mag * 0.2f))) Sfx.Play("lowammo", 0.35f);
         }
@@ -1059,9 +1059,29 @@ namespace RiftWard.Client
             SpectatingId = standing[(i + 1) % standing.Count].Id;
         }
 
+        /// M-7 熔爐機槍 look: the barrel cluster turns with the spin and the side vents glow from half heat (they
+        /// flicker while locked by an overheat).
+        static void AnimateMinigun(Transform gun, Actor a, float dt)
+        {
+            if (gun == null || a == null || a.WeaponId != "minigun") return;
+            foreach (var t in gun.GetComponentsInChildren<Transform>(true))
+            {
+                if (t.name == "Barrels") t.Rotate(0, 0, a.Spin * 1500f * dt, Space.Self);
+                else if (t.name == "HeatVents")
+                {
+                    bool lit = a.Overheat > 0 ? Mathf.Repeat(Time.time * 8f, 1f) < 0.6f : a.Heat > 0.45f;
+                    if (t.gameObject.activeSelf != lit) t.gameObject.SetActive(lit);
+                    t.localScale = new Vector3(1f, 1f, 0.6f + 0.6f * a.Heat);
+                }
+            }
+        }
+
         void UpdateCamera(Actor me, float dt)
         {
             if (me == null) return;
+            AnimateMinigun(weaponHolder, me, dt);
+            foreach (var kv in actorRigs)
+                if (kv.Key != LocalId && Sim.Actors.TryGetValue(kv.Key, out var mate) && kv.Value != null) AnimateMinigun(kv.Value.transform, mate, dt);
             var watched = SpectateTarget(me);
             if (watched != null)
             {
@@ -1169,7 +1189,8 @@ namespace RiftWard.Client
             }
             if (InspectForCapture >= 0f) look = InspectForCapture;
             float idle = Mathf.Sin(Time.time * 1.7f) * look;
-            var hipPos = WeaponRest + new Vector3(0.02f, -0.045f, -0.1f) * dash + new Vector3(0, 0, -shake)
+            // The minigun is bulky: held a little higher, further in and forward so the drum does not fill the corner.
+            var hipPos = WeaponRest + (me.WeaponId == "minigun" ? new Vector3(-0.04f, 0.06f, 0.05f) : Vector3.zero) + new Vector3(0.02f, -0.045f, -0.1f) * dash + new Vector3(0, 0, -shake)
                 + new Vector3(-0.03f, -0.07f, -0.04f) * tilt + new Vector3(0, 0.012f, 0) * seat + new Vector3(0, 0.006f, -0.035f) * kick + meleeOffset
                 + new Vector3(-0.04f, 0.035f, 0.0f) * look;
             var hipRot = Quaternion.Euler(new Vector3(6f, 2f, -6f) * dash + new Vector3(-14f, 18f, 32f) * tilt + new Vector3(-4f, 0, 0) * seat

@@ -277,6 +277,52 @@ namespace RiftWard.Tests
         }
 
         [Test]
+        public void MinigunSpinsUpHeatsUpAndOverheats()
+        {
+            var kit = new Loadout { Owned = new List<string> { "minigun" }, Equipped = new List<string> { "minigun" } };
+            var sim = new GameSim(5) { EnemyVariety = false };
+            var a = sim.AddActor(1, kit);
+            sim.StartMission(0);
+            sim.WaveDelay = 999f;
+            sim.Enemies.Clear();
+            Assert.AreEqual("minigun", a.WeaponId);
+            a.MagBonus = 1000; sim.RefreshWeapon(a); a.Ammo = a.Mag;   // no reloads in this test
+            int start = a.Ammo;
+            sim.Inputs[1] = new PlayerInput { Fire = true, Yaw = 0 };
+            for (int i = 0; i < 5; i++) sim.Tick(0.02f);                 // 0.1 s: still spinning up
+            Assert.AreEqual(start, a.Ammo, "no shot before the barrels reach the minimum spin");
+            for (int i = 0; i < 40; i++) sim.Tick(0.02f);                // to full spin
+            Assert.AreEqual(1f, a.Spin, 1e-3f);
+            int fired = start - a.Ammo;
+            Assert.Greater(fired, 0);
+            Assert.Greater(a.Heat, 0f);
+            // Hot barrels hit harder.
+            var target = PlaceEnemy(sim, new Vector3(0, 0, 10), 100000f);
+            a.Heat = 0f; sim.Fire(1, target.Position + Vector3.up * 0.8f); float cold = 100000f - target.Hp;
+            a.Heat = 1f; float before = target.Hp; sim.Fire(1, target.Position + Vector3.up * 0.8f); float hot = before - target.Hp;
+            Assert.AreEqual(cold * (1f + Defs.MinigunHeatBonus), hot, 0.01f);
+            sim.Enemies.Clear();
+            // Keep firing: it overheats, then the gun is locked.
+            a.Heat = 0.99f;
+            for (int i = 0; i < 10; i++) sim.Tick(0.02f);
+            Assert.Greater(a.Overheat, 0f, "full heat locks the gun");
+            int locked = a.Ammo;
+            for (int i = 0; i < 20; i++) sim.Tick(0.02f);
+            Assert.AreEqual(locked, a.Ammo, "no shots while overheated");
+            for (int i = 0; i < 120; i++) sim.Tick(0.02f);
+            Assert.AreEqual(0f, a.Overheat, 1e-4f);
+            Assert.Less(a.Ammo, locked, "fires again once cooled");
+            // Firing slows the walk.
+            var walker = new Actor { Speed = 10f, Hp = 100f, MaxHp = 100f, Loadout = kit };
+            var p0 = walker.Position;
+            GameSim.MoveActor(walker, new PlayerInput { Move = Vector2.up, Fire = true }, 0.1f, 10f, false);
+            var walked = (walker.Position - p0).magnitude;
+            var free = new Actor { Speed = 10f, Hp = 100f, MaxHp = 100f, Loadout = kit };
+            GameSim.MoveActor(free, new PlayerInput { Move = Vector2.up }, 0.1f, 10f, false);
+            Assert.AreEqual(free.Position.magnitude * Defs.MinigunFireSpeed, walked, 0.01f);
+        }
+
+        [Test]
         public void EmptyMagazineAutoReloads()
         {
             var sim = NewMission();

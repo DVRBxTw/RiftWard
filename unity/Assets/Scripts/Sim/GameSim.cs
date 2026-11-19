@@ -81,6 +81,7 @@ namespace RiftWard.Sim
             a.Hp = a.MaxHp = 100f;
             a.Yaw = 0; a.VerticalVelocity = 0; a.FireCooldown = 0; a.DashCooldown = 0; a.DashLeft = 0;
             a.Speed = Defs.BaseSpeed; a.DamageMult = 1; a.RateMult = 1; a.ReloadMult = 1; a.SkillMult = 1;
+            a.Spin = 0; a.Heat = 0; a.Overheat = 0;
             a.MagBonus = 0; a.Regen = 0; a.Armor = 0; a.GearDefense = 0; a.Critical = 0; a.Lifesteal = 0; a.Explode = 0; a.HealBudget = 0; System.Array.Clear(a.BuffStacks, 0, a.BuffStacks.Length);
             a.SkillCooldown = 0; a.Revive = 0; a.Slot = 0; a.Reload = 0;
             a.StatKills = 0; a.StatHeadshots = 0; a.StatShots = 0; a.StatHits = 0; a.StatDamage = 0;
@@ -202,6 +203,7 @@ namespace RiftWard.Sim
             a.DashCooldown = Mathf.Max(0, a.DashCooldown - dt);
             if (!a.Alive) return;
             if (input.Block && !a.Melee) speed *= Defs.AimSpeed;   // aiming down sights: a steady walk
+            if (input.Fire && a.WeaponId == "minigun" && a.Reload <= 0) speed *= Defs.MinigunFireSpeed;   // braced to fire
             Vector2 mv = Vector2.ClampMagnitude(input.Move, 1f);
             float yaw = float.IsFinite(input.Yaw) ? input.Yaw : 0f;
             var forward = new Vector3(Mathf.Sin(yaw), 0, Mathf.Cos(yaw));
@@ -344,15 +346,24 @@ namespace RiftWard.Sim
                 a.Blocking = false;
                 UpdateAmmo(a, input, dt);
                 a.Aiming = input.Block && a.Reload <= 0;
-                if (input.Fire && a.FireCooldown <= 0 && a.Reload <= 0)
+                bool minigun = a.WeaponId == "minigun";
+                if (minigun) UpdateMinigun(a, input.Fire && a.Reload <= 0, dt);
+                else a.Spin = 0;
+                bool ready = !minigun || (a.Spin >= Defs.MinigunMinSpin && a.Overheat <= 0);
+                if (input.Fire && a.FireCooldown <= 0 && a.Reload <= 0 && ready)
                 {
                     if (a.Ammo > 0)
                     {
-                        // P-9 perk: faster fire for a moment after a kill.
-                        a.FireCooldown = a.FireInterval / (a.PerkHaste > 0 ? 1f + PerkStrength(a, 0.4f) : 1f);
+                        // P-9 perk: faster fire for a moment after a kill. The minigun fires faster as it spins up.
+                        a.FireCooldown = a.FireInterval / (a.PerkHaste > 0 ? 1f + PerkStrength(a, 0.4f) : 1f) / (minigun ? a.Spin : 1f);
                         a.Ammo--;
                         Vector3 aim = input.Aim == Vector3.zero ? a.Position + Vector3.up + LookDirection(a.Yaw, 0) * 30f : CheckedAim(a, input);
                         Fire(a.Id, aim);
+                        if (minigun)
+                        {
+                            a.Heat += 1f / Defs.MinigunHeatShots;
+                            if (a.Heat >= 1f) { a.Heat = 1f; a.Overheat = Defs.MinigunCool * (1f - PerkStrength(a, 0.3f)); }
+                        }
                         if (a.Ammo <= 0) StartReload(a);
                     }
                     else StartReload(a);
@@ -683,6 +694,7 @@ namespace RiftWard.Sim
             Vector3 aim = (target - origin).normalized;
             if (a.IsAdmin && a.Admin.AutoAim && AutoAimTarget(origin, aim) is Vector3 lockOn) aim = (lockOn - origin).normalized;
             float damage = a.Damage;
+            if (a.WeaponId == "minigun") damage *= 1f + Defs.MinigunHeatBonus * a.Heat;   // hot barrels hit harder
             // AR-27 perk: a banked guaranteed crit from an earlier headshot.
             if (a.PerkCrits > 0) { a.PerkCrits--; damage *= 2f; }
             else if (Rand01() < a.Critical) damage *= 2f;
@@ -814,6 +826,7 @@ namespace RiftWard.Sim
             Vector3 eye = a.Position + Vector3.up * Defs.EyeHeight;
             Vector3 forward = LookDirection(a.Yaw, 0);
             float damage = a.Damage;
+            if (a.WeaponId == "minigun") damage *= 1f + Defs.MinigunHeatBonus * a.Heat;   // hot barrels hit harder
             if (Rand01() < a.Critical) damage *= 2f;
             a.StatShots++;
             var targets = new List<(Enemy e, float d)>();
@@ -1057,6 +1070,21 @@ namespace RiftWard.Sim
                     if (b.Life <= 0 || b.Position.y < 0) Bullets.Remove(b.Id);
                 }
             }
+        }
+
+        /// M-7 熔爐機槍: spin up while the trigger is held (even while locked by heat), spin down otherwise; heat drains
+        /// during the overheat lock (to zero by its end) and slowly while the trigger is off.
+        static void UpdateMinigun(Actor a, bool held, float dt)
+        {
+            a.Spin = held ? Mathf.Min(1f, a.Spin + dt / Defs.MinigunSpinUp) : Mathf.Max(0f, a.Spin - dt / Defs.MinigunSpinDown);
+            if (a.Overheat > 0f)
+            {
+                float lockTime = Mathf.Max(0.1f, Defs.MinigunCool * (1f - PerkStrength(a, 0.3f)));
+                a.Overheat = Mathf.Max(0f, a.Overheat - dt);
+                a.Heat = Mathf.Max(0f, a.Heat - dt / lockTime);
+                if (a.Overheat <= 0f) a.Heat = 0f;
+            }
+            else if (!held) a.Heat = Mathf.Max(0f, a.Heat - dt / Defs.MinigunIdleCool);
         }
 
         /// One of the player's melee slots, if one has been free for a full melee interval (bosses' slams are separate).

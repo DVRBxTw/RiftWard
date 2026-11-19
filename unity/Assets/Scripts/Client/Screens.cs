@@ -687,7 +687,7 @@ namespace RiftWard.Client
                     detail = string.Join(" · ", new[] { sum > 0 ? $"強化 {sum}" : null, over > 0 ? $"超載 {over}" : null, "穿透" }.Where(x => x != null));
                 }
                 Ui.Label(row.transform, detail == "" ? "已擁有" : detail, 12, Palette.Muted).rectTransform.Place(new Vector2(0, 1), new Vector2(60, -33), new Vector2(260, 18), new Vector2(0, 1));
-                var tag = Ui.Label(row.transform, owned ? (slot >= 0 ? $"{slot + 1} 號" : "") : "武器補給", 13, owned ? Palette.Bone : Palette.Muted, TextAnchor.MiddleRight);
+                var tag = Ui.Label(row.transform, owned ? (slot >= 0 ? $"{slot + 1} 號" : "") : Defs.LimitedWeapons.Contains(id) ? "限定補給" : "武器補給", 13, owned ? Palette.Bone : Palette.Muted, TextAnchor.MiddleRight);
                 tag.rectTransform.Place(new Vector2(1, 0.5f), new Vector2(-16, 0), new Vector2(80, 20), new Vector2(1, 0.5f));
                 if (current) Ui.Box(row.transform, Palette.Amber, "Mark").rectTransform.Place(new Vector2(0, 0.5f), Vector2.zero, new Vector2(3, 58), new Vector2(0, 0.5f));
             }
@@ -811,8 +811,13 @@ namespace RiftWard.Client
             Ui.Box(ds, Palette.Line, "Rule").Sized(1);
             if (!own)
             {
-                Ui.Label(ds, "尚未持有。武器改由「商城 → 武器補給」抽取取得。", 15, Palette.Muted).Sized(26);
-                PrimaryButton(ds, "前往商城 · 武器補給", ShowShop, 18).Sized(52);
+                if (Defs.LimitedWeapons.Contains(pick))
+                    Ui.Label(ds, "尚未持有。限定武器，只在「限定補給」開放期間可以抽取。", 15, Palette.Muted).Sized(26);
+                else
+                {
+                    Ui.Label(ds, "尚未持有。武器改由「商城 → 武器補給」抽取取得。", 15, Palette.Muted).Sized(26);
+                    PrimaryButton(ds, "前往商城 · 武器補給", ShowShop, 18).Sized(52);
+                }
             }
             else
             {

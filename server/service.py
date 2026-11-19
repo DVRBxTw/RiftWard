@@ -30,7 +30,8 @@ VERSION = "0.4.2-beta.1"
 
 # Armory catalog. The game client mirrors these numbers for display only;
 # every purchase is priced and validated here.
-WEAPON_PRICES = {"pistol": 0, "rifle": 400, "shotgun": 600, "sniper": 800, "saber": 0}
+WEAPON_PRICES = {"pistol": 0, "rifle": 400, "shotgun": 600, "sniper": 800, "saber": 0, "minigun": 0}
+LIMITED_WEAPONS = {"minigun"}   # only from a limited supply drop: never in WEAPON_WEIGHTS
 UPGRADE_STATS = ("damage", "mag", "reload")
 MAX_UPGRADE = 10      # weapon enhancement cap per stat; levels past SOFT_UPGRADE cost more and give half a step
 SOFT_UPGRADE = 5
@@ -146,7 +147,7 @@ GEAR_LEVEL_BONUS = 0.12                        # every enhancement level adds 12
 
 
 def upgrade_cost(weapon: str, level: int, rarity: int = 1) -> int:
-    factor = {"pistol": 1.0, "rifle": 1.3, "shotgun": 1.4, "sniper": 1.6, "saber": 1.5}[weapon]
+    factor = {"pistol": 1.0, "rifle": 1.3, "shotgun": 1.4, "sniper": 1.6, "saber": 1.5, "minigun": 1.5}[weapon]
     steep = 1.5 ** max(0, level - SOFT_UPGRADE + 1)   # levels 6-10: x1.5 per level on top of the linear curve
     return int(round(120 * (level + 1) * factor * RARITY_UPGRADE_MULT[max(0, min(len(RARITY_UPGRADE_MULT) - 1, rarity))] * steep))
 

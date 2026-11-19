@@ -529,6 +529,7 @@ namespace RiftWard.Client
                 case "rifle": return new Vector3(0, -0.095f, 0.3f);      // through the holo window, dot centred
                 case "shotgun": return new Vector3(0, -0.074f, 0.36f);   // eye just above the vent rib, bead under the centre
                 case "sniper": return new Vector3(0, -0.1f, 0.1f);       // eye to the scope (the overlay takes over)
+                case "minigun": return new Vector3(0, -0.15f, 0.3f);     // eye over the handle sight
                 default: return new Vector3(0, -0.07f, 0.46f);           // pistol: held out, front post between the rear dots
             }
         }
@@ -551,6 +552,7 @@ namespace RiftWard.Client
                 case "shotgun": muzzleZ = Shotgun(holder); break;
                 case "sniper": muzzleZ = Sniper(holder); break;
                 case "saber": muzzleZ = Saber(holder, rarity); break;
+                case "minigun": muzzleZ = Minigun(holder); break;
                 default: muzzleZ = Pistol(holder); break;
             }
             bool melee = weapon == "saber";
@@ -788,6 +790,11 @@ namespace RiftWard.Client
                         cell.AddComponent<Spinner>().Pulse = 0.25f;
                     }
                     break;
+                case "minigun":
+                    // A glowing gold band round the barrel clamp and a cyan coil on the motor.
+                    P(h, new Vector3(0, 0.0f, 0.1f), new Vector3(0.124f, 0.02f, 0.02f), Palette.Hex("c9a24a"), 1.5f);
+                    P(h, new Vector3(0, 0.064f, 0.1f), new Vector3(0.05f, 0.006f, 0.05f), glow, 4f).AddComponent<Spinner>().Pulse = 0.25f;
+                    break;
                 case "sniper":
                     // Rail-gun fins above the barrel with a charge line between them.
                     foreach (float x in new[] { -0.012f, 0.012f })
@@ -1020,6 +1027,53 @@ namespace RiftWard.Client
             ammoAt = new Vector3(-0.026f, 0.046f, 0.03f); ammoCell = new Vector3(0.012f, 0.003f, 0); ammoLength = 0.12f;
             heatY = 0.025f; heatWidth = 0.048f; heatLength = 0.12f;
             ejectAt = new Vector3(0.052f, 0.01f, 0.0f); flankX = 0.045f; markY = -0.022f; markZ = -0.12f; markLength = 0.12f;
+            return 0.47f;
+        }
+
+        /// M-7 熔爐機槍: blocky receiver and motor housing, six barrels on a spindle that spins ("Barrels"), clamp
+        /// plates, side heat vents that glow as it heats ("HeatVents"), a side ammo drum ("Mag"), carry handle with a
+        /// holo sight, rear and front grips, and a cyan energy line along the body.
+        static float Minigun(Transform h)
+        {
+            Color hot = Palette.Hex("ff7a2a"), cyan = Palette.Hex("4fd6e8"), gold = Palette.Hex("c9a24a");
+            P(h, new Vector3(0, 0, -0.06f), new Vector3(0.11f, 0.1f, 0.26f), GunSteel);                      // receiver
+            P(h, new Vector3(0, 0.054f, -0.06f), new Vector3(0.09f, 0.012f, 0.22f), GunInk);                 // top cover
+            P(h, new Vector3(0, 0, 0.1f), new Vector3(0.12f, 0.12f, 0.08f), GunInk);                         // motor housing
+            for (int i = 0; i < 4; i++) P(h, new Vector3(0, 0.0f, 0.072f + i * 0.018f), new Vector3(0.128f, 0.128f, 0.006f), GunSteel);   // motor fins
+            P(h, new Vector3(0, 0.1f, -0.02f), new Vector3(0.022f, 0.012f, 0.16f), GunInk);                  // carry handle
+            foreach (float z in new[] { -0.09f, 0.05f }) P(h, new Vector3(0, 0.078f, z), new Vector3(0.022f, 0.04f, 0.016f), GunInk);
+            P(h, new Vector3(0, 0.126f, 0.0f), new Vector3(0.04f, 0.03f, 0.03f), GunSteel);                  // holo sight
+            P(h, new Vector3(0, 0.126f, 0.016f), new Vector3(0.03f, 0.02f, 0.002f), cyan, 2.5f);
+            var barrels = Part(h, "Barrels", new Vector3(0, 0, 0.14f));
+            for (int i = 0; i < 6; i++)
+            {
+                float a = i * Mathf.PI / 3f;
+                Barrel(barrels, new Vector3(Mathf.Cos(a) * 0.032f, Mathf.Sin(a) * 0.032f, 0.16f), 0.018f, 0.32f, GunInk);
+                P(barrels, new Vector3(Mathf.Cos(a) * 0.032f, Mathf.Sin(a) * 0.032f, 0.318f), new Vector3(0.012f, 0.012f, 0.006f), hot, 2f);   // hot bore
+            }
+            Barrel(barrels, new Vector3(0, 0, 0.16f), 0.026f, 0.3f, GunSteel);                               // spindle
+            foreach (float z in new[] { 0.05f, 0.2f, 0.3f }) P(barrels, new Vector3(0, 0, z), new Vector3(0.098f, 0.098f, 0.012f), GunSteel);   // clamp plates
+            var vents = Part(h, "HeatVents", new Vector3(0, 0, -0.04f));
+            for (int i = 0; i < 3; i++)
+                foreach (float x in new[] { -0.0565f, 0.0565f })
+                    P(vents, new Vector3(x, 0.022f - i * 0.022f, 0), new Vector3(0.004f, 0.012f, 0.08f), hot, 3f);
+            vents.gameObject.SetActive(false);                                                              // lit by heat (GameClient)
+            foreach (float x in new[] { -0.0565f, 0.0565f })
+                for (int i = 0; i < 3; i++) P(h, new Vector3(x, 0.022f - i * 0.022f, -0.04f), new Vector3(0.003f, 0.014f, 0.084f), GunInk);   // vent slots
+            var mag = Part(h, "Mag", new Vector3(-0.088f, -0.028f, -0.06f));                                  // ammo drum
+            Build.Cylinder(mag, Vector3.zero, 0.12f, 0.06f, GunPolymer).transform.localRotation = Quaternion.Euler(0, 0, 90);
+            P(mag, new Vector3(-0.032f, 0, 0), new Vector3(0.004f, 0.07f, 0.07f), gold);
+            P(mag, new Vector3(-0.034f, 0, 0), new Vector3(0.002f, 0.03f, 0.03f), cyan, 2f);
+            P(h, new Vector3(-0.06f, -0.012f, -0.02f), new Vector3(0.02f, 0.03f, 0.07f), GunInk);            // feed chute
+            var grip = P(h, new Vector3(0, -0.085f, -0.14f), new Vector3(0.05f, 0.1f, 0.055f), GunPolymer);  // rear grip
+            grip.transform.localRotation = Quaternion.Euler(-15, 0, 0);
+            P(h, new Vector3(0, -0.092f, 0.05f), new Vector3(0.04f, 0.09f, 0.04f), GunPolymer);              // front grip
+            P(h, new Vector3(0, -0.04f, -0.24f), new Vector3(0.07f, 0.08f, 0.14f), GunPolymer);              // stock block
+            P(h, new Vector3(0.0565f, 0.034f, -0.06f), new Vector3(0.003f, 0.006f, 0.2f), cyan, 2.5f);      // energy line
+            P(h, new Vector3(-0.0565f, 0.034f, -0.06f), new Vector3(0.003f, 0.006f, 0.2f), cyan, 2.5f);
+            ammoAt = new Vector3(0.057f, -0.028f, -0.12f); ammoCell = new Vector3(0.003f, 0.009f, 0); ammoLength = 0.13f;
+            heatY = 0.062f; heatWidth = 0.08f; heatLength = 0.18f;
+            ejectAt = new Vector3(0.06f, 0.0f, -0.02f); flankX = 0.056f; markY = -0.03f; markZ = -0.12f; markLength = 0.12f;
             return 0.47f;
         }
 

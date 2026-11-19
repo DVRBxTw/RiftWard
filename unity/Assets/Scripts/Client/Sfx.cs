@@ -166,7 +166,7 @@ namespace RiftWard.Client
             string baseName = name.Split('#')[0];   // "#n" picks a variant: same sound, different noise
             bool rare = baseName.EndsWith("_rare");
             string weapon = baseName.Substring(5).Replace("_rare", "");
-            float duration = weapon == "sniper" ? 0.75f : weapon == "shotgun" ? 0.38f : weapon == "rifle" ? 0.2f : weapon == "saber" ? 0.34f : 0.15f;
+            float duration = weapon == "sniper" ? 0.75f : weapon == "shotgun" ? 0.38f : weapon == "rifle" ? 0.2f : weapon == "saber" ? 0.34f : weapon == "minigun" ? 0.09f : 0.15f;
             int count = (int)(FireRate * duration);
             var data = new float[count];
             var rng = new System.Random(name.GetHashCode());
@@ -225,6 +225,15 @@ namespace RiftWard.Client
                         float tone = Mathf.Sin(p1) * 0.55f + Mathf.Sin(p2) * 0.2f;
                         v = tone * (0.25f + 0.75f * swell) + band * swell * 1.6f + Mathf.Sin(p3) * swell * 0.06f;
                         v *= Mathf.Min(1f, (0.34f - t) / 0.06f);                  // soft tail, no click
+                        break;
+                    }
+                    case "minigun":
+                    {
+                        // Rotary round: a tight noise crack over a short low thump, quick enough to stack into a roar.
+                        low += (noise - low) * 0.35f;
+                        p1 += 2 * Mathf.PI * (60f + 140f * Mathf.Exp(-t * 60f)) * dt;
+                        p2 += 2 * Mathf.PI * 1800f * dt;
+                        v = low * Mathf.Exp(-t * 45f) * 0.8f + Mathf.Sin(p1) * Mathf.Exp(-t * 35f) * 0.6f + Mathf.Sin(p2) * Mathf.Exp(-t * 90f) * 0.12f;
                         break;
                     }
                     case "shotgun":

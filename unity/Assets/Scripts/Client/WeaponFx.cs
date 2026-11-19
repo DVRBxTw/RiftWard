@@ -20,6 +20,9 @@ namespace RiftWard.Client
                 case "shotgun":
                     Bolt.Spawn(from, to, Palette.Hex("ff8a3a"), 0.075f, 0.9f, 170f);
                     break;
+                case "minigun":
+                    Bolt.Spawn(from, to, Palette.Hex("ff9a4a"), 0.035f, 1.8f, 360f);
+                    break;
                 case "sniper":
                     Beam.Spawn(from, to, Palette.Hex("b58cff"), 0.075f, 0.45f, 0.8f);
                     Beam.Spawn(from, to, Color.white, 0.022f, 0.22f, 1f);

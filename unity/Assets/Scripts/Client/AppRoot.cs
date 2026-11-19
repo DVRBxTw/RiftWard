@@ -996,6 +996,9 @@ namespace RiftWard.Client
             Screens.ShowArmoryFor("saber");
             yield return Settle(0.6f);
             yield return Shot(folder, "unity-armory-saber");
+            Screens.ShowArmoryFor("minigun");
+            yield return Settle(0.6f);
+            yield return Shot(folder, "unity-armory-minigun");
             Screens.ShowArmoryFor("pistol");
             Hints.Maybe(Screens.Root, "armory", true);
             yield return Settle(0.3f);
@@ -1385,6 +1388,31 @@ namespace RiftWard.Client
                 Client.SetWeaponStateForCapture(hot, since + 0.03f);
                 yield return null;
                 yield return Shot(folder, "unity-gun-" + w);
+            }
+            // M-7 熔爐機槍: barrels at full spin and the vents glowing at high heat, first and third person.
+            {
+                var mg = new Loadout { Owned = new List<string> { "minigun" }, Equipped = new List<string> { "minigun" } };
+                mg.Rarity["minigun"] = 4;
+                Client.WeaponRarity = id => 4;
+                Client.StartOffline(0, mg, true, new AdminSettings { God = true });
+                var gs = Client.Sim;
+                gs.WaveDelay = 999f;
+                var gm = gs.Actors[Client.LocalId];
+                Client.SetView(0.12f, -0.03f);
+                yield return Settle(0.3f);
+                for (int k = 0; k < 8; k++)
+                {
+                    gm.Spin = 1f; gm.Heat = 0.85f;
+                    gs.Fire(Client.LocalId, gm.Position + Vector3.up * 1.5f + GameSim.LookDirection(0.12f + k * 0.01f, -0.02f) * 60f);
+                    yield return Settle(0.05f);
+                }
+                gm.Spin = 1f; gm.Heat = 0.85f;
+                yield return null;
+                yield return Shot(folder, "unity-gun-minigun");
+                Client.SetThirdPerson(true);
+                for (int k = 0; k < 6; k++) { gm.Spin = 1f; gm.Heat = 0.85f; yield return Settle(0.05f); }
+                yield return Shot(folder, "unity-minigun-third");
+                Client.SetThirdPerson(false);
             }
             // 光劍: a swing through a group in front (first person mid-swing), the guard pose, and third person.
             {

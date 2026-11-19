@@ -141,6 +141,7 @@ namespace RiftWard.Sim
                 w.Write(a.Id); w.WriteQ(a.Position); w.Write(a.Hp); w.Write(a.MaxHp); w.WriteAngle(a.Yaw); w.Write(a.VerticalVelocity);
                 w.Write(a.DashCooldown); w.Write(a.DashLeft); w.WriteQ(a.DashDirection); w.Write(a.Ack);
                 w.Write((short)a.Ammo); w.Write((short)a.Mag); w.Write(a.Reload); w.Write(a.ReloadTime); w.Write((byte)a.Slot);
+                w.Write((byte)Mathf.RoundToInt(Mathf.Clamp01(a.Spin) * 255)); w.Write((byte)Mathf.RoundToInt(Mathf.Clamp01(a.Heat) * 255)); w.Write(a.Overheat > 0f);
                 w.Write(a.SkillCooldown); w.Write(a.SkillMult); w.Write(a.Revive); w.Write(GameSim.EffectiveSpeed(a));
                 w.Write(a.IsAdmin && a.Admin.Fly); w.Write(a.Zoom);
                 if (full)
@@ -185,6 +186,7 @@ namespace RiftWard.Sim
                 a.Position = r.ReadQ(); a.Hp = r.ReadSingle(); a.MaxHp = r.ReadSingle(); a.Yaw = r.ReadAngle(); a.VerticalVelocity = r.ReadSingle();
                 a.DashCooldown = r.ReadSingle(); a.DashLeft = r.ReadSingle(); a.DashDirection = r.ReadQ(); a.Ack = r.ReadInt32();
                 a.Ammo = r.ReadInt16(); a.Mag = r.ReadInt16(); a.Reload = r.ReadSingle(); a.ReloadTime = r.ReadSingle(); a.Slot = r.ReadByte();
+                a.Spin = r.ReadByte() / 255f; a.Heat = r.ReadByte() / 255f; a.Overheat = r.ReadBoolean() ? 1f : 0f;
                 a.SkillCooldown = r.ReadSingle(); a.SkillMult = r.ReadSingle(); a.Revive = r.ReadSingle();
                 float speed = r.ReadSingle();
                 bool fly = r.ReadBoolean();

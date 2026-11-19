@@ -17,6 +17,7 @@ namespace RiftWard.Sim
                 case "shotgun": return ("近身汲取", $"擊殺敵人回復 {(myth ? 12 : 6)} 點生命");
                 case "sniper": return ("弱點洞察", $"爆頭傷害 +{(myth ? 80 : 40)}%");
                 case "pistol": return ("連擊快槍", $"擊殺後 2 秒內射速 +{(myth ? 70 : 40)}%");
+                case "minigun": return ("熔爐核心", $"過熱後的冷卻時間 -{(myth ? 60 : 30)}%");
                 case "saber": return ("嗜能之刃", $"每砍中一名敵人回復 {(myth ? 4 : 2)} 點生命");
                 default: return null;
             }
@@ -112,8 +113,8 @@ namespace RiftWard.Sim
         public const int PierceMinRarity = 4, PierceShards = 5, PierceGold = 20000;
         /// Extra enemies a round passes through and the damage it loses at each one. The SG-8 fires eight pellets
         /// that each pierce, so it goes through one enemy only and loses half.
-        public static int PierceExtra(string weapon) => weapon == "shotgun" ? 1 : 2;
-        public static float PierceFalloff(string weapon) => weapon == "shotgun" ? 0.5f : 0.3f;
+        public static int PierceExtra(string weapon) => weapon == "shotgun" || weapon == "minigun" ? 1 : 2;
+        public static float PierceFalloff(string weapon) => weapon == "shotgun" || weapon == "minigun" ? 0.5f : 0.3f;
 
         /// Shards for the first clear of a region on a tier (on top of the keys): 噩夢 2, 地獄 3.
         /// Mirrors FIRST_CLEAR_SHARDS in the account service.
@@ -156,7 +157,14 @@ namespace RiftWard.Sim
             new RegionDef("赫利奧王座", "皇帝親自坐鎮王座大廳。\n突破近衛軍，在王座前結束這場戰爭。", 7, new Color32(0xff, 0xd3, 0x6b, 255)),
         };
 
-        public static readonly string[] WeaponOrder = { "pistol", "rifle", "shotgun", "sniper", "saber" };
+        public static readonly string[] WeaponOrder = { "pistol", "rifle", "shotgun", "sniper", "minigun", "saber" };
+        /// Weapons only found in a limited supply drop, never in the regular weapon supply.
+        public static readonly HashSet<string> LimitedWeapons = new HashSet<string> { "minigun" };
+        /// M-7 熔爐機槍: barrels spin up while the trigger is held (firing starts at MinigunMinSpin, full rate at 1),
+        /// each shot adds heat (MinigunHeatShots shots from cold to full); heat adds damage, full heat locks the
+        /// gun for MinigunCool seconds. Firing slows the walk.
+        public const float MinigunSpinUp = 0.6f, MinigunSpinDown = 0.8f, MinigunMinSpin = 0.25f, MinigunHeatShots = 90f,
+            MinigunCool = 2f, MinigunHeatBonus = 0.3f, MinigunFireSpeed = 0.6f, MinigunIdleCool = 2.5f;
 
         // Melee (光劍): left click swings through a frontal arc, right click blocks bullets from the front.
         /// Aiming down sights: spread multiplier (shotguns use AimSpreadPellets) and walk speed multiplier.
@@ -172,6 +180,7 @@ namespace RiftWard.Sim
             ["rifle"] = new WeaponDef("rifle", "AR-27 突擊步槍", "步槍", "全自動高射速，適合壓制大群敵人。", 17f, 0.1f, 30, 1.8f, 1, 0.012f, 2f, 0.75f, 400, 0.019f, 0.007f, 1.3f),
             ["shotgun"] = new WeaponDef("shotgun", "SG-8 霰彈槍", "霰彈", "一次射出 7 顆彈丸，近距離威力驚人。", 13f, 0.8f, 6, 2.2f, 7, 0.07f, 1.5f, 0.85f, 600, 0.065f, 0.015f, 1.4f),
             ["sniper"] = new WeaponDef("sniper", "LR-50 狙擊槍", "狙擊", "單發高傷害，爆頭 3 倍。右鍵開鏡。", 95f, 1.0f, 5, 2.4f, 1, 0f, 3f, 0.35f, 800, 0.09f, 0.01f, 1.6f),
+            ["minigun"] = new WeaponDef("minigun", "M-7 熔爐機槍", "機槍", "六管轉輪：越轉越快、越熱越痛，過熱需冷卻 2 秒；開火時移動變慢。", 11f, 0.05f, 120, 3.4f, 1, 0.03f, 1.5f, 0.85f, 0, 0.006f, 0.008f, 1.5f),
             ["saber"] = new WeaponDef("saber", "EX-1 能量光劍", "光劍", "高能電漿刃。左鍵揮砍前方扇形，一次最多砍中 3 名敵人（最近的一名全額，其餘 60%）；右鍵格擋正面子彈。", 55f, 0.42f, 1, 0f, 1, 0f, 1f, 1f, 0, 0.006f, 0f, 1.5f, melee: true, range: 2.8f),
         };
 

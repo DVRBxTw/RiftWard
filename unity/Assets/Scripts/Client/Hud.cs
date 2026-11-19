@@ -17,7 +17,7 @@ namespace RiftWard.Client
         readonly Text tierTag;
         readonly RectTransform tierBox;
         readonly Text shieldValue, shieldMax, dashLabel, dashTime, weaponName, weaponRarity, ammo, ammoMax, hint, revive, toast, bossName, lowAmmo;
-        readonly Ui.Bar xpBar, shieldBar, skillBar, dashBar, reloadBar, bossBar;
+        readonly Ui.Bar xpBar, shieldBar, skillBar, dashBar, reloadBar, bossBar, heatBar;
         readonly RectTransform bossRoot, toastPill, radar, radarDots, killFeed, damageLayer, hitRoot;
         readonly Image bossEnrage;
         readonly Text[] slotLabels = new Text[2];
@@ -204,6 +204,9 @@ namespace RiftWard.Client
             ammoMax.rectTransform.Place(new Vector2(1, 0), new Vector2(-70, 22), new Vector2(60, 24), new Vector2(0, 0));
             reloadBar = new Ui.Bar(weapon, new Color(1, 1, 1, 0.15f), Palette.Bone);
             reloadBar.Root.Place(new Vector2(0, 0), new Vector2(18, 14), new Vector2(294, 3), new Vector2(0, 0));
+            // M-7 熔爐機槍 heat, just above the magazine bar; hidden for every other weapon.
+            heatBar = new Ui.Bar(weapon, new Color(1, 1, 1, 0.1f), Palette.Amber);
+            heatBar.Root.Place(new Vector2(0, 0), new Vector2(18, 21), new Vector2(294, 4), new Vector2(0, 0));
             hintPlate = Ui.Box(root, new Color(0.04f, 0.045f, 0.05f, 0.55f), "HintPlate").rectTransform;
             hintPlate.Place(new Vector2(1, 0), new Vector2(-28, 146), new Vector2(300, 22), new Vector2(1, 0));
             hint = Mono(root, "", 13, Palette.Bone);
@@ -676,6 +679,15 @@ namespace RiftWard.Client
                 reloadBar.Value = reloading ? 1f - local.Reload / local.ReloadTime : (float)local.Ammo / Mathf.Max(1, local.Mag);
                 reloadBar.Color = reloading ? Palette.Amber : Palette.Bone;
                 lowAmmo.text = lowMag && local.Alive ? (local.Ammo == 0 ? $"彈匣已空 · 按 {Bindings.Name(Bindings.Action.Reload)} 換彈" : $"彈藥不足 · 按 {Bindings.Name(Bindings.Action.Reload)} 換彈") : "";
+                bool minigun = local.WeaponId == "minigun";
+                heatBar.Root.gameObject.SetActive(minigun);
+                if (minigun)
+                {
+                    bool locked = local.Overheat > 0;
+                    heatBar.Value = locked ? 1f : local.Heat;
+                    heatBar.Color = locked ? (Mathf.Repeat(Time.time * 6f, 1f) < 0.5f ? Palette.Danger : Palette.Hex("7a2a24")) : Color.Lerp(Palette.Amber, Palette.Danger, local.Heat);
+                    if (locked && local.Alive) lowAmmo.text = "過熱 · 槍管冷卻中";
+                }
                 lowAmmo.color = new Color(Palette.Amber.r, Palette.Amber.g, Palette.Amber.b, 0.6f + 0.4f * Mathf.Sin(Time.time * 8f));
                 if (Changed(hint, (thirdPerson ? 1 : 0) | ((long)Bindings.Key(Bindings.Action.Reload) << 1) | ((long)Bindings.Key(Bindings.Action.View) << 20) | (melee ? 1L << 40 : 0) | ((long)Bindings.Key(Bindings.Action.Inspect) << 41)))
                     hint.text = melee ? $"左鍵 揮砍  ·  右鍵 格擋  ·  {Bindings.Name(Bindings.Action.View)} {(thirdPerson ? "第三人稱" : "第一人稱")}  ·  Esc 選單"
