@@ -59,7 +59,7 @@ namespace RiftWard.Sim
         /// XP needed to go from this account level to the next; mirrors level_for() in server/service.py.
         public static int AccountLevelNeed(int level) => 100 + 50 * level;
 
-        public const string Version = "0.7.24-unity.1";
+        public const string Version = "0.7.25-unity.1";
 
         // Player movement
         public const float EyeHeight = 1.65f;
@@ -124,6 +124,11 @@ namespace RiftWard.Sim
         public static float EffectiveLevel(int level) => Mathf.Min(level, SoftUpgradeLevel) + 0.5f * Mathf.Max(0, level - SoftUpgradeLevel);
 
         public static int XpForLevel(int level) => Mathf.RoundToInt(XpBase * Mathf.Pow(XpGrowth, level - 1));
+        /// 無盡 stops the XP curve climbing past this level (the exponential curve starved later waves of picks).
+        public const int EndlessXpLevelCap = 14;
+        public static int XpNeed(int level, bool endless) => XpForLevel(endless ? Mathf.Min(level, EndlessXpLevelCap) : level);
+        /// 無盡 damage picks beyond the normal cap multiply damage by 1 + this × rarity instead of adding 20%.
+        public const float EndlessDamagePick = 0.12f;
 
         /// Cover walls: center x, center z, half x, half z, height. Block movement and enemy bullets.
         public static readonly float[][] Covers =
