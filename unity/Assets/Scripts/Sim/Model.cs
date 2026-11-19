@@ -126,6 +126,8 @@ namespace RiftWard.Sim
 
         // Per-mission combat record (sent to the account service as lifetime stats).
         public int StatKills, StatHeadshots, StatShots, StatHits;
+        /// Damage dealt to enemies this mission (weapons and gadgets), for the team contribution table.
+        public float StatDamage;
         /// Achievement records: times downed, teammates revived, bosses and elites the team defeated while this actor was present.
         public int StatDowns, StatRevives, StatBossKills, StatEliteKills;
         public bool WasAlive = true;

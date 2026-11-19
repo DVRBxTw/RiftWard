@@ -29,6 +29,10 @@ namespace RiftWard.Client
         public string RoomCode { get; private set; } = "";
         public bool InRoom => RoomCode != "";
         public bool IsLeader => leaderId == Net.LocalId;
+        public int LeaderId => leaderId;
+        public sealed class PartyMember { public int Id; public string Name; public string Weapon; public int Rarity; }
+        /// Everyone in the current room (from the server's lobby message), in join order.
+        public readonly List<PartyMember> PartyMembers = new List<PartyMember>();
         public int PartySize => partySize;
 
         public SocialOverlay Overlay { get; private set; }
@@ -66,6 +70,33 @@ namespace RiftWard.Client
             PendingInvite = null;
             if (inNetMission) { Overlay.Toast("請先結束目前的任務再加入房間"); return; }
             JoinRoom(code);
+        }
+
+        /// Tells the game server we sent a friend request, so the other player sees it pop up right away.
+        public void NotifyFriendRequest(string username) { if (Net.Welcomed && !string.IsNullOrWhiteSpace(username)) Net.Send(Msg.FriendRequest, w => w.Write(username.Trim())); }
+
+        /// Accept or refuse a friend request from its pop-up card.
+        public void RespondFriend(string username, bool accept)
+        {
+            Api.Post("/api/friends/respond", new Dictionary<string, object> { ["username"] = username, ["accept"] = accept }, result =>
+            {
+                if (!result.Bool("ok")) { Overlay.Toast(result.Str("error", "操作失敗")); return; }
+                UpdateProfile(Profile.From(result.Obj("profile")), false);
+                RefreshFriends();
+                Overlay.Toast(accept ? $"{username} 已成為你的好友" : $"已拒絕 {username} 的好友邀請");
+            });
+        }
+
+        /// Friend requests that arrived while offline pop up once after connecting, one by one.
+        void ShowWaitingFriendRequests()
+        {
+            if (Profile == null || Profile.FriendRequests <= 0) return;
+            Api.Post("/api/friends/list", null, result =>
+            {
+                if (!result.Bool("ok")) return;
+                foreach (var f in (result.Arr("incoming") ?? new List<object>()).OfType<Dictionary<string, object>>())
+                    if (!string.IsNullOrEmpty(f.Str("username"))) Overlay.ShowFriendRequest(f.Str("username"));
+            });
         }
 
         public void DeclineInvite(int from)
@@ -107,7 +138,7 @@ namespace RiftWard.Client
             Client.Setup();
             Api = new AccountApi(this);
             Screens = new Screens(this);
-            Overlay = new SocialOverlay { Join = AcceptInvite, Decline = DeclineInvite };
+            Overlay = new SocialOverlay { Join = AcceptInvite, Decline = DeclineInvite, RespondFriend = RespondFriend, Hold = () => inNetMission || Client.Sim != null };
             FriendPresence.CameOnline += name => Overlay.Toast($"好友 {name} 上線了");
             Chat = new ChatHud { Send = SendChat };
             Net.Message += OnNetMessage;
@@ -185,6 +216,7 @@ namespace RiftWard.Client
             {
                 case Msg.Welcome:
                     Debug.Log("UNITY_CLIENT_WELCOME id=" + Net.LocalId);
+                    if (!netTest) ShowWaitingFriendRequests();
                     if (netTest) { JoinRoom("TEST"); SendChat(ChatChannel.World, "net-test hello " + Net.LocalId); }
                     break;
                 case Msg.Lobby:
@@ -195,9 +227,14 @@ namespace RiftWard.Client
                     lobbyMode = r.ReadString();
                     RoomCode = r.ReadString();
                     { int packed = r.ReadInt32(); SelectedDifficulty = Defs.TierOf(packed); SelectedEndless = Defs.IsEndless(packed); }
+                    PartyMembers.Clear();
+                    for (int n = r.ReadInt32(), i = 0; i < n; i++)
+                        PartyMembers.Add(new PartyMember { Id = r.ReadInt32(), Name = r.ReadString(), Weapon = r.ReadString(), Rarity = r.ReadInt32() });
                     homeStatus = !InRoom ? "已連線 · 單人任務（建立或加入房間即可組隊）"
                         : leaderId == Net.LocalId ? $"房號 {RoomCode} · 隊長 · {partySize} / 4" : $"房號 {RoomCode} · 等待隊長部署 · {partySize} / 4";
                     if (Screens.Mode == "home" || Screens.Mode == "connecting") ShowHome();
+                    // A teammate dropped while the menu was open: now alone, reopen it so it really freezes the mission.
+                    if (inNetMission && partySize <= 1 && Client.Menus.PauseOpenUnfrozen) { Client.Menus.ClosePause(); Client.Menus.OpenPause(); }
                     if (netTest && leaderId == Net.LocalId && partySize >= 2 && lobbyMode == "lobby" && !inNetMission && !testDone) Net.Send(Msg.RequestDeploy, w => { w.Write(0); w.Write(0); });
                     break;
                 case Msg.Deploy:
@@ -219,9 +256,10 @@ namespace RiftWard.Client
                 case Msg.Events: Client.ApplyEvents(r); break;
                 case Msg.BuffOffer:
                     int level = r.ReadInt32();
+                    int superPick = r.ReadByte();
                     var offer = new int[r.ReadInt32()];
                     for (int i = 0; i < offer.Length; i++) offer[i] = r.ReadInt32();
-                    Client.ApplyBuffOffer(level, offer);
+                    Client.ApplyBuffOffer(level, offer, superPick);
                     if (netTest) { Client.ChooseBuff(offer[0]); testPicks++; }
                     break;
                 case Msg.Finish:
@@ -232,6 +270,7 @@ namespace RiftWard.Client
                     string grade = r.ReadString();
                     var record = new[] { r.ReadInt32(), r.ReadInt32(), r.ReadInt32(), r.ReadInt32() };
                     int finishedTier = r.ReadInt32();
+                    var team = Menus.Contribution.Read(r);
                     Client.MarkFinished(success);
                     int finishedWave = Client.Sim?.Wave ?? 0;
                     var progress = Profile == null ? null : new Menus.ResultProgress
@@ -242,7 +281,7 @@ namespace RiftWard.Client
                         FirstClearKeys = success && finishedTier > clearedAtDeploy ? Defs.FirstClearKeys(finishedTier) : 0,
                         FirstClearShards = success && finishedTier > clearedAtDeploy ? Defs.FirstClearShards(finishedTier) : 0,
                     };
-                    Client.Menus.ShowResult(success, finishedRegion, kills, elapsed, gold, (Profile?.Gold ?? 0) + gold, grade, record, progress, finishedTier);
+                    Client.Menus.ShowResult(success, finishedRegion, kills, elapsed, gold, (Profile?.Gold ?? 0) + gold, grade, record, progress, finishedTier, team);
                     RefreshMe();
                     Debug.Log($"UNITY_CLIENT_RESULT success={success} gold={gold} picks={testPicks}");
                     if (netTest) StartCoroutine(TestFinish(success, gold));
@@ -257,6 +296,11 @@ namespace RiftWard.Client
                     var chatLine = ChatLog.Read(r);
                     ChatLog.Add(chatLine);
                     if (netTest && chatLine.Channel == ChatChannel.World && Profile != null && chatLine.AccountId != Profile.Id) testChats++;
+                    break;
+                case Msg.FriendRequestIn:
+                    string requester = r.ReadString();
+                    Overlay.ShowFriendRequest(requester);
+                    RefreshMe();
                     break;
                 case Msg.Presence: FriendPresence.Read(r); break;
                 case Msg.PingMark:
@@ -360,6 +404,7 @@ namespace RiftWard.Client
 
         public void Logout()
         {
+            patchNotesChecked = false;
             Api.Post("/api/logout", null, _ => { });
             Net.Close();
             SessionStore.Forget();
@@ -392,7 +437,15 @@ namespace RiftWard.Client
             }
             Client.ShowShowcase(Mathf.Clamp(SelectedRegion, 0, Profile.Unlocked));
             Screens.ShowHome(homeStatus);
+            // First visit to the base on a new version: show what changed, once (later via 「更新內容」 in the top bar).
+            if (!patchNotesChecked && Arg("-capture") == null && !netTest)
+            {
+                patchNotesChecked = true;
+                if (PatchNotes.DueFor(Profile.Id)) PatchNotes.Show(Overlay.Root);
+            }
         }
+
+        bool patchNotesChecked;
 
         /// True the first time a story beat becomes due for this account (then remembered).
         bool StoryDue(string beat, bool reached)
@@ -443,8 +496,20 @@ namespace RiftWard.Client
             if (Net.Welcomed)
             {
                 Client.Menus.HideAll();
-                if (leaderId == Net.LocalId) Net.Send(Msg.RequestDeploy, w => { w.Write(SelectedRegion); w.Write(Defs.PackTier(SelectedDifficulty, SelectedEndless && EndlessOpen(SelectedRegion))); });
-                else if (inNetMission) { LeaveNetMission(); ShowHome(); }
+                if (leaderId == Net.LocalId)
+                {
+                    Net.Send(Msg.RequestDeploy, w => { w.Write(SelectedRegion); w.Write(Defs.PackTier(SelectedDifficulty, SelectedEndless && EndlessOpen(SelectedRegion))); });
+                    // From the result sheet: wait at the base, so a refused start (e.g. a teammate lacks the tier) never leaves a blank screen.
+                    if (inNetMission) { LeaveNetMission(); ShowHome(); }
+                }
+                else if (inNetMission)
+                {
+                    // Only the leader can redeploy: leave the result sheet and wait for them at the base.
+                    Net.Send(Msg.RequestHome);
+                    LeaveNetMission();
+                    ShowHome();
+                    Overlay.Toast("等待隊長重新部署");
+                }
                 return;
             }
             Client.Menus.HideAll();
@@ -479,7 +544,7 @@ namespace RiftWard.Client
             bool success = sim.State == MissionState.Victory;
             sim.Actors.TryGetValue(Client.LocalId, out var me);
             var record = me == null ? new int[4] : new[] { me.StatKills, me.StatHeadshots, me.StatShots, me.StatHits };
-            Client.Menus.ShowResult(success, sim.Region, sim.Kills, sim.Elapsed, -1, Profile?.Gold ?? 0, sim.MissionGrade(), record, null, sim.Difficulty);
+            Client.Menus.ShowResult(success, sim.Region, sim.Kills, sim.Elapsed, -1, Profile?.Gold ?? 0, sim.MissionGrade(), record, null, sim.Difficulty, Menus.Contribution.FromSim(sim));
         }
 
         public void PushAdmin()
@@ -659,9 +724,16 @@ namespace RiftWard.Client
             ShowHome();
             yield return Settle(0.8f);
             yield return Shot(folder, "unity-home-wide");
-            Screens.PreviewRoom = false;
             Screen.SetResolution(1280, 800, FullScreenMode.Windowed);
             yield return Settle(0.5f);
+            ShowHome();
+            yield return Settle(0.8f);
+            yield return Shot(folder, "unity-home-room");
+            PatchNotes.Show(Overlay.Root);
+            yield return Settle(0.4f);
+            yield return Shot(folder, "unity-patch-notes");
+            foreach (Transform t in Overlay.Root) if (t.name == "PatchNotes") Destroy(t.gameObject);
+            Screens.PreviewRoom = false;
             Screens.ShowArmory();
             yield return Settle(0.4f);
             yield return Shot(folder, "unity-armory");
@@ -1121,7 +1193,7 @@ namespace RiftWard.Client
             Debug.Log($"PAUSE_CHECK frozen={Mathf.Approximately(sim.Elapsed, pausedAt)} elapsed={pausedAt:0.00}->{sim.Elapsed:0.00}");
             yield return Shot(folder, "unity-pause");
             Client.Menus.HideAll();
-            Client.Menus.ShowResult(true, 0, 86, 742, 740, 1980, "A", new[] { 41, 13, 290, 176 }, new Menus.ResultProgress { Xp = 301, Level = 3, LevelXp = 180, Wave = 20, BestWave = 14, Unlocked = 2, FirstClearKeys = 5 }, 1);
+            Client.Menus.ShowResult(true, 0, 86, 742, 740, 1980, "A", new[] { 41, 13, 290, 176 }, new Menus.ResultProgress { Xp = 301, Level = 3, LevelXp = 180, Wave = 20, BestWave = 14, Unlocked = 2, FirstClearKeys = 5 }, 1, new List<Menus.Contribution> { new Menus.Contribution { Id = Client.LocalId, Name = "DVRBXTW", Kills = 41, Damage = 48210, Shots = 290, Hits = 176, Headshots = 13, Revives = 2 }, new Menus.Contribution { Id = 11, Name = "NightOwl", Kills = 33, Damage = 39870, Shots = 140, Hits = 101, Headshots = 22, Downs = 1 }, new Menus.Contribution { Id = 12, Name = "Kairo_77", Kills = 12, Damage = 15400, Shots = 410, Hits = 150, Headshots = 3, Downs = 3, Revives = 1 } });
             Client.Menus.SetResultNotes(ResultNotes(Profile));
             yield return Settle(0.2f);
             yield return Shot(folder, "unity-result");

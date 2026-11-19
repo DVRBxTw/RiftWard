@@ -83,7 +83,7 @@ namespace RiftWard.Sim
             a.Speed = Defs.BaseSpeed; a.DamageMult = 1; a.RateMult = 1; a.ReloadMult = 1; a.SkillMult = 1;
             a.MagBonus = 0; a.Regen = 0; a.Critical = 0; a.Lifesteal = 0; a.Explode = 0; a.HealBudget = 0; System.Array.Clear(a.BuffStacks, 0, a.BuffStacks.Length);
             a.SkillCooldown = 0; a.Revive = 0; a.Slot = 0; a.Reload = 0;
-            a.StatKills = 0; a.StatHeadshots = 0; a.StatShots = 0; a.StatHits = 0;
+            a.StatKills = 0; a.StatHeadshots = 0; a.StatShots = 0; a.StatHits = 0; a.StatDamage = 0;
             a.StatDowns = 0; a.StatRevives = 0; a.StatBossKills = 0; a.StatEliteKills = 0; a.WasAlive = true; a.AimFlags = 0;
             a.AmmoByWeapon.Clear();
             RefreshWeapon(a);
@@ -761,6 +761,7 @@ namespace RiftWard.Sim
                 if (head) a.StatHeadshots++;
                 float headMult = head ? a.HeadMultiplier * (a.WeaponId == "sniper" ? 1f + PerkStrength(a, 0.4f) : 1f) : 1f;
                 dealt = damage * headMult * DamageMultiplier(best, dir, head);
+                Credit(a, best, dealt);
                 best.Hp -= dealt;
                 if (head && a.WeaponId == "rifle" && PerkStrength(a, 1f) > 0) a.PerkCrits = Mathf.RoundToInt(PerkStrength(a, 1f));
                 if (best.Hp <= 0)
@@ -813,6 +814,7 @@ namespace RiftWard.Sim
                 hits++;
                 var chest = e.Position + Vector3.up * e.Scale;
                 float dealt = damage * DamageMultiplier(e, (chest - eye).normalized, false);
+                Credit(a, e, dealt);
                 e.Hp -= dealt;
                 bool killed = false;
                 Heal(a, PerkStrength(a, 2f));   // 嗜能之刃
@@ -896,6 +898,7 @@ namespace RiftWard.Sim
                         Vector3 origin = a.Position + Defs.DroneOffset(i, a.Drones, Elapsed);
                         Vector3 end = e.Position + Vector3.up * 1.1f * e.Scale;
                         float dealt = Defs.DroneDamage * scale * a.DroneDamageMult * a.DamageMult * (a.DroneEvolved ? 2f : 1f);
+                        Credit(a, e, dealt);
                         e.Hp -= dealt;
                         bool killed = e.Hp <= 0;
                         if (killed) KillEnemy(e, a.Id);
@@ -940,6 +943,7 @@ namespace RiftWard.Sim
                         {
                             if (!Enemies.ContainsKey(e.Id)) continue;
                             if (new Vector2(e.Position.x - blade.x, e.Position.z - blade.z).magnitude > 0.8f + 0.4f * e.Scale) continue;
+                            Credit(a, e, damage);
                             e.Hp -= damage;
                             if (e.Hp <= 0) KillEnemy(e, a.Id);
                         }
@@ -984,6 +988,7 @@ namespace RiftWard.Sim
                     {
                         hit.Add(current.Id);
                         Vector3 to = current.Position + Vector3.up * current.Scale;
+                        Credit(a, current, damage);
                         current.Hp -= damage;
                         bool killed = current.Hp <= 0;
                         Shots.Add(new ShotEvent { Shooter = GadgetShooter(a.Id, GadgetLightning), Origin = from, End = to, Hit = true, Dealt = damage, Killed = killed });
@@ -1032,6 +1037,12 @@ namespace RiftWard.Sim
             }
         }
 
+        /// Adds damage to a player's contribution, counting only the health the enemy actually had left.
+        static void Credit(Actor a, Enemy e, float amount)
+        {
+            if (a != null && e.Hp > 0) a.StatDamage += Mathf.Min(amount, e.Hp);
+        }
+
         void Explode(Vector3 position, float radius, float damage, int owner, Color32 color)
         {
             foreach (var e in Enemies.Values.ToList())
@@ -1039,6 +1050,7 @@ namespace RiftWard.Sim
                 if (e.Hp <= 0 || !Enemies.ContainsKey(e.Id)) continue;
                 float d = Vector3.Distance(e.Position + Vector3.up, position);
                 if (d >= radius) continue;
+                if (Actors.TryGetValue(owner, out var credited)) Credit(credited, e, damage * (1f - 0.5f * d / radius));
                 e.Hp -= damage * (1f - 0.5f * d / radius);
                 if (e.Hp <= 0) KillEnemy(e, owner);
             }
@@ -1444,7 +1456,7 @@ namespace RiftWard.Sim
                     }
                     else if (p.Kind == PickupKind.SuperChest)
                     {
-                        // Shared: everyone still standing gets the picks, so it never matters who touches it.
+                        // Shared: the whole team gets the picks (downed players too), so it never matters who touches it.
                         SuperRounds += Defs.SuperChestPicks;
                         string who = string.IsNullOrEmpty(a.Name) ? "" : a.Name + " ";
                         Announcements.Add($"{who}開啟超級寶箱：全隊獲得 {Defs.SuperChestPicks} 次強化");
@@ -1485,11 +1497,12 @@ namespace RiftWard.Sim
             BuffPending = true;
             BuffWait = 0;
             BuffOffers.Clear();
-            foreach (var a in Actors.Values.Where(a => a.Alive))
+            // Super chest picks go to the whole team, downed players included: the chest is shared.
+            foreach (var a in Actors.Values.Where(a => a.Alive || SuperPick > 0))
             {
                 var offer = RollOffer(a);
                 if (offer.Length > 0) BuffOffers[a.Id] = offer;   // a fully maxed player skips the pick
-                else a.Hp = a.MaxHp;
+                else if (a.Alive) a.Hp = a.MaxHp;
             }
             if (BuffOffers.Count == 0) ResolveBuffs();
         }

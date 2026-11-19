@@ -139,8 +139,91 @@ namespace RiftWard.Client
         }
 
         /// Sub-navigation inside the 裝備 tab.
-        void GearTabs(RectTransform pad, string active) =>
+        void GearTabs(RectTransform pad, string active)
+        {
             SubTabs(pad, new[] { "天賦與裝備", "武器" }, new Action[] { ShowCharacter, ShowArmory }, active == "character" ? 0 : 1);
+            var best = Ui.Button(pad, "一鍵裝備最強武器與裝備", EquipBest, 15, Palette.Ink, Palette.Amber, Palette.Amber);
+            best.GetComponent<RectTransform>().Place(new Vector2(0, 1), new Vector2(156 * 2 + 16, 0), new Vector2(240, 40), new Vector2(0, 1));
+            best.interactable = !equippingBest;
+        }
+
+        bool equippingBest;
+
+        /// Sustained damage per second of one weapon copy: what "strongest" means for 一鍵裝備.
+        static float WeaponScore(string id, int rarity, Dictionary<string, int> levels)
+        {
+            if (!Defs.Weapons.TryGetValue(id, out var def)) return 0;
+            int Lv(string k) => levels != null && levels.TryGetValue(k, out var v) ? Mathf.Clamp(v, 0, Defs.MaxUpgradeLevel) : 0;
+            var st = def.StatsAt(Lv("damage"), Lv("mag"), Lv("reload"), Lv("over"));
+            float hit = st.Damage * Mathf.Max(1, st.Pellets) * Defs.WeaponRarityMult[Mathf.Clamp(rarity, 0, Defs.WeaponRarityMult.Length - 1)];
+            float cycle = def.Melee ? st.Interval : st.Interval + st.Reload / Mathf.Max(1, st.Mag);
+            return hit / Mathf.Max(0.05f, cycle);
+        }
+
+        /// 一鍵裝備: the strongest copy of each owned weapon, the two strongest weapons equipped, and the best item
+        /// (rarity, then enhancement, then total stats) in every gear slot. Sends only the changes, one after another.
+        void EquipBest()
+        {
+            var p = app.Profile;
+            if (p == null || equippingBest) return;
+            var lo = p.Loadout;
+            var steps = new List<(string path, Dictionary<string, object> data)>();
+            var picks = new List<(string id, float score)>();
+            foreach (var id in lo.Owned)
+            {
+                int active = lo.Active.TryGetValue(id, out var a) ? a : 0;
+                int bestIndex = active;
+                float bestScore = WeaponScore(id, lo.RarityOf(id), lo.Levels.TryGetValue(id, out var cur) ? cur : null);
+                if (lo.Copies.TryGetValue(id, out var copies))
+                    for (int i = 0; i < copies.Count; i++)
+                    {
+                        float s = WeaponScore(id, copies[i], lo.CopyLevel(id, i));
+                        if (s > bestScore + 0.001f) { bestScore = s; bestIndex = i; }
+                    }
+                picks.Add((id, bestScore));
+                if (bestIndex != active)
+                    steps.Add(("/api/weapon/select", new Dictionary<string, object> { ["weapon"] = id, ["index"] = bestIndex, ["rarity"] = copies[bestIndex] }));
+            }
+            var kit = picks.OrderByDescending(x => x.score).Take(2).Select(x => x.id).ToList();
+            // Only the two weapons that end up equipped need their best copy switched in.
+            steps.RemoveAll(s => !kit.Contains((string)s.data["weapon"]));
+            if (kit.Count > 0 && !(kit.Count == lo.Equipped.Count && kit.All(lo.Equipped.Contains)))
+                steps.Add(("/api/shop/equip", new Dictionary<string, object> { ["weapons"] = kit.Cast<object>().ToList() }));
+            foreach (var slot in p.Inventory.Select(i => i.Slot).Distinct().ToList())
+            {
+                var top = p.Inventory.Where(i => i.Slot == slot)
+                    .OrderByDescending(i => i.Rarity).ThenByDescending(i => i.Level).ThenByDescending(i => i.Stats.Values.Sum()).First();
+                if (!(p.Equipment.TryGetValue(slot, out var worn) && worn == top.Id))
+                    steps.Add(("/api/gear/equip", new Dictionary<string, object> { ["item"] = top.Id }));
+            }
+            if (steps.Count == 0) { app.Overlay.Toast("已經是最強配置"); return; }
+            equippingBest = true;
+            string mode = Mode;
+            void Next(int i)
+            {
+                if (i >= steps.Count)
+                {
+                    equippingBest = false;
+                    app.Overlay.Toast("已裝備最強武器與裝備");
+                    if (Mode == mode) { if (mode == "character") ShowCharacter(); else ShowArmory(); }
+                    return;
+                }
+                app.Api.Post(steps[i].path, steps[i].data, result =>
+                {
+                    if (!result.Bool("ok"))
+                    {
+                        equippingBest = false;
+                        app.Overlay.Toast(result.Str("error", "一鍵裝備失敗"));
+                        if (Mode == mode) { if (mode == "character") ShowCharacter(); else ShowArmory(); }
+                        return;
+                    }
+                    app.UpdateProfile(Profile.From(result.Obj("profile")), i == steps.Count - 1);
+                    Next(i + 1);
+                });
+            }
+            Next(0);
+            if (Mode == "character") ShowCharacter(); else if (Mode == "armory") ShowArmory();
+        }
 
         /// Sub-navigation inside the 任務 tab; the 成就 tab carries a dot while a tier waits to be claimed.
         void MissionTabs(RectTransform pad, int active)
@@ -295,6 +378,60 @@ namespace RiftWard.Client
 
         // ------------------------------------------------------------ home
 
+        /// The room's lineup on the home screen: each member's soldier, in their team colour and holding the gun they
+        /// will deploy with, so joining a party visibly puts you in it. Empty seats stay as outlines.
+        void PartyRow(RectTransform body, float top, float height)
+        {
+            var members = PreviewRoom
+                ? new List<AppRoot.PartyMember>
+                {
+                    new AppRoot.PartyMember { Id = app.Net.LocalId, Name = app.Profile?.Username ?? "你", Weapon = app.Profile?.Loadout.Equipped.FirstOrDefault() ?? "rifle", Rarity = 3 },
+                    new AppRoot.PartyMember { Id = 11, Name = "NightOwl", Weapon = "sniper", Rarity = 4 },
+                    new AppRoot.PartyMember { Id = 12, Name = "Kairo_77", Weapon = "shotgun", Rarity = 2 },
+                }
+                : app.PartyMembers;
+            int leader = PreviewRoom ? app.Net.LocalId : app.LeaderId;
+            var panel = Ui.Box(body, new Color(0.063f, 0.067f, 0.075f, 0.92f), "Party").rectTransform;
+            panel.Place(new Vector2(1, 1), new Vector2(-40, -top), new Vector2(520, height), new Vector2(1, 1));
+            Caps(panel, $"隊伍 · {members.Count} / 4").rectTransform.Place(new Vector2(0, 1), new Vector2(20, -10), new Vector2(300, 16), new Vector2(0, 1));
+            var row = Ui.HStack(panel, 10);
+            row.Place(new Vector2(0.5f, 0), new Vector2(0, 12), new Vector2(480, height - 42), new Vector2(0.5f, 0));
+            float modelSize = height - 42 - 34;
+            for (int seat = 0; seat < 4; seat++)
+            {
+                var cell = Ui.Box(row, new Color(1, 1, 1, 0.03f), "Seat").rectTransform;
+                var line = cell.gameObject.AddComponent<Outline>();
+                line.effectDistance = new Vector2(1, -1);
+                if (seat >= members.Count)
+                {
+                    line.effectColor = Palette.Line;
+                    Ui.Label(cell, "空位", 13, Palette.Hex("6a6d71"), TextAnchor.MiddleCenter).rectTransform.Fill();
+                    continue;
+                }
+                var m = members[seat];
+                bool me = m.Id == app.Net.LocalId;
+                Color color = me ? Palette.Player : Art.TeamColors[Mathf.Abs(m.Id) % Art.TeamColors.Length];
+                line.effectColor = me ? Palette.Amber : new Color(color.r, color.g, color.b, 0.6f);
+                string weapon = string.IsNullOrEmpty(m.Weapon) ? "rifle" : m.Weapon;
+                int rarity = m.Rarity;
+                var model = ModelPreview.Create(cell, t =>
+                {
+                    var soldier = Models.Soldier(color);
+                    soldier.transform.SetParent(t, false);
+                    soldier.GetComponent<CharacterRig>()?.SetWeapon(weapon, rarity);
+                }, 192, 30f, 6f);
+                model.rectTransform.Place(new Vector2(0.5f, 1), new Vector2(0, -16), new Vector2(modelSize, modelSize), new Vector2(0.5f, 1));
+                var name = Ui.Label(cell, m.Name, 13, me ? Palette.Amber : Palette.Bone, TextAnchor.MiddleCenter, me);
+                name.rectTransform.Place(new Vector2(0.5f, 0), new Vector2(0, 6), new Vector2(108, 18), new Vector2(0.5f, 0));
+                name.resizeTextForBestFit = true; name.resizeTextMinSize = 9; name.resizeTextMaxSize = 13;
+                if (m.Id == leader || me)
+                {
+                    var tag = Ui.Label(cell, m.Id == leader ? (me ? "隊長 · 你" : "隊長") : "你", 11, m.Id == leader ? Palette.Amber : Palette.Muted, TextAnchor.UpperCenter, true);
+                    tag.rectTransform.Place(new Vector2(0.5f, 1), new Vector2(0, -3), new Vector2(108, 14), new Vector2(0.5f, 1));
+                }
+            }
+        }
+
         public void ShowHome(string status)
         {
             var r = Begin("home", false);
@@ -395,11 +532,11 @@ namespace RiftWard.Client
             {
                 Ui.Rect(stack, "Gap").Sized(10);
                 Widgets.Section(stack, "多人房間").Sized(26);
-                if (app.InRoom)
+                if (app.InRoom || PreviewRoom)
                 {
                     var info = Ui.HStack(stack, 8).Sized(48);
-                    Ui.Label(info, app.RoomCode, 30, Palette.Amber, TextAnchor.MiddleLeft, true);
-                    Ui.Label(info, $"{app.PartySize} / 4 名隊員\n{(app.IsLeader ? "你是隊長，把房號告訴隊友" : "等待隊長部署")}", 13, Palette.Muted, TextAnchor.MiddleLeft);
+                    Ui.Label(info, PreviewRoom ? "K7QM" : app.RoomCode, 30, Palette.Amber, TextAnchor.MiddleLeft, true);
+                    Ui.Label(info, $"{(PreviewRoom ? 3 : app.PartySize)} / 4 名隊員\n{(PreviewRoom || app.IsLeader ? "你是隊長，把房號告訴隊友" : "等待隊長部署")}", 13, Palette.Muted, TextAnchor.MiddleLeft);
                     Ui.Button(info, "離開房間", app.LeaveRoom, 14);
                 }
                 else
@@ -414,12 +551,20 @@ namespace RiftWard.Client
             Ui.Rect(stack, "Spacer").gameObject.AddComponent<LayoutElement>().flexibleHeight = 1;
             Ui.Box(stack, Palette.Line, "Rule").Sized(1);
             Ui.Rect(stack, "Gap").Sized(10);
-            Ui.Label(stack, status, 13, Palette.Muted).Sized(20);
+            var statusRow = Ui.Rect(stack, "Status").Sized(20);
+            Ui.Label(statusRow, status, 13, Palette.Muted, TextAnchor.MiddleLeft).rectTransform.Fill();
+            // The version notes stay one click away after the one-time pop-up.
+            var notes = Ui.Button(statusRow, $"更新內容 v{Defs.Version} →", () => PatchNotes.Show(app.Overlay.Root), 13, Palette.Amber, new Color(0, 0, 0, 0), new Color(0, 0, 0, 0));
+            notes.GetComponent<RectTransform>().Place(new Vector2(1, 0.5f), Vector2.zero, new Vector2(170, 22), new Vector2(1, 0.5f));
+            notes.GetComponentInChildren<Text>().alignment = TextAnchor.MiddleRight;
 
             // Briefing sheet over the live region backdrop.
             var brief = Ui.Box(body, new Color(0.063f, 0.067f, 0.075f, 0.92f), "Briefing").rectTransform;
             // Top-aligned with the left column's title, so the two read as one layout.
-            brief.Place(new Vector2(1, 1), new Vector2(-40, -32), new Vector2(520, endless ? 596 : 500), new Vector2(1, 1));
+            float briefHeight = endless ? 596 : 500;
+            brief.Place(new Vector2(1, 1), new Vector2(-40, -32), new Vector2(520, briefHeight), new Vector2(1, 1));
+            // In a room, the party lineup sits under the briefing, in the same column.
+            if ((app.Net.Welcomed && app.InRoom) || PreviewRoom) PartyRow(body, 32 + briefHeight + 12, endless ? 92 : 168);
             Ui.Box(brief, region.Accent, "Rule").rectTransform.Place(new Vector2(0.5f, 1), Vector2.zero, new Vector2(520, 2), new Vector2(0.5f, 1));
             var b2 = Ui.VStack(brief, 12);
             b2.Fill();
@@ -1435,6 +1580,7 @@ namespace RiftWard.Client
                 app.UpdateProfile(Profile.From(result.Obj("profile")), false);
                 app.RefreshFriends();
                 ShowFriends(false);
+                if (path == "/api/friends/request" && result.Str("status") != "accepted" && data.TryGetValue("username", out var target)) app.NotifyFriendRequest(target as string);
                 SocialStatus(result.Str("status") == "accepted" ? "對方也邀請過你，已直接成為好友" : done);
             });
         }

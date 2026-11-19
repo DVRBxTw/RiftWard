@@ -142,8 +142,11 @@ namespace RiftWard.Client
         float toastUntil;
         public Action<string> Join;
         public Action<int> Decline;
+        public Action<string, bool> RespondFriend;
 
         public SocialOverlay() { canvas = Ui.Canvas("Social", 30); }
+        /// Parent for modal sheets that sit above every screen.
+        public Transform Root => canvas.transform;
 
         public void Toast(string text, float seconds = 2.6f)
         {
@@ -158,32 +161,80 @@ namespace RiftWard.Client
             toastUntil = Time.realtimeSinceStartup + seconds;
         }
 
+        /// One invitation card waiting its turn; cards show one at a time, in arrival order.
+        sealed class Card { public string Kind, Key; public Action<RectTransform> Build; }
+        readonly List<Card> queue = new List<Card>();
+        Card current;
+        /// While true (in a mission) queued cards wait instead of popping up.
+        public Func<bool> Hold = () => false;
+
         public void ShowInvite(int fromId, string fromName, string code)
         {
-            HideInvite();
-            invite = Ui.Box(canvas.transform, new Color(0.07f, 0.072f, 0.078f, 0.97f), "Invite").rectTransform;
-            invite.Place(new Vector2(0.5f, 1), new Vector2(0, -140), new Vector2(520, 124), new Vector2(0.5f, 1));
-            var outline = invite.gameObject.AddComponent<Outline>();
-            outline.effectColor = Palette.Teammate; outline.effectDistance = new Vector2(1, -1);
-            Ui.Box(invite, Palette.Teammate, "Mark").rectTransform.Place(new Vector2(0, 0.5f), Vector2.zero, new Vector2(4, 124), new Vector2(0, 0.5f));
-            Ui.Label(invite, "組隊邀請", 13, Palette.Teammate, TextAnchor.UpperLeft, true).rectTransform.Place(new Vector2(0, 1), new Vector2(24, -14), new Vector2(300, 18), new Vector2(0, 1));
-            Ui.Label(invite, $"{fromName} 邀請你加入房間 {code}", 19, Palette.Bone, TextAnchor.UpperLeft, true).rectTransform.Place(new Vector2(0, 1), new Vector2(24, -36), new Vector2(470, 26), new Vector2(0, 1));
-            var row = Ui.HStack(invite, 10);
-            row.Place(new Vector2(1, 0), new Vector2(-18, 14), new Vector2(250, 38), new Vector2(1, 0));
-            Ui.Button(row, "婉拒", () => { HideInvite(); Decline?.Invoke(fromId); }, 15, Palette.Muted);
-            Ui.Button(row, "加入房間", () => { HideInvite(); Join?.Invoke(code); }, 16, Palette.Ink, Palette.Teammate, Palette.Teammate);
-            invite.gameObject.AddComponent<Expire>().Seconds = 30f;
+            Enqueue("room", "room:" + fromId, Palette.Teammate, "組隊邀請", $"{fromName} 邀請你加入房間 {code}",
+                ("婉拒", false, () => Decline?.Invoke(fromId)), ("加入房間", true, () => Join?.Invoke(code)));
         }
 
-        public void HideInvite()
+        public void ShowFriendRequest(string fromName)
+        {
+            Enqueue("friend", "friend:" + fromName.ToLowerInvariant(), Palette.Amber, "好友邀請", $"{fromName} 想加你為好友",
+                ("拒絕", false, () => RespondFriend?.Invoke(fromName, false)), ("接受", true, () => RespondFriend?.Invoke(fromName, true)));
+        }
+
+        void Enqueue(string kind, string key, Color accent, string title, string message, params (string label, bool primary, Action act)[] buttons)
+        {
+            // The same person inviting again replaces their waiting card instead of stacking a duplicate.
+            queue.RemoveAll(c => c.Key == key);
+            var card = new Card { Kind = kind, Key = key };
+            card.Build = box =>
+            {
+                box.Place(new Vector2(0.5f, 1), new Vector2(0, -140), new Vector2(520, 124), new Vector2(0.5f, 1));
+                var outline = box.gameObject.AddComponent<Outline>();
+                outline.effectColor = accent; outline.effectDistance = new Vector2(1, -1);
+                Ui.Box(box, accent, "Mark").rectTransform.Place(new Vector2(0, 0.5f), Vector2.zero, new Vector2(4, 124), new Vector2(0, 0.5f));
+                Ui.Label(box, title, 13, accent, TextAnchor.UpperLeft, true).rectTransform.Place(new Vector2(0, 1), new Vector2(24, -14), new Vector2(300, 18), new Vector2(0, 1));
+                Ui.Label(box, message, 19, Palette.Bone, TextAnchor.UpperLeft, true).rectTransform.Place(new Vector2(0, 1), new Vector2(24, -36), new Vector2(470, 26), new Vector2(0, 1));
+                var row = Ui.HStack(box, 10);
+                row.Place(new Vector2(1, 0), new Vector2(-18, 14), new Vector2(250, 38), new Vector2(1, 0));
+                foreach (var (label, primary, act) in buttons)
+                {
+                    if (primary) Ui.Button(row, label, () => { Dismiss(); act(); }, 16, Palette.Ink, accent, accent);
+                    else Ui.Button(row, label, () => { Dismiss(); act(); }, 15, Palette.Muted);
+                }
+                box.gameObject.AddComponent<Expire>().Seconds = 30f;
+            };
+            if (current != null && current.Key == key && invite != null) { Dismiss(); queue.Insert(0, card); }
+            else queue.Add(card);
+            ShowNext();
+        }
+
+        void ShowNext()
+        {
+            if (invite != null || queue.Count == 0 || Hold()) return;
+            current = queue[0];
+            queue.RemoveAt(0);
+            invite = Ui.Box(canvas.transform, new Color(0.07f, 0.072f, 0.078f, 0.97f), "Invite").rectTransform;
+            current.Build(invite);
+        }
+
+        void Dismiss()
         {
             if (invite != null) UnityEngine.Object.Destroy(invite.gameObject);
-            invite = null;
+            invite = null; current = null;
+        }
+
+        /// Clears room invitations (on deploy or disconnect); friend requests keep waiting their turn.
+        public void HideInvite()
+        {
+            queue.RemoveAll(c => c.Kind == "room");
+            if (current != null && current.Kind == "room") Dismiss();
         }
 
         public void Update()
         {
             if (toast != null && Time.realtimeSinceStartup > toastUntil) { UnityEngine.Object.Destroy(toast.gameObject); toast = null; }
+            if (invite == null && current != null) current = null;   // the card expired
+            if (invite != null && Hold()) { queue.Insert(0, current); Dismiss(); }   // a mission started: put it back
+            ShowNext();
         }
 
         sealed class Expire : MonoBehaviour
@@ -215,6 +266,9 @@ namespace RiftWard.Client
             logRoot = Ui.Rect(canvas.transform, "ChatLog").Place(new Vector2(0, 0), new Vector2(28, 220), new Vector2(520, 200), new Vector2(0, 0));
             backing = Ui.Box(logRoot, new Color(0.03f, 0.031f, 0.034f, 0.3f), "Backing").rectTransform;
             backing.anchorMin = Vector2.zero; backing.anchorMax = new Vector2(1, 0); backing.pivot = new Vector2(0.5f, 0);
+            // Hidden until there is a line to show: Update only repaints when the text changes, and it starts empty.
+            backing.sizeDelta = Vector2.zero;
+            backing.gameObject.SetActive(false);
             log = Ui.Label(logRoot, "", 14, Palette.Bone, TextAnchor.LowerLeft);
             log.supportRichText = true;
             log.rectTransform.Fill();

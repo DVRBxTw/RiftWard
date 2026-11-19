@@ -20,7 +20,7 @@ namespace RiftWard.Client
             public Profile Profile;
             public bool Pending;
             public int[] OfferSent;
-            public float LastInput, LastPing = -9f, PingWindow;
+            public float LastInput, LastPing = -9f, PingWindow, LastFriendNotice = -9f;
             public int PingCount;
             public AdminSettings Admin = new AdminSettings();
             public Room Room;
@@ -35,6 +35,9 @@ namespace RiftWard.Client
         }
 
         /// A party with its own leader, mission and snapshots. Players outside a room are alone.
+        /// Seconds without input during a mission before a player is treated as disconnected.
+        const float DisconnectTimeout = 10f;
+
         sealed class Room
         {
             public string Code;
@@ -54,6 +57,8 @@ namespace RiftWard.Client
             /// next one after someone joins.
             public int SnapshotCount;
             public bool ForceFull = true;
+            /// Members who already left the result sheet; the room returns to the lobby once all have.
+            public readonly HashSet<int> Home = new HashSet<int>();
         }
 
         const int MaxPlayers = 64, RoomSize = 4;
@@ -161,6 +166,15 @@ namespace RiftWard.Client
         {
             var sim = room.Sim;
             if (sim == null || room.Mode != "playing") return;
+            // A member whose game stopped sending input (network gone, socket not yet closed) counts as disconnected:
+            // they leave the mission without its reward, and the rest play on.
+            foreach (var kv in MembersOf(room))
+                if (sim.Actors.ContainsKey(kv.Key) && clock - kv.Value.LastInput > DisconnectTimeout)
+                {
+                    Debug.Log("PEER_TIMEOUT " + kv.Key);
+                    LeaveRoom(kv.Value, true);
+                }
+            if (room.Sim != sim || room.Mode != "playing" || room.Members.Count == 0) return;
             if (room.Paused && room.Members.Count == 1) return;   // solo pause: nothing moves, nothing is sent
             foreach (var kv in MembersOf(room))
                 if (sim.Actors.TryGetValue(kv.Key, out var actor) && clock - kv.Value.LastInput > 0.25f)
@@ -182,7 +196,7 @@ namespace RiftWard.Client
             {
                 if (!sim.BuffPending || !sim.BuffOffers.TryGetValue(kv.Key, out var offer) || kv.Value.OfferSent == offer) continue;
                 kv.Value.OfferSent = offer;
-                kv.Value.Conn.Send(Protocol.Frame(Msg.BuffOffer, w => { w.Write(sim.Level); w.Write(offer.Length); foreach (var c in offer) w.Write(c); }));
+                kv.Value.Conn.Send(Protocol.Frame(Msg.BuffOffer, w => { w.Write(sim.Level); w.Write((byte)sim.SuperPick); w.Write(offer.Length); foreach (var c in offer) w.Write(c); }));
             }
             room.SnapshotTimer += Time.fixedDeltaTime;
             if (room.SnapshotTimer >= 0.05f)
@@ -277,8 +291,12 @@ namespace RiftWard.Client
             else
             {
                 RoomNotice(room, $"{p.ChatName} 離開了房間");
+                // Down to one player mid-mission: it is a solo run now, so the pause menu freezes it again.
+                if (room.Mode == "playing" && room.Members.Count == 1 && players.TryGetValue(room.Members[0], out var last))
+                    last.Conn.Send(Protocol.Frame(Msg.ChatLine, w => WriteLine(w, ChatChannel.System, 0, "", "", "隊友已離線，任務轉為單人模式 · 按 ESC 可暫停", false)));
                 if (room.Leader == id) room.Leader = room.Members[0];
                 if (room.Mode == "playing" && room.Sim != null && room.Sim.Actors.Count == 0) EndToLobby(room);
+                else if (room.Mode == "result" && room.Members.All(room.Home.Contains)) EndToLobby(room);
                 else SendLobby(room);
             }
             if (notify) SendSoloLobby(p);
@@ -291,13 +309,27 @@ namespace RiftWard.Client
             int unlocked = players.TryGetValue(room.Leader, out var l) && l.Profile != null ? l.Profile.Unlocked : 0;
             int count = MembersOf(room).Count(kv => kv.Value.Profile != null);
             string code = room.Private ? "" : room.Code;
-            Broadcast(room, Protocol.Frame(Msg.Lobby, w => { w.Write(room.Selected); w.Write(unlocked); w.Write(room.Leader); w.Write(count); w.Write(room.Mode); w.Write(code); w.Write(room.Difficulty); }));
+            Broadcast(room, Protocol.Frame(Msg.Lobby, w => { w.Write(room.Selected); w.Write(unlocked); w.Write(room.Leader); w.Write(count); w.Write(room.Mode); w.Write(code); w.Write(room.Difficulty); WriteMembers(w, room); }));
+        }
+
+        /// Room roster for the lobby: [int count] × ([int id][string name][string weapon][int rarity]), so every member
+        /// sees who is in the party, each with the soldier and gun they will deploy with.
+        void WriteMembers(BinaryWriter w, Room room)
+        {
+            var members = MembersOf(room).Where(kv => kv.Value.Profile != null).ToList();
+            w.Write(members.Count);
+            foreach (var kv in members)
+            {
+                var lo = kv.Value.Profile.Loadout;
+                string weapon = lo.Equipped.Count > 0 ? lo.Equipped[0] : "rifle";
+                w.Write(kv.Key); w.Write(kv.Value.ChatName); w.Write(weapon); w.Write(lo.RarityOf(weapon));
+            }
         }
 
         /// A player outside any room is the leader of a party of one.
         void SendSoloLobby(Player p)
         {
-            p.Conn.Send(Protocol.Frame(Msg.Lobby, w => { w.Write(p.SoloRegion); w.Write(p.Profile.Unlocked); w.Write(p.Conn.Id); w.Write(1); w.Write("lobby"); w.Write(""); w.Write(p.SoloDifficulty); }));
+            p.Conn.Send(Protocol.Frame(Msg.Lobby, w => { w.Write(p.SoloRegion); w.Write(p.Profile.Unlocked); w.Write(p.Conn.Id); w.Write(1); w.Write("lobby"); w.Write(""); w.Write(p.SoloDifficulty); w.Write(0); }));
         }
 
         /// The requested tier, lowered until it is open for this player in the region.
@@ -372,7 +404,16 @@ namespace RiftWard.Client
                     case Msg.RequestDeploy:
                         int target = r.ReadInt32(), targetTier = r.ReadInt32();
                         if (room == null) room = CreateRoom(p, true);
-                        if (id == room.Leader && room.Mode == "lobby") StartMission(room, target, targetTier);
+                        if (id != room.Leader) break;
+                        if (room.Mode == "lobby") StartMission(room, target, targetTier);
+                        else if (room.Mode == "result")
+                        {
+                            // 再次挑戰 from the result sheet: the leader is done with it; the party redeploys together
+                            // (teammates still reading theirs come along). If the start is refused, the room settles normally.
+                            room.Home.Add(id);
+                            StartMission(room, target, targetTier);
+                            if (room.Mode == "result" && room.Members.All(room.Home.Contains)) EndToLobby(room);
+                        }
                         break;
                     case Msg.LeaveMission:
                         if (mode == "playing" && sim != null && sim.Actors.ContainsKey(id))
@@ -383,7 +424,13 @@ namespace RiftWard.Client
                         }
                         break;
                     case Msg.RequestHome:
-                        if (mode == "result") EndToLobby(room);
+                        if (mode == "result")
+                        {
+                            // Only this player leaves the result sheet; the others keep theirs until they choose.
+                            room.Home.Add(id);
+                            p.Conn.Send(Protocol.Frame(Msg.BackHome));
+                            if (room.Members.All(room.Home.Contains)) EndToLobby(room);
+                        }
                         break;
                     case Msg.RefreshProfile:
                         RefreshProfile(p);
@@ -415,6 +462,13 @@ namespace RiftWard.Client
                     case Msg.InviteFriend:
                         int invitee = r.ReadInt32();
                         if (mode != "result") Invite(p, invitee);
+                        break;
+                    case Msg.FriendRequest:
+                        string friendName = r.ReadString();
+                        if (p.Profile == null || clock - p.LastFriendNotice < 1f) break;
+                        p.LastFriendNotice = clock;
+                        var to = players.Values.FirstOrDefault(o => o != p && o.Profile != null && string.Equals(o.Profile.Username, friendName, StringComparison.OrdinalIgnoreCase));
+                        to?.Conn.Send(Protocol.Frame(Msg.FriendRequestIn, w => w.Write(p.ChatName)));
                         break;
                     case Msg.DeclineInvite:
                         int inviter = r.ReadInt32();
@@ -712,6 +766,7 @@ namespace RiftWard.Client
             int region = sim.Region, kills = sim.Kills, wave = sim.Wave, difficulty = sim.Difficulty;
             float elapsed = sim.Elapsed;
             string grade = sim.MissionGrade();
+            var team = Menus.Contribution.FromSim(sim);
             var records = new Dictionary<int, int[]>();
             var feats = new Dictionary<int, int[]>();
             foreach (var a in sim.Actors.Values)
@@ -756,6 +811,7 @@ namespace RiftWard.Client
                 p.Conn.Send(Protocol.Frame(Msg.ProfileSync));
             }
             room.Mode = "result";
+            room.Home.Clear();
             foreach (var kv in MembersOf(room).Where(kv => kv.Value.Profile != null))
             {
                 var rec = records.TryGetValue(kv.Key, out var r) ? r : new int[4];
@@ -764,6 +820,7 @@ namespace RiftWard.Client
                     w.Write(success); w.Write(region); w.Write(kills); w.Write(elapsed); w.Write(gold); w.Write(grade);
                     foreach (var v in rec) w.Write(v);
                     w.Write(difficulty);
+                    Menus.Contribution.Write(w, team);
                 }));
             }
             if (players.TryGetValue(room.Leader, out var l) && l.Profile != null)

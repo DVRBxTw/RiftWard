@@ -211,10 +211,11 @@ namespace RiftWard.Client
 
         public void ApplyEvents(System.IO.BinaryReader r) { if (Sim != null) Protocol.ReadEvents(r, Sim); }
 
-        public void ApplyBuffOffer(int level, int[] offer)
+        public void ApplyBuffOffer(int level, int[] offer, int superPick = 0)
         {
             if (Sim == null) return;
             Sim.Level = level;
+            Sim.SuperPick = superPick;
             Sim.BuffPending = true;
             Sim.BuffOffers.Clear();
             Sim.BuffOffers[LocalId] = offer;

@@ -24,6 +24,8 @@ namespace RiftWard.Sim
         SetPause = 17,
         /// [vector3 position][byte kind][int enemy id]: middle-mouse ping (kinds in PingMarkers; the id only for an enemy ping).
         Ping = 18,
+        /// [string username]: you just sent this account a friend request; the server tells them if they are online.
+        FriendRequest = 19,
         // server → client
         Welcome = 50, Error = 51, Lobby = 52, Deploy = 53, Snapshot = 54, Events = 55, BuffOffer = 56, Finish = 57, ProfileSync = 58, Notice = 59, BackHome = 60,
         /// [byte channel][int account id][string name][string title][string text][bool admin]
@@ -34,6 +36,8 @@ namespace RiftWard.Sim
         Invite = 63,
         /// [int actor id][string name][vector3 position][byte kind][int enemy id]: a ping from someone in the room.
         PingMark = 64,
+        /// [string name]: someone just sent you a friend request.
+        FriendRequestIn = 65,
     }
 
     /// Chat channels: everyone on the server, the player's room, server notices, and private messages.
