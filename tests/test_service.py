@@ -117,7 +117,7 @@ class ServiceTests(unittest.TestCase):
     def test_pity_copies_and_concurrency(self):
         account = self.register()
         aid = account["profile"]["id"]
-        self.assertEqual(account["profile"]["pity"], {"gear": 50, "weapon": 50})
+        self.assertEqual(account["profile"]["pity"], {"gear": 50, "weapon": 50, "limited": 50})
         # Pity: a run that never rolled 傳奇+ is forced up on the 50th draw.
         rng = random.Random(1)
         pity, rarity = 0, 0
@@ -469,6 +469,53 @@ class ServiceTests(unittest.TestCase):
         put(pieces, {p["slot"]: p["id"] for p in pieces})
         self.assertEqual(self.store.profile(aid)["bonus"]["hp"], 20 + 5 * 3 + 4 * life + 60)
         self.assertEqual(self.store.profile(aid)["bonus"]["def"], 10)   # 堡壘 four pieces: defense
+
+    def test_limited_banner_odds_guarantee_and_admin(self):
+        from unittest import mock
+        account = self.register()
+        auth = {"Authorization": "Bearer " + account["token"]}
+        aid = account["profile"]["id"]
+        with self.store.connect() as db:
+            db.execute("UPDATE progress SET weapon_keys=100 WHERE account_id=?", (aid,))
+        # Closed until an admin opens it; only admins can.
+        self.assertEqual(self.call("/api/gacha/limited", {"count": 1}, auth)[1]["error"], "限定補給目前未開放")
+        self.assertEqual(self.call("/api/admin/limited", {"days": 7}, auth)[0], 403)
+        self.store.admin_file.write_text("beta_test" + chr(10), encoding="utf-8")
+        for bad in (-1, 91, "7", True):
+            self.assertEqual(self.call("/api/admin/limited", {"days": bad}, auth)[0], 400)
+        code, r = self.call("/api/admin/limited", {"days": 7}, auth)
+        self.assertEqual((code, r["banner"]["weapon"]), (200, "minigun"))
+        self.assertAlmostEqual(r["banner"]["ends_at"] - service.time.time(), 7 * 86400, delta=5)
+        self.assertEqual(r["profile"]["limited"]["guarantee"], False)
+        # A 神話 that loses the coin flip (歪) sets the guarantee; the next 神話 is the limited weapon.
+        class Fixed(service.random.SystemRandom):
+            def __init__(self, flips): super().__init__(); self.flips = list(flips)
+            def random(self): return self.flips.pop(0)
+            def choices(self, population, weights=None, k=1):
+                return [4] if population == range(len(service.RARITIES)) else [list(population)[0]]
+        with mock.patch.object(service.random, "SystemRandom", lambda: Fixed([0.9])):
+            code, r = self.call("/api/gacha/limited", {"count": 1}, auth)
+        self.assertEqual((r["weapons"][0]["rarity"], r["weapons"][0]["limited"], r["weapons"][0]["weapon"]), (4, False, "pistol"))
+        self.assertTrue(r["profile"]["limited"]["guarantee"])
+        with mock.patch.object(service.random, "SystemRandom", lambda: Fixed([0.9])):   # would lose again, but guaranteed
+            code, r = self.call("/api/gacha/limited", {"count": 1}, auth)
+        self.assertEqual((r["weapons"][0]["weapon"], r["weapons"][0]["limited"]), ("minigun", True))
+        self.assertFalse(r["profile"]["limited"]["guarantee"])
+        self.assertIn("minigun", r["profile"]["loadout"]["owned"])
+        with mock.patch.object(service.random, "SystemRandom", lambda: Fixed([0.1])):    # wins the flip outright
+            r = self.call("/api/gacha/limited", {"count": 1}, auth)[1]
+        self.assertEqual(r["weapons"][0]["weapon"], "minigun")
+        self.assertEqual(r["profile"]["weapon_keys"], 97)
+        # Ten at once, real odds: keys spent, pity counted on its own counter, logged as the limited pool.
+        r = self.call("/api/gacha/limited", {"count": 10}, auth)[1]
+        self.assertEqual((len(r["weapons"]), r["profile"]["weapon_keys"]), (10, 87))
+        self.assertEqual(r["profile"]["pity"]["weapon"], service.PITY_LIMIT)
+        self.assertEqual(self.store.gacha_history(aid, "limited")["totals"]["limited"], 13)
+        # The regular supply never gives the limited weapon.
+        self.assertNotIn("minigun", service.WEAPON_WEIGHTS)
+        # Closing it.
+        self.assertIsNone(self.call("/api/admin/limited", {"days": 0}, auth)[1]["banner"])
+        self.assertEqual(self.call("/api/gacha/limited", {"count": 1}, auth)[0], 400)
 
     def test_levels_talents_keys_and_gear(self):
         account = self.register()
@@ -980,13 +1027,13 @@ class ServiceTests(unittest.TestCase):
         weapons, _ = self.store.draw_weapons(mid, 1)
         self.store.draw_weapons(oid, 10)
         mine = self.store.gacha_history(mid)
-        self.assertEqual(mine["totals"], {"gear": 10, "weapon": 1})
+        self.assertEqual(mine["totals"], {"gear": 10, "weapon": 1, "limited": 0})
         self.assertEqual(len(mine["history"]), 11)
         # Newest first, matching what was drawn.
         self.assertEqual((mine["history"][0]["pool"], mine["history"][0]["item"], mine["history"][0]["rarity"]), ("weapon", weapons[0]["weapon"], weapons[0]["rarity"]))
         self.assertEqual(sorted(h["rarity"] for h in mine["history"] if h["pool"] == "gear"), sorted(i["rarity"] for i in items))
         self.assertEqual(len(self.store.gacha_history(mid, "gear")["history"]), 10)
-        self.assertEqual(self.store.gacha_history(oid)["totals"], {"gear": 0, "weapon": 10})
+        self.assertEqual(self.store.gacha_history(oid)["totals"], {"gear": 0, "weapon": 10, "limited": 0})
         # Over HTTP the account comes from the session: asking for someone else's id still returns your own.
         code, body = self.call("/api/gacha/history", {"account_id": oid, "pool": "weapon"}, {"Authorization": "Bearer " + me["token"]})
         self.assertEqual(code, 200)

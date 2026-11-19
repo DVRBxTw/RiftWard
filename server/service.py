@@ -32,6 +32,10 @@ VERSION = "0.4.2-beta.1"
 # every purchase is priced and validated here.
 WEAPON_PRICES = {"pistol": 0, "rifle": 400, "shotgun": 600, "sniper": 800, "saber": 0, "minigun": 0}
 LIMITED_WEAPONS = {"minigun"}   # only from a limited supply drop: never in WEAPON_WEIGHTS
+# 限定補給: same rarity odds and 50-draw pity as the weapon supply (its own counter). A 神話 is the limited weapon
+# half the time; when it is not (歪), the next 神話 is guaranteed to be the limited weapon.
+LIMITED_MYTH_SHARE = 0.5
+LIMITED_MAX_DAYS = 90
 UPGRADE_STATS = ("damage", "mag", "reload")
 MAX_UPGRADE = 10      # weapon enhancement cap per stat; levels past SOFT_UPGRADE cost more and give half a step
 SOFT_UPGRADE = 5
@@ -404,6 +408,9 @@ class Store:
                     status TEXT NOT NULL, created INTEGER NOT NULL, PRIMARY KEY (requester, addressee)
                 );
                 CREATE INDEX IF NOT EXISTS friendship_addressee ON friendships(addressee);
+                CREATE TABLE IF NOT EXISTS settings (
+                    key TEXT PRIMARY KEY, value TEXT NOT NULL
+                );
                 CREATE TABLE IF NOT EXISTS gacha_log (
                     id INTEGER PRIMARY KEY, account_id INTEGER NOT NULL, created INTEGER NOT NULL,
                     pool TEXT NOT NULL, item TEXT NOT NULL, rarity INTEGER NOT NULL, outcome TEXT NOT NULL DEFAULT ''
@@ -425,7 +432,7 @@ class Store:
                                 ("talents", "TEXT NOT NULL DEFAULT '{}'"), ("gear", "TEXT NOT NULL DEFAULT '{}'"), ("pity", "TEXT NOT NULL DEFAULT '{}'"),
                                 ("cleared", "TEXT NOT NULL DEFAULT '[]'"), ("daily", "TEXT NOT NULL DEFAULT '{}'"),
                                 ("achievements", "TEXT NOT NULL DEFAULT '{}'"), ("last_seen", "INTEGER NOT NULL DEFAULT 0"),
-                                ("shards", "INTEGER NOT NULL DEFAULT 0")):
+                                ("shards", "INTEGER NOT NULL DEFAULT 0"), ("limited_guarantee", "INTEGER NOT NULL DEFAULT 0")):
                 if column not in columns:
                     db.execute(f"ALTER TABLE progress ADD COLUMN {column} {ddl}")
 
@@ -505,6 +512,11 @@ class Store:
         result["talent_points"] = max(0, level - 1 - sum(talents.values()))
         pity = self._pity(account_id)
         result["pity"] = {pool: PITY_LIMIT - count for pool, count in pity.items()}   # draws left until 傳奇+ is guaranteed
+        banner = self.limited_banner()
+        if banner:
+            with self.connect() as db:
+                row = db.execute("SELECT limited_guarantee FROM progress WHERE account_id=?", (account_id,)).fetchone()
+            result["limited"] = dict(banner, guarantee=bool(row and row[0]))
         result["inventory"] = [dict(item, stats=gear_stats(item), base=item["stats"], level=item.get("level", 0), defense=gear_defense(item)) for item in gear["inventory"]]
         result["equipment"] = gear["equipped"]
         bonus = {TALENT_BONUS_KEY.get(k, k): talents[k] * per for k, per in TALENTS.items()}
@@ -793,7 +805,7 @@ class Store:
             data = json.loads(row[0]) if row else {}
         except (TypeError, ValueError):
             data = {}
-        return {pool: max(0, min(PITY_LIMIT - 1, data.get(pool, 0))) if isinstance(data.get(pool), int) else 0 for pool in ("gear", "weapon")}
+        return {pool: max(0, min(PITY_LIMIT - 1, data.get(pool, 0))) if isinstance(data.get(pool), int) else 0 for pool in ("gear", "weapon", "limited")}
 
     def _save_pity(self, account_id, pity):
         with self.connect() as db:
@@ -844,7 +856,7 @@ class Store:
 
     def gacha_history(self, account_id, pool=None, limit=200):
         """This account's draws, newest first. Only ever the caller's own rows."""
-        if pool not in (None, "", "gear", "weapon"):
+        if pool not in (None, "", "gear", "weapon", "limited"):
             raise ValueError("未知的補給類型")
         limit = limit if isinstance(limit, int) and not isinstance(limit, bool) and 1 <= limit <= self.GACHA_LOG_KEEP else 200
         with self.connect() as db:
@@ -856,7 +868,7 @@ class Store:
                                   (account_id, limit)).fetchall()
             totals = {r[0]: r[1] for r in db.execute("SELECT pool, COUNT(*) FROM gacha_log WHERE account_id=? GROUP BY pool", (account_id,))}
         return {"history": [{"time": r["created"], "pool": r["pool"], "item": r["item"], "rarity": r["rarity"], "outcome": r["outcome"]} for r in rows],
-                "totals": {"gear": totals.get("gear", 0), "weapon": totals.get("weapon", 0)}}
+                "totals": {"gear": totals.get("gear", 0), "weapon": totals.get("weapon", 0), "limited": totals.get("limited", 0)}}
 
     @_locked
     def seen(self, account_id):
@@ -905,29 +917,103 @@ class Store:
         for _ in range(count):
             weapon = rng.choices(list(WEAPON_WEIGHTS), weights=list(WEAPON_WEIGHTS.values()))[0]
             rarity, pity["weapon"] = roll_rarity(rng, pity["weapon"])
-            if weapon not in loadout["owned"]:
-                loadout["owned"].append(weapon)
-                loadout["copies"][weapon] = [rarity]
-                loadout["copy_levels"][weapon] = [{}]
-                loadout["active"][weapon] = 0
-                if len(loadout["equipped"]) < 2:
-                    loadout["equipped"].append(weapon)
-                outcome = "new"
-            elif len(loadout["copies"][weapon]) < WEAPON_COPY_LIMIT:
-                add_copy(loadout, weapon, rarity)
-                outcome = "copy"
-            else:
-                outcome = "full"
-                gold += DUPLICATE_GOLD[rarity]
-                shards += SALVAGE_SHARDS[rarity]
-            results.append({"weapon": weapon, "rarity": rarity, "outcome": outcome,
-                            "gold": DUPLICATE_GOLD[rarity] if outcome == "full" else 0, "shards": SALVAGE_SHARDS[rarity] if outcome == "full" else 0})
+            result = self._receive_weapon(loadout, weapon, rarity)
+            gold += result["gold"]; shards += result["shards"]
+            results.append(result)
         sync_rarity(loadout)
         with self.connect() as db:
             db.execute("UPDATE progress SET loadout=?, gold=gold+?, shards=shards+?, pity=? WHERE account_id=?",
                        (json.dumps(loadout), gold, shards, json.dumps(pity), account_id))
         self._bump_stats(account_id, draws=count)
         self._log_draws(account_id, "weapon", [(w["weapon"], w["rarity"], w["outcome"]) for w in results])
+        return results, self.profile(account_id)
+
+    @staticmethod
+    def _receive_weapon(loadout, weapon, rarity):
+        """Puts one drawn weapon into the loadout: a new weapon, another copy, or (copies full) gold and shards."""
+        gold = shards = 0
+        if weapon not in loadout["owned"]:
+            loadout["owned"].append(weapon)
+            loadout["copies"][weapon] = [rarity]
+            loadout["copy_levels"][weapon] = [{}]
+            loadout["active"][weapon] = 0
+            if len(loadout["equipped"]) < 2:
+                loadout["equipped"].append(weapon)
+            outcome = "new"
+        elif len(loadout["copies"][weapon]) < WEAPON_COPY_LIMIT:
+            add_copy(loadout, weapon, rarity)
+            outcome = "copy"
+        else:
+            outcome = "full"
+            gold, shards = DUPLICATE_GOLD[rarity], SALVAGE_SHARDS[rarity]
+        return {"weapon": weapon, "rarity": rarity, "outcome": outcome, "gold": gold, "shards": shards}
+
+    # ---- 限定補給
+    def limited_banner(self):
+        """The running limited supply drop, or None: {"weapon", "ends_at"}."""
+        with self.connect() as db:
+            row = db.execute("SELECT value FROM settings WHERE key='limited_banner'").fetchone()
+        try:
+            data = json.loads(row[0]) if row else None
+        except (TypeError, ValueError):
+            data = None
+        if not isinstance(data, dict) or data.get("weapon") not in LIMITED_WEAPONS or not isinstance(data.get("ends_at"), int):
+            return None
+        return data if data["ends_at"] > time.time() else None
+
+    def set_limited_banner(self, admin_id, weapon, days):
+        """Admin: opens the limited supply for `days` days from now (0 closes it)."""
+        if isinstance(days, bool) or not isinstance(days, int) or not 0 <= days <= LIMITED_MAX_DAYS:
+            raise ValueError(f"天數需為 0 到 {LIMITED_MAX_DAYS} 的整數")
+        weapon = weapon or "minigun"
+        if weapon not in LIMITED_WEAPONS:
+            raise ValueError("找不到此限定武器")
+        with self.connect() as db:
+            if days == 0:
+                db.execute("DELETE FROM settings WHERE key='limited_banner'")
+            else:
+                value = json.dumps({"weapon": weapon, "ends_at": int(time.time()) + days * 86400})
+                db.execute("INSERT INTO settings(key, value) VALUES('limited_banner', ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (value,))
+        return self.limited_banner()
+
+    @_locked
+    def draw_limited(self, account_id: int, count):
+        """限定補給 draws (weapon keys): weapon-supply odds and pity on a separate counter; a 神話 is the limited
+        weapon on a coin flip, and always after one that was not."""
+        banner = self.limited_banner()
+        if banner is None:
+            raise ValueError("限定補給目前未開放")
+        if count not in (1, 10):
+            raise ValueError("一次只能抽 1 或 10 次")
+        with self.connect() as db:
+            changed = db.execute("UPDATE progress SET weapon_keys=weapon_keys-? WHERE account_id=? AND weapon_keys>=?",
+                                 (count, account_id, count)).rowcount
+            guarantee = bool(db.execute("SELECT limited_guarantee FROM progress WHERE account_id=?", (account_id,)).fetchone()[0])
+        if not changed:
+            raise ValueError("武器鑰匙不足")
+        rng = random.SystemRandom()
+        loadout = self.profile(account_id)["loadout"]
+        pity = self._pity(account_id)
+        results, gold, shards = [], 0, 0
+        for _ in range(count):
+            rarity, pity["limited"] = roll_rarity(rng, pity["limited"])
+            limited = False
+            if rarity == len(RARITIES) - 1:
+                if guarantee or rng.random() < LIMITED_MYTH_SHARE:
+                    limited, guarantee = True, False
+                else:
+                    guarantee = True   # 歪: the next 神話 is the limited weapon
+            weapon = banner["weapon"] if limited else rng.choices(list(WEAPON_WEIGHTS), weights=list(WEAPON_WEIGHTS.values()))[0]
+            result = self._receive_weapon(loadout, weapon, rarity)
+            result["limited"] = limited
+            gold += result["gold"]; shards += result["shards"]
+            results.append(result)
+        sync_rarity(loadout)
+        with self.connect() as db:
+            db.execute("UPDATE progress SET loadout=?, gold=gold+?, shards=shards+?, pity=?, limited_guarantee=? WHERE account_id=?",
+                       (json.dumps(loadout), gold, shards, json.dumps(pity), int(guarantee), account_id))
+        self._bump_stats(account_id, draws=count)
+        self._log_draws(account_id, "limited", [(w["weapon"], w["rarity"], w["outcome"]) for w in results])
         return results, self.profile(account_id)
 
     def _weapon_copy(self, account_id, weapon, index, rarity=None):
@@ -2187,6 +2273,13 @@ class Handler(BaseHTTPRequestHandler):
                     self._json(400, {"ok": False, "error": str(exc)})
                     return
                 self._json(200, {"ok": True, "count": count, "profile": store.profile(profile["id"])})
+            elif self.path == "/api/admin/limited":
+                try:
+                    banner = store.set_limited_banner(profile["id"], data.get("weapon"), data.get("days"))
+                except ValueError as exc:
+                    self._json(400, {"ok": False, "error": str(exc)})
+                    return
+                self._json(200, {"ok": True, "banner": banner, "profile": store.profile(profile["id"])})
             elif self.path == "/api/admin/reset":
                 try:
                     name = store.admin_reset(profile["id"], data.get("username"), data.get("confirm"))
@@ -2196,7 +2289,7 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(200, {"ok": True, "username": name})
             else:
                 self._json(404, {"ok": False, "error": "找不到此服務"})
-        elif self.path in ("/api/talent/assign", "/api/talent/reset", "/api/gacha/draw", "/api/gacha/weapon", "/api/gear/equip", "/api/gear/salvage", "/api/gear/upgrade", "/api/gear/reforge", "/api/gear/limit", "/api/gear/ascend", "/api/weapon/select", "/api/weapon/salvage", "/api/salvage/bulk"):
+        elif self.path in ("/api/talent/assign", "/api/talent/reset", "/api/gacha/draw", "/api/gacha/weapon", "/api/gacha/limited", "/api/gear/equip", "/api/gear/salvage", "/api/gear/upgrade", "/api/gear/reforge", "/api/gear/limit", "/api/gear/ascend", "/api/weapon/select", "/api/weapon/salvage", "/api/salvage/bulk"):
             try:
                 extra = {}
                 if self.path == "/api/talent/assign":
@@ -2206,6 +2299,9 @@ class Handler(BaseHTTPRequestHandler):
                 elif self.path == "/api/gacha/draw":
                     items, result = store.draw(profile["id"], data.get("count", 1))
                     extra["items"] = items
+                elif self.path == "/api/gacha/limited":
+                    weapons, result = store.draw_limited(profile["id"], data.get("count", 1))
+                    extra["weapons"] = weapons
                 elif self.path == "/api/gacha/weapon":
                     weapons, result = store.draw_weapons(profile["id"], data.get("count", 1))
                     extra["weapons"] = weapons

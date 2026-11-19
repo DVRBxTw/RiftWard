@@ -424,6 +424,13 @@ namespace RiftWard.Client
                 var name = Ui.Label(cell, m.Name, 13, me ? Palette.Amber : Palette.Bone, TextAnchor.MiddleCenter, me);
                 name.rectTransform.Place(new Vector2(0.5f, 0), new Vector2(0, 6), new Vector2(108, 18), new Vector2(0.5f, 0));
                 name.resizeTextForBestFit = true; name.resizeTextMinSize = 9; name.resizeTextMaxSize = 13;
+                // The leader can hand the room to anyone else in it.
+                if (!me && m.Id != leader && (PreviewRoom || app.IsLeader))
+                {
+                    int heir = m.Id;
+                    var give = Ui.Button(cell, "設為隊長", () => app.TransferLeader(heir), 11, Palette.Amber, new Color(0, 0, 0, 0.45f));
+                    give.GetComponent<RectTransform>().Place(new Vector2(0.5f, 1), new Vector2(0, -3), new Vector2(76, 18), new Vector2(0.5f, 1));
+                }
                 if (m.Id == leader || me)
                 {
                     var tag = Ui.Label(cell, m.Id == leader ? (me ? "隊長 · 你" : "隊長") : "你", 11, m.Id == leader ? Palette.Amber : Palette.Muted, TextAnchor.UpperCenter, true);
@@ -2104,8 +2111,17 @@ namespace RiftWard.Client
             Ui.Label(pad, "使用鑰匙開啟高科技補給艙。裝備與武器分開抽取，鑰匙可從每日任務取得。", 14, Palette.Muted).rectTransform.Place(new Vector2(0, 1), new Vector2(0, -46), new Vector2(800, 20), new Vector2(0, 1));
             characterStatus = Ui.Label(pad, "", 14, Palette.Amber, TextAnchor.UpperRight);
             characterStatus.rectTransform.Place(new Vector2(1, 1), new Vector2(0, -10), new Vector2(520, 20), new Vector2(1, 1));
-            SupplyPanel(pad, 0f, 0.5f, "gear");
-            SupplyPanel(pad, 0.5f, 1f, "weapon");
+            if (p.LimitedOpen)
+            {
+                SupplyPanel(pad, 0f, 1f / 3f, "limited");
+                SupplyPanel(pad, 1f / 3f, 2f / 3f, "gear");
+                SupplyPanel(pad, 2f / 3f, 1f, "weapon");
+            }
+            else
+            {
+                SupplyPanel(pad, 0f, 0.5f, "gear");
+                SupplyPanel(pad, 0.5f, 1f, "weapon");
+            }
         }
 
         // ---- gacha history (each account sees only its own draws; the server keeps the latest 500)
@@ -2120,15 +2136,15 @@ namespace RiftWard.Client
             var r = Begin("gachalog");
             var pad = Page(r, "shop");
             pad.offsetMin = new Vector2(48, 36); pad.offsetMax = new Vector2(-48, -NavHeight - 28);
-            SubTabs(pad, new[] { "全部", "裝備補給", "武器補給" }, new Action[] { () => ShowGachaHistory(""), () => ShowGachaHistory("gear"), () => ShowGachaHistory("weapon") },
-                filter == "gear" ? 1 : filter == "weapon" ? 2 : 0);
+            SubTabs(pad, new[] { "全部", "裝備補給", "武器補給", "限定補給" }, new Action[] { () => ShowGachaHistory(""), () => ShowGachaHistory("gear"), () => ShowGachaHistory("weapon"), () => ShowGachaHistory("limited") },
+                filter == "gear" ? 1 : filter == "weapon" ? 2 : filter == "limited" ? 3 : 0);
             var back = Ui.Button(pad, "返回補給站", ShowShop, 15, Palette.Bone, new Color(0, 0, 0, 0), Palette.Line);
             back.GetComponent<RectTransform>().Place(new Vector2(1, 1), Vector2.zero, new Vector2(132, 40), new Vector2(1, 1));
             var status = Ui.Label(pad, "", 14, Palette.Amber, TextAnchor.MiddleRight);
             status.rectTransform.Place(new Vector2(1, 1), new Vector2(-150, 0), new Vector2(400, 40), new Vector2(1, 1));
 
             var rows = (gachaHistory ?? new List<Dictionary<string, object>>()).Where(h => filter == "" || h.Str("pool") == filter).ToList();
-            Color accent = filter == "weapon" ? Palette.Danger : filter == "gear" ? Palette.Hex("b07cff") : Palette.Amber;
+            Color accent = filter == "weapon" ? Palette.Danger : filter == "gear" ? Palette.Hex("b07cff") : filter == "limited" ? Palette.Hex("ff7a2a") : Palette.Amber;
 
             // Left: summary — totals, rarity breakdown, draws since the last 傳奇+.
             var left = Panel(pad, 0, 0.32f, accent, "Summary");
@@ -2205,27 +2221,45 @@ namespace RiftWard.Client
         void SupplyPanel(RectTransform pad, float x0, float x1, string pool)
         {
             var p = app.Profile;
-            bool weaponPool = pool == "weapon";
-            Color accent = weaponPool ? Palette.Danger : Palette.Hex("b07cff");
+            bool limitedPool = pool == "limited", weaponPool = pool == "weapon" || limitedPool;
+            bool narrow = x1 - x0 < 0.45f;   // three columns: no crate art, the text takes the full width
+            Color accent = limitedPool ? Palette.Hex("ff7a2a") : weaponPool ? Palette.Danger : Palette.Hex("b07cff");
             var box = Ui.Box(pad, Palette.Sheet, pool).rectTransform;
             box.anchorMin = new Vector2(x0, 0); box.anchorMax = new Vector2(x1, 1);
             box.offsetMin = new Vector2(x0 > 0 ? 10 : 0, 0); box.offsetMax = new Vector2(x1 < 1 ? -10 : 0, -84);
             TopRule(box, accent);
-            CratePreview(box, accent);
+            if (limitedPool)
+            {
+                // The limited weapon itself, turning in the corner.
+                string limitedId = p.LimitedWeapon;
+                var show = ModelPreview.Create(box, t => Models.WeaponDisplay(t, limitedId, 4), 256, 30f, 8f);
+                show.rectTransform.Place(new Vector2(1, 1), new Vector2(-14, -14), new Vector2(150, 110), new Vector2(1, 1));
+                RarityFx.Attach(show.rectTransform, 4);
+            }
+            else if (!narrow) CratePreview(box, accent);
             var s = Ui.VStack(box, 10);
             s.Fill();
-            s.GetComponent<VerticalLayoutGroup>().padding = new RectOffset(30, 30, 26, 24);
-            Caps(s, weaponPool ? "WEAPON SUPPLY" : "GEAR SUPPLY", accent).Sized(16);
-            Ui.Label(s, weaponPool ? "武器補給" : "裝備補給", 30, Palette.Bone, TextAnchor.UpperLeft, true).Sized(40);
-            var desc = Ui.Rect(s, "Desc").Sized(40);
-            var descText = Ui.Label(desc, weaponPool ? "每把抽到的武器都會保留在武器庫，可自由切換使用的版本，不要的再手動分解。" : "隨機獲得護甲、槍械模組、戰術靴或戰術晶片。稀世以上附帶副屬性。", 13, Palette.Muted).rectTransform;
-            descText.Fill(); descText.offsetMax = new Vector2(-230, 0);
+            s.GetComponent<VerticalLayoutGroup>().padding = new RectOffset(narrow ? 24 : 30, narrow ? 24 : 30, 26, 24);
+            Caps(s, limitedPool ? "LIMITED SUPPLY" : weaponPool ? "WEAPON SUPPLY" : "GEAR SUPPLY", accent).Sized(16);
+            Ui.Label(s, limitedPool ? "限定補給" : weaponPool ? "武器補給" : "裝備補給", 30, Palette.Bone, TextAnchor.UpperLeft, true).Sized(40);
+            var desc = Ui.Rect(s, "Desc").Sized(limitedPool ? 58 : 40);
+            string limitedName = limitedPool ? Defs.Weapons[p.LimitedWeapon].Name : "";
+            var descText = Ui.Label(desc, limitedPool ? $"限定神話「{limitedName}」。神話 50% 為限定，歪了下次必中。"
+                : weaponPool ? "每把抽到的武器都會保留在武器庫，可自由切換使用的版本，不要的再手動分解。" : "隨機獲得護甲、槍械模組、戰術靴或戰術晶片。稀世以上附帶副屬性。", 13, Palette.Muted).rectTransform;
+            descText.Fill(); descText.offsetMax = new Vector2(limitedPool ? -150 : narrow ? 0 : -230, 0);
+            if (limitedPool)
+            {
+                long left = System.Math.Max(0, p.LimitedEndsAt - System.DateTimeOffset.UtcNow.ToUnixTimeSeconds());
+                Ui.Label(s, $"剩餘 {left / 86400} 天 {left % 86400 / 3600} 小時", 13, accent, TextAnchor.UpperLeft, true).Sized(18);
+                Ui.Label(s, p.LimitedGuarantee ? $"大保底：下次神話必定為 {limitedName}" : "下次神話：50% 為限定武器", 13,
+                    p.LimitedGuarantee ? Gear.RarityColors[4] : Palette.Muted, TextAnchor.UpperLeft, p.LimitedGuarantee).Sized(18);
+            }
             int keys = weaponPool ? p.WeaponKeys : p.Keys;
             var keyRow = Ui.Rect(s, "Keys").Sized(58);
             Ui.Label(keyRow, weaponPool ? "持有武器鑰匙" : "持有裝備鑰匙", 12, Palette.Muted).rectTransform.Place(new Vector2(0, 1), Vector2.zero, new Vector2(160, 18), new Vector2(0, 1));
             Icons.Key(keyRow, 34, weaponPool ? Gear.WeaponKeyColor : Gear.GearKeyColor).rectTransform.Place(new Vector2(0, 1), new Vector2(0, -20), new Vector2(34, 34), new Vector2(0, 1));
             Ui.Label(keyRow, keys.ToString(), 36, accent, TextAnchor.UpperLeft, true).rectTransform.Place(new Vector2(0, 1), new Vector2(42, -16), new Vector2(160, 42), new Vector2(0, 1));
-            int pityLeft = weaponPool ? p.WeaponPity : p.GearPity;
+            int pityLeft = limitedPool ? p.LimitedPity : weaponPool ? p.WeaponPity : p.GearPity;
             Ui.Label(s, pityLeft <= 1 ? "保底：下一抽必出傳奇以上！" : $"保底：再 {pityLeft} 抽內必出傳奇以上", 13, pityLeft <= 10 ? Gear.RarityColors[3] : Palette.Muted, TextAnchor.UpperLeft, pityLeft <= 10).Sized(18);
             var odds = Ui.HStack(s, 4).Sized(20);
             float[] weights = { 50f, 33f, 14f, 2.5f, 0.5f };   // mirrors RARITY_WEIGHTS in server/service.py
@@ -2271,8 +2305,8 @@ namespace RiftWard.Client
         void Draw(int count)
         {
             if (characterStatus != null) { characterStatus.color = Palette.Amber; characterStatus.text = "開啟補給中…"; }
-            bool weapons = drawPool == "weapon";
-            app.Api.Post(weapons ? "/api/gacha/weapon" : "/api/gacha/draw", new Dictionary<string, object> { ["count"] = count }, result =>
+            bool weapons = drawPool == "weapon" || drawPool == "limited";
+            app.Api.Post(drawPool == "limited" ? "/api/gacha/limited" : weapons ? "/api/gacha/weapon" : "/api/gacha/draw", new Dictionary<string, object> { ["count"] = count }, result =>
             {
                 if (Mode != "shop") return;
                 if (!result.Bool("ok")) { characterStatus.color = Palette.Danger; characterStatus.text = result.Str("error", "抽獎失敗"); return; }
@@ -2287,7 +2321,7 @@ namespace RiftWard.Client
                         {
                             Id = id, Slot = "weapon", Rarity = Mathf.Clamp(d.Int("rarity"), 0, Gear.RarityNames.Length - 1),
                             Title = Gear.WeaponName(id, d.Int("rarity")),
-                            Detail = outcome == "new" ? "新武器！已解鎖" : outcome == "copy" ? "已存入武器庫" : d.Int("shards") > 0 ? $"武器庫已滿 · 轉為 {d.Int("shards")} 碎片" : $"武器庫已滿 · 轉為 {d.Int("gold")} G",
+                            Detail = (d.Bool("limited") ? "限定！ " : "") + (outcome == "new" ? "新武器！已解鎖" : outcome == "copy" ? "已存入武器庫" : d.Int("shards") > 0 ? $"武器庫已滿 · 轉為 {d.Int("shards")} 碎片" : $"武器庫已滿 · 轉為 {d.Int("gold")} G"),
                         });
                     }
                 }
@@ -2597,6 +2631,34 @@ namespace RiftWard.Client
             toAll.gameObject.AddComponent<RevertCaption>().Arm(() => Time.unscaledTime - toAllArmed > 4f, "發給全部玩家", Palette.Danger);
             // 清除玩家資料: dangerous, so it opens its own dialog with two confirmations.
             Ui.DangerButton(gs, "清除玩家資料…", () => WipeDialog(adminTarget.text.Trim()), 14).Sized(36);
+            // 限定補給: open it for N days (or change how long is left), or close it now.
+            Widgets.Section(gs, "限定補給").Sized(22);
+            var p0 = app.Profile;
+            long limitedLeft = p0.LimitedOpen ? p0.LimitedEndsAt - System.DateTimeOffset.UtcNow.ToUnixTimeSeconds() : 0;
+            Ui.Label(gs, p0.LimitedOpen ? $"進行中：{Defs.Weapons[p0.LimitedWeapon].Name}　剩 {limitedLeft / 86400} 天 {limitedLeft % 86400 / 3600} 小時" : "目前未開放", 13,
+                p0.LimitedOpen ? Palette.Hex("ff7a2a") : Palette.Muted, TextAnchor.MiddleLeft).Sized(20);
+            var limitedRow = Ui.HStack(gs, 10).Sized(40);
+            var daysInput = Widgets.Input(limitedRow, "天數", false, 2);
+            daysInput.contentType = InputField.ContentType.IntegerNumber;
+            void SetLimited(int days)
+            {
+                adminStatus.color = Palette.Amber;
+                adminStatus.text = "設定中…";
+                app.Api.Post("/api/admin/limited", new Dictionary<string, object> { ["weapon"] = "minigun", ["days"] = days }, result =>
+                {
+                    if (Mode != "admin") return;
+                    if (!result.Bool("ok")) { adminStatus.color = Palette.Danger; adminStatus.text = result.Str("error", "設定失敗"); return; }
+                    app.UpdateProfile(Profile.From(result.Obj("profile")));
+                    ShowAdmin();
+                    adminStatus.text = days > 0 ? $"限定補給已開放 {days} 天。" : "限定補給已關閉。";
+                });
+            }
+            Ui.Button(limitedRow, "開放 / 更新天數", () =>
+            {
+                if (!int.TryParse(daysInput.text, out int days) || days < 1) { adminStatus.color = Palette.Danger; adminStatus.text = "請輸入 1 到 90 的天數。"; return; }
+                SetLimited(days);
+            }, 14);
+            Ui.DangerButton(limitedRow, "立即關閉", () => SetLimited(0), 14);
             adminStatus = Ui.Label(gs, "", 14, Palette.Amber).Sized(22);
             Widgets.Section(gs, "玩家名單").Sized(22);
             adminList = Widgets.ScrollList(gs, out _);

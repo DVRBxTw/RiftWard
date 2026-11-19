@@ -75,6 +75,9 @@ namespace RiftWard.Client
         /// Tells the game server we sent a friend request, so the other player sees it pop up right away.
         public void NotifyFriendRequest(string username) { if (Net.Welcomed && !string.IsNullOrWhiteSpace(username)) Net.Send(Msg.FriendRequest, w => w.Write(username.Trim())); }
 
+        /// The leader hands the room to another member (the server checks it is the leader asking).
+        public void TransferLeader(int memberId) { if (Net.Welcomed && IsLeader) Net.Send(Msg.TransferLeader, w => w.Write(memberId)); }
+
         /// 申請入隊 from the friends list: the friend gets a pop-up and decides.
         public void RequestJoin(int accountId) { if (Net.Welcomed) Net.Send(Msg.JoinRequest, w => w.Write(accountId)); else Overlay.Toast("離線模式無法申請入隊"); }
 
@@ -851,6 +854,19 @@ namespace RiftWard.Client
             Screens.ShowShop();
             yield return Settle(0.4f);
             yield return Shot(folder, "unity-shop");
+            // 限定補給 open: three columns, the limited weapon turning in its corner, a guarantee pending.
+            Profile.LimitedWeapon = "minigun";
+            Profile.LimitedEndsAt = System.DateTimeOffset.UtcNow.ToUnixTimeSeconds() + 6 * 86400 + 5 * 3600;
+            Profile.LimitedGuarantee = true;
+            Profile.LimitedPity = 31;
+            Profile.WeaponKeys = 24;
+            Screens.ShowShop();
+            yield return Settle(0.5f);
+            yield return Shot(folder, "unity-shop-limited");
+            Screens.ShowAdmin();
+            yield return Settle(0.4f);
+            yield return Shot(folder, "unity-admin-limited");
+            Profile.LimitedWeapon = ""; Profile.LimitedGuarantee = false;
             {
                 var rows = new List<Dictionary<string, object>>();
                 var gachaDemo = new (string pool, string item, int rarity, string outcome)[] {

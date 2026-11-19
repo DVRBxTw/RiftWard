@@ -30,6 +30,8 @@ namespace RiftWard.Sim
         JoinRequest = 20,
         /// [int account id][bool accept]: answer a friend's join request (accept pulls them into your room).
         JoinAnswer = 21,
+        /// [int member id]: the leader hands the room to another member.
+        TransferLeader = 22,
         // server → client
         Welcome = 50, Error = 51, Lobby = 52, Deploy = 53, Snapshot = 54, Events = 55, BuffOffer = 56, Finish = 57, ProfileSync = 58, Notice = 59, BackHome = 60,
         /// [byte channel][int account id][string name][string title][string text][bool admin]

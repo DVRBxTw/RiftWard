@@ -24,7 +24,13 @@ namespace RiftWard.Client
         public float Accuracy => Shots > 0 ? (float)Hits / Shots : 0f;
         public int Level = 1, LevelXp, LevelNeed = 150, Keys, WeaponKeys, TalentPoints, Shards;
         /// Draws left until 傳奇+ is guaranteed, per pool.
-        public int GearPity = 50, WeaponPity = 50;
+        public int GearPity = 50, WeaponPity = 50, LimitedPity = 50;
+        /// 限定補給 now running ("" when closed), when it ends (unix seconds), and whether this account's next 神話
+        /// is guaranteed to be the limited weapon.
+        public string LimitedWeapon = "";
+        public long LimitedEndsAt;
+        public bool LimitedGuarantee;
+        public bool LimitedOpen => LimitedWeapon != "" && LimitedEndsAt > System.DateTimeOffset.UtcNow.ToUnixTimeSeconds();
         public Dictionary<string, int> Talents = new Dictionary<string, int>();
         public List<GearItem> Inventory = new List<GearItem>();
         public Dictionary<string, string> Equipment = new Dictionary<string, string>();
@@ -104,7 +110,14 @@ namespace RiftWard.Client
             p.Level = Mathf.Max(1, d.Int("level", 1)); p.LevelXp = d.Int("level_xp"); p.LevelNeed = Mathf.Max(1, d.Int("level_need", 150));
             p.Keys = d.Int("keys"); p.WeaponKeys = d.Int("weapon_keys"); p.Shards = d.Int("shards"); p.TalentPoints = d.Int("talent_points");
             var pity = d.Obj("pity");
-            if (pity != null) { p.GearPity = pity.Int("gear", 50); p.WeaponPity = pity.Int("weapon", 50); }
+            if (pity != null) { p.GearPity = pity.Int("gear", 50); p.WeaponPity = pity.Int("weapon", 50); p.LimitedPity = pity.Int("limited", 50); }
+            var limited = d.Obj("limited");
+            if (limited != null)
+            {
+                p.LimitedWeapon = RiftWard.Sim.Defs.Weapons.ContainsKey(limited.Str("weapon")) ? limited.Str("weapon") : "";
+                p.LimitedEndsAt = (long)(limited.TryGetValue("ends_at", out var end) && end is double e ? e : 0);
+                p.LimitedGuarantee = limited.Bool("guarantee");
+            }
             var talents = d.Obj("talents");
             if (talents != null) foreach (var kv in talents) p.Talents[kv.Key] = kv.Value is double n ? (int)n : 0;
             foreach (var o in d.Arr("inventory") ?? new List<object>()) if (o is Dictionary<string, object> item) p.Inventory.Add(GearItem.From(item));

@@ -474,6 +474,15 @@ namespace RiftWard.Client
                         var to = players.Values.FirstOrDefault(o => o != p && o.Profile != null && string.Equals(o.Profile.Username, friendName, StringComparison.OrdinalIgnoreCase));
                         to?.Conn.Send(Protocol.Frame(Msg.FriendRequestIn, w => w.Write(p.ChatName)));
                         break;
+                    case Msg.TransferLeader:
+                        int newLeader = r.ReadInt32();
+                        if (room != null && id == room.Leader && newLeader != id && room.Members.Contains(newLeader) && players.TryGetValue(newLeader, out var heir))
+                        {
+                            room.Leader = newLeader;
+                            SendLobby(room);
+                            RoomNotice(room, $"{p.ChatName} 將隊長轉移給 {heir.ChatName}");
+                        }
+                        break;
                     case Msg.JoinRequest:
                         int joinHost = r.ReadInt32();
                         if (p.Profile == null || clock - p.LastFriendNotice < 1f) break;
