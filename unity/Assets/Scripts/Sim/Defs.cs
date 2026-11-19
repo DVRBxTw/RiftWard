@@ -59,7 +59,7 @@ namespace RiftWard.Sim
         /// XP needed to go from this account level to the next; mirrors level_for() in server/service.py.
         public static int AccountLevelNeed(int level) => 100 + 50 * level;
 
-        public const string Version = "0.7.25-unity.1";
+        public const string Version = "0.7.26-unity.1";
 
         // Player movement
         public const float EyeHeight = 1.65f;
@@ -166,9 +166,9 @@ namespace RiftWard.Sim
         {
             ["pistol"] = new WeaponDef("pistol", "P-9 制式手槍", "手槍", "初始武器。彈匣小、換彈快，穩定可靠。", 28f, 0.24f, 12, 1.1f, 1, 0f, 2f, 0.85f, 0, 0.022f, 0.006f, 1.0f),
             ["rifle"] = new WeaponDef("rifle", "AR-27 突擊步槍", "步槍", "全自動高射速，適合壓制大群敵人。", 17f, 0.1f, 30, 1.8f, 1, 0.012f, 2f, 0.75f, 400, 0.019f, 0.007f, 1.3f),
-            ["shotgun"] = new WeaponDef("shotgun", "SG-8 霰彈槍", "霰彈", "一次射出 7 顆彈丸，近距離威力驚人。", 11f, 0.8f, 6, 2.2f, 7, 0.07f, 1.5f, 0.85f, 600, 0.065f, 0.015f, 1.4f),
+            ["shotgun"] = new WeaponDef("shotgun", "SG-8 霰彈槍", "霰彈", "一次射出 7 顆彈丸，近距離威力驚人。", 13f, 0.8f, 6, 2.2f, 7, 0.07f, 1.5f, 0.85f, 600, 0.065f, 0.015f, 1.4f),
             ["sniper"] = new WeaponDef("sniper", "LR-50 狙擊槍", "狙擊", "單發高傷害，爆頭 3 倍。右鍵開鏡。", 95f, 1.0f, 5, 2.4f, 1, 0f, 3f, 0.35f, 800, 0.09f, 0.01f, 1.6f),
-            ["saber"] = new WeaponDef("saber", "EX-1 能量光劍", "光劍", "高能電漿刃。左鍵揮砍前方扇形，一次最多砍中 3 名敵人；右鍵格擋正面子彈。", 62f, 0.42f, 1, 0f, 1, 0f, 1f, 1f, 0, 0.006f, 0f, 1.5f, melee: true, range: 2.8f),
+            ["saber"] = new WeaponDef("saber", "EX-1 能量光劍", "光劍", "高能電漿刃。左鍵揮砍前方扇形，一次最多砍中 3 名敵人；右鍵格擋正面子彈。", 55f, 0.42f, 1, 0f, 1, 0f, 1f, 1f, 0, 0.006f, 0f, 1.5f, melee: true, range: 2.8f),
         };
 
         public static readonly string[] UpgradeKeys = { "damage", "mag", "reload" };
@@ -345,7 +345,8 @@ namespace RiftWard.Sim
             return new WeaponStats
             {
                 Damage = Damage * (1f + 0.12f * d) * (1f + over),
-                Interval = (Melee ? Interval * (1f - 0.08f * r) : Interval) * (1f - over),
+                // A blade's 換彈 upgrade speeds up the swing at half the rate (it used to reach 40% of the interval: far too fast).
+                Interval = (Melee ? Interval * (1f - 0.04f * r) : Interval) * (1f - over),
                 Mag = Melee ? 1 : Mathf.CeilToInt(Mag * (1f + 0.15f * m)),
                 Reload = Melee ? 0f : Reload * (1f - 0.08f * r) * (1f - over),
                 Range = Melee ? Range * (1f + 0.08f * m) : 0f,
