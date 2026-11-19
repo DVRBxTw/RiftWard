@@ -84,6 +84,7 @@ namespace RiftWard.Sim
             a.MagBonus = 0; a.Regen = 0; a.Armor = 0; a.GearDefense = 0; a.Critical = 0; a.Lifesteal = 0; a.Explode = 0; a.HealBudget = 0; System.Array.Clear(a.BuffStacks, 0, a.BuffStacks.Length);
             a.SkillCooldown = 0; a.Revive = 0; a.Slot = 0; a.Reload = 0;
             a.StatKills = 0; a.StatHeadshots = 0; a.StatShots = 0; a.StatHits = 0; a.StatDamage = 0;
+            for (int i = 0; i < a.MeleeHitTimes.Length; i++) a.MeleeHitTimes[i] = -9f;
             a.StatDowns = 0; a.StatRevives = 0; a.StatBossKills = 0; a.StatEliteKills = 0; a.WasAlive = true; a.AimFlags = 0;
             a.AmmoByWeapon.Clear();
             RefreshWeapon(a);
@@ -474,7 +475,9 @@ namespace RiftWard.Sim
                 e.Position.x = Mathf.Clamp(e.Position.x, -Defs.ArenaHalf, Defs.ArenaHalf);
                 e.Position.z = Mathf.Clamp(e.Position.z, -Defs.ArenaHalf, Defs.ArenaHalf);
                 e.MeleeCooldown = Mathf.Max(0, e.MeleeCooldown - dt);
-                if (distance < (e.Boss ? 2.4f : 1.7f) && e.MeleeCooldown <= 0 && !e.RangedOnly)
+                // A crowd cannot all land at once: at most MeleeCrowd hits per player per melee interval. The rest
+                // keep their swing ready and strike as a slot frees up, so a swarm is deadly but not instant.
+                if (distance < (e.Boss ? 2.4f : 1.7f) && e.MeleeCooldown <= 0 && !e.RangedOnly && TakeMeleeSlot(target))
                 {
                     e.MeleeCooldown = 0.85f;
                     target.Hp -= e.Damage;
@@ -1053,6 +1056,14 @@ namespace RiftWard.Sim
                     if (b.Life <= 0 || b.Position.y < 0) Bullets.Remove(b.Id);
                 }
             }
+        }
+
+        /// One of the player's melee slots, if one has been free for a full melee interval (bosses' slams are separate).
+        bool TakeMeleeSlot(Actor a)
+        {
+            for (int i = 0; i < a.MeleeHitTimes.Length; i++)
+                if (Elapsed - a.MeleeHitTimes[i] >= 0.85f) { a.MeleeHitTimes[i] = Elapsed; return true; }
+            return false;
         }
 
         /// Adds damage to a player's contribution, counting only the health the enemy actually had left.

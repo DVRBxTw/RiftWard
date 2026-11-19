@@ -72,7 +72,7 @@ namespace RiftWard.Client
             new Dictionary<string, (string, Color, (string, int), (string, int))>
             {
                 ["assault"] = ("突擊", Palette.Hex("ff7a59"), ("damage", 5), ("crit", 8)),
-                ["bulwark"] = ("堡壘", Palette.Hex("6fb8ff"), ("hp", 30), ("hp", 60)),
+                ["bulwark"] = ("堡壘", Palette.Hex("6fb8ff"), ("hp", 60), ("def", 10)),
                 ["gale"] = ("疾風", Palette.Hex("6fe0a8"), ("speed", 5), ("reload", 15)),
             };
 

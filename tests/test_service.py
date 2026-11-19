@@ -460,12 +460,15 @@ class ServiceTests(unittest.TestCase):
         # Sets: two pieces of 堡壘 add hp; four add more; mixed sets add nothing.
         pieces = [item(f"s{n}", slot=slot, rarity=2, set="bulwark") for n, slot in enumerate(service.GEAR_SLOTS)]
         put(pieces[:2], {pieces[0]["slot"]: "s0", pieces[1]["slot"]: "s1"})
-        # armor: hp 20 + crit 5; module/boots/chip: their primary + hp 5
-        self.assertEqual(self.store.profile(aid)["bonus"]["hp"], 20 + 5 + 30)
+        # armor: hp 20 + crit 5; module/boots/chip: their primary + hp 5; every piece adds its rarity's base life
+        life = service.GEAR_BASE_LIFE[2]
+        self.assertEqual(self.store.profile(aid)["bonus"]["hp"], 20 + 5 + 2 * life + 60)
         put(pieces[:3] + [dict(pieces[3], set="gale")], {p["slot"]: p["id"] for p in pieces})
-        self.assertEqual(self.store.profile(aid)["bonus"]["hp"], 20 + 5 * 3 + 30)   # three of a set: still the 2-piece bonus
+        self.assertEqual(self.store.profile(aid)["bonus"]["hp"], 20 + 5 * 3 + 4 * life + 60)   # three of a set: still the 2-piece bonus
+        self.assertNotIn("def", self.store.profile(aid)["bonus"])
         put(pieces, {p["slot"]: p["id"] for p in pieces})
-        self.assertEqual(self.store.profile(aid)["bonus"]["hp"], 20 + 5 * 3 + 30 + 60)
+        self.assertEqual(self.store.profile(aid)["bonus"]["hp"], 20 + 5 * 3 + 4 * life + 60)
+        self.assertEqual(self.store.profile(aid)["bonus"]["def"], 10)   # 堡壘 four pieces: defense
 
     def test_levels_talents_keys_and_gear(self):
         account = self.register()

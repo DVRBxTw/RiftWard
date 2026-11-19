@@ -92,6 +92,8 @@ namespace RiftWard.Sim
         public float HpPct;
         /// Damage reduction from gear (enhancement and 突破): applied after the in-mission armour, outside its cap.
         public float GearDefense;
+        /// When each of the player's melee slots was last used: at most this many enemy melee hits per 0.85 s.
+        public float[] MeleeHitTimes = { -9f, -9f, -9f };
         /// Aiming down sights (right mouse with a gun): tighter spread, slower walk.
         public bool Aiming;
         public bool Melee => Defs.Weapons.TryGetValue(WeaponId, out var w) && w.Melee;

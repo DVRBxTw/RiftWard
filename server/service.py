@@ -164,8 +164,8 @@ def gear_upgrade_cost(rarity: int, level: int) -> int:
 
 
 # Defense (% damage taken removed) grows with each item's enhancement and 突破, on top of its stats.
-GEAR_DEF_PER_LEVEL = 0.5
-GEAR_DEF_PER_LIMIT = 1.0
+GEAR_DEF_PER_LEVEL = 0.8
+GEAR_DEF_PER_LIMIT = 1.5
 
 
 def gear_defense(item) -> float:
@@ -181,10 +181,18 @@ def gear_invested_shards(item) -> int:
     return sum(LIMIT_SHARDS[:item.get("limit", 0)])
 
 
+# Every piece of gear carries base life by rarity, on top of its own stats, so building gear makes you tougher
+# as well as stronger (it used to come only from the armour slot).
+GEAR_BASE_LIFE = [5, 10, 20, 35, 60]
+
+
 def gear_stats(item) -> dict:
-    """Effective stats of an item at its enhancement level and 突破 tier (stored stats are the +0 values)."""
+    """Effective stats of an item at its enhancement level and 突破 tier (stored stats are the +0 values), with the
+    rarity's base life added to its life."""
     mult = (1 + GEAR_LEVEL_BONUS * item.get("level", 0)) * (1 + GEAR_LIMIT_BONUS * item.get("limit", 0))
-    return {k: int(round(v * mult)) for k, v in item["stats"].items()}
+    stats = {k: int(round(v * mult)) for k, v in item["stats"].items()}
+    stats["hp"] = stats.get("hp", 0) + int(round(GEAR_BASE_LIFE[item["rarity"]] * mult))
+    return stats
 
 
 # ---- gear crafting (mirrored in Gear.cs): 重鑄, 突破, 升階 and sets
@@ -204,7 +212,7 @@ ASCEND_GOLD = [500, 1500, 4000, 10000]
 # Sets (稀世+ items carry one): bonuses for 2 and 4 equipped pieces of the same set, as plain stat bonuses.
 GEAR_SETS = {
     "assault": {2: {"damage": 5}, 4: {"crit": 8}},
-    "bulwark": {2: {"hp": 30}, 4: {"hp": 60}},
+    "bulwark": {2: {"hp": 60}, 4: {"def": 10}},
     "gale": {2: {"speed": 5}, 4: {"reload": 15}},
 }
 GEAR_SET_MIN_RARITY = 2

@@ -58,7 +58,7 @@ namespace RiftWard.Tests
             Assert.AreEqual(0.5f, Defs.MaxCritical, 0.001f);
             // 地獄: the fourth tier, opened by clearing 噩夢 in that region.
             Assert.AreEqual(4, Defs.Difficulties.Length);
-            Assert.AreEqual(4.5f, Defs.Difficulty(3).Hp, 0.001f);
+            Assert.AreEqual(5.5f, Defs.Difficulty(3).Hp, 0.001f);
             Assert.IsFalse(Defs.DifficultyOpen(new[] { 1 }, 0, 3));
             Assert.IsTrue(Defs.DifficultyOpen(new[] { 2 }, 0, 3));
             var normal = new GameSim(7) { EnemyVariety = false }; normal.AddActor(1, new Loadout(), false); normal.StartMission(0, 0);
@@ -67,7 +67,7 @@ namespace RiftWard.Tests
             float n = float.MaxValue, i = float.MaxValue;   // the weakest one: an elite (×4) may be promoted
             foreach (var e in normal.Enemies.Values) n = Mathf.Min(n, e.MaxHp);
             foreach (var e in inferno.Enemies.Values) i = Mathf.Min(i, e.MaxHp);
-            Assert.AreEqual(n * 4.5f, i, 0.01f);
+            Assert.AreEqual(n * 5.5f, i, 0.01f);
             Assert.AreEqual(normal.Enemies.Count + 6, inferno.Enemies.Count);
         }
 
@@ -253,6 +253,27 @@ namespace RiftWard.Tests
             float capped = a.MaxHp;
             sim.ApplyBuff(1, 3);
             Assert.AreEqual(capped + Mathf.Round(capped * Defs.EndlessLifePick), a.MaxHp, 0.01f, "past the cap a pick grows by a share");
+        }
+
+        [Test]
+        public void ASurroundingCrowdLandsAtMostThreeMeleeHitsAtOnce()
+        {
+            var sim = NewMission();
+            var a = sim.Actors[1];
+            sim.Enemies.Clear();
+            a.MaxHp = a.Hp = 10000f;
+            for (int i = 0; i < 8; i++)
+            {
+                float ang = i * Mathf.PI / 4f;
+                var e = PlaceEnemy(sim, new Vector3(Mathf.Cos(ang) * 1.0f, 0, Mathf.Sin(ang) * 1.0f), 9999f);
+                e.Damage = 10f; e.MeleeCooldown = 0f; e.Speed = 0f;
+            }
+            sim.Tick(0.02f);
+            Assert.AreEqual(10000f - 30f, a.Hp, 0.01f, "three of the eight swings land");
+            sim.Tick(0.02f);
+            Assert.AreEqual(10000f - 30f, a.Hp, 0.01f, "the rest wait for a free slot");
+            for (int i = 0; i < 45; i++) sim.Tick(0.02f);   // past one melee interval
+            Assert.AreEqual(10000f - 60f, a.Hp, 0.01f, "then three more");
         }
 
         [Test]
@@ -521,7 +542,8 @@ namespace RiftWard.Tests
             var bossN = normal.Enemies.Values.Single(e => e.Boss);
             var bossX = nightmare.Enemies.Values.Single(e => e.Boss);
             Assert.AreEqual(bossN.MaxHp * 2.4f, bossX.MaxHp, 0.5f);
-            Assert.AreEqual(bossN.Damage * 1.7f, bossX.Damage, 0.01f);
+            Assert.AreEqual(bossN.Damage * Defs.Difficulties[2].Damage, bossX.Damage, 0.01f);
+            Assert.AreEqual(1.5f, Defs.Difficulties[2].Damage, 0.001f);
             normal.Kills = nightmare.Kills = 100;
             Assert.AreEqual(Mathf.RoundToInt(normal.MissionGold() * 2.4f), nightmare.MissionGold(), 1);
             // Tier unlocks: 普通 always, each tier after the one below is cleared in that region.

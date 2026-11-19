@@ -32,8 +32,8 @@ namespace RiftWard.Sim
         {
             new DifficultyDef("普通", "NORMAL", "標準的帝國部隊。", 1f, 1f, 0, 1f, 1f, new Color32(0x9b, 0xd3, 0x6a, 255)),
             new DifficultyDef("困難", "HARD", "敵人血量 ×1.6、傷害 ×1.3，每波多 2 名。金幣 ×1.6、經驗 ×1.25。", 1.6f, 1.3f, 2, 1.6f, 1.25f, new Color32(0xf0, 0xb2, 0x4a, 255)),
-            new DifficultyDef("噩夢", "NIGHTMARE", "敵人血量 ×2.4、傷害 ×1.7，每波多 4 名。金幣 ×2.4、經驗 ×1.5。", 2.4f, 1.7f, 4, 2.4f, 1.5f, new Color32(0xe5, 0x53, 0x4b, 255)),
-            new DifficultyDef("地獄", "INFERNO", "敵人血量 ×4.5、傷害 ×2.4，每波多 6 名。金幣 ×3.5、經驗 ×1.75。給頂尖裝備的挑戰。", 4.5f, 2.4f, 6, 3.5f, 1.75f, new Color32(0xff, 0x3b, 0x9a, 255)),
+            new DifficultyDef("噩夢", "NIGHTMARE", "敵人血量 ×2.4、傷害 ×1.5，每波多 4 名。金幣 ×2.4、經驗 ×1.5。建議中期裝備挑戰。", 2.4f, 1.5f, 4, 2.4f, 1.5f, new Color32(0xe5, 0x53, 0x4b, 255)),
+            new DifficultyDef("地獄", "INFERNO", "敵人血量 ×5.5、傷害 ×2.4，每波多 6 名。金幣 ×3.5、經驗 ×1.75。給頂尖裝備的挑戰。", 5.5f, 2.4f, 6, 3.5f, 1.75f, new Color32(0xff, 0x3b, 0x9a, 255)),
         };
 
         /// Gear keys and weapon keys (each) for the first clear of a region on a tier: 困難 5, 噩夢 10, 地獄 15.
