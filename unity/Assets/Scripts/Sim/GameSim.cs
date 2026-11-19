@@ -390,13 +390,16 @@ namespace RiftWard.Sim
             if (!waveGraded && Wave > 0 && Enemies.Count == 0) GradeWave();
         }
 
-        /// Damage taken since the last check is reduced by each player's armour.
+        /// Damage taken since the last check is reduced by each player's armour. Hits leave health below zero until
+        /// here (overkill counts), so armour can soften a killing blow but never turns it into a hit that leaves you
+        /// at a sliver forever; health is clamped at zero afterwards.
         void ApplyArmor(Dictionary<int, float> baseline)
         {
             foreach (var a in Actors.Values)
             {
                 if (baseline.TryGetValue(a.Id, out var before) && a.Armor > 0 && a.Hp < before && before > 0)
                     a.Hp = before - (before - a.Hp) * (1f - a.Armor);
+                if (a.Hp < 0) a.Hp = 0;
                 baseline[a.Id] = a.Hp;
             }
         }
@@ -470,7 +473,7 @@ namespace RiftWard.Sim
                 if (distance < (e.Boss ? 2.4f : 1.7f) && e.MeleeCooldown <= 0 && !e.RangedOnly)
                 {
                     e.MeleeCooldown = 0.85f;
-                    target.Hp = Mathf.Max(0, target.Hp - e.Damage);
+                    target.Hp -= e.Damage;
                 }
             }
         }
@@ -719,9 +722,18 @@ namespace RiftWard.Sim
                 var bodyCenter = e.Position + Vector3.up * s * (e.Boss ? 0.93f : 1f);
                 float bodyRadius = e.Boss ? 0.64f * s : 0.75f * s;
                 int weak = e.Boss ? Defs.WeakPoint(e.Kind) : Defs.WeakHead;
-                // A boss whose weak point is elsewhere takes plain damage on the head.
+                // A boss whose weak point is elsewhere takes plain damage on the head. The head is tested on its own:
+                // the body sphere is large and overlaps it, and on big enemies (elites, guards) its centre often lies
+                // nearer along the ray, which used to turn clean head hits into body hits.
+                bool throughHead = Crosses(headCenter, headRadius);
                 TestSphere(headCenter, headRadius, weak == Defs.WeakHead);
-                TestSphere(bodyCenter, bodyRadius, false);
+                if (!throughHead) TestSphere(bodyCenter, bodyRadius, false);
+
+                bool Crosses(Vector3 center, float radius)
+                {
+                    float along = Vector3.Dot(center - origin, dir);
+                    return along > 0 && along < nearest && Vector3.Distance(center, origin + dir * along) < radius;
+                }
                 // Leg joints sit below the body sphere: their own target, and the weak point on the 指揮官.
                 if (e.Boss)
                     foreach (float side in new[] { -0.19f, 0.19f })
@@ -1117,7 +1129,7 @@ namespace RiftWard.Sim
                     if (b.Life > 0) continue;
                     Bullets.Remove(b.Id);
                     foreach (var a in alive)
-                        if (new Vector2(a.Position.x - b.Position.x, a.Position.z - b.Position.z).magnitude < Defs.SlamRadius) a.Hp = Mathf.Max(0, a.Hp - b.Damage);
+                        if (new Vector2(a.Position.x - b.Position.x, a.Position.z - b.Position.z).magnitude < Defs.SlamRadius) a.Hp -= b.Damage;
                     Explosions.Add(new ExplosionEvent { Position = b.Position + Vector3.up * 0.3f, Radius = Defs.SlamRadius, Color = new Color32(0xff, 0x4b, 0x3a, 255) });
                     continue;
                 }
@@ -1129,7 +1141,7 @@ namespace RiftWard.Sim
                     Vector3 body = a.Position + Vector3.up * 0.9f;
                     if (Mathf.Abs(b.Position.y - body.y) < 1f && new Vector2(b.Position.x - body.x, b.Position.z - body.z).magnitude < Defs.BulletHitRadius)
                     {
-                        a.Hp = Mathf.Max(0, a.Hp - b.Damage * BlockedBy(a, b.Velocity));
+                        a.Hp -= b.Damage * BlockedBy(a, b.Velocity);
                         hit = true;
                         break;
                     }
@@ -1168,7 +1180,7 @@ namespace RiftWard.Sim
                     if (alive.Any(a => Vector3.Distance(a.Position, e.Position) < 1.8f))
                     {
                         foreach (var a in alive)
-                            if (Vector3.Distance(a.Position, e.Position) < 3.2f) a.Hp = Mathf.Max(0, a.Hp - e.Damage * 2.2f);
+                            if (Vector3.Distance(a.Position, e.Position) < 3.2f) a.Hp -= e.Damage * 2.2f;
                         Enemies.Remove(e.Id);
                         Explosions.Add(new ExplosionEvent { Position = e.Position + Vector3.up, Radius = 3.2f, Color = Defs.Kinds[Defs.KindBomber].Color });
                         continue;
@@ -1261,7 +1273,7 @@ namespace RiftWard.Sim
                     e.ChargeTime -= dt;
                     if (nearest != null && distance < 1.8f * e.Scale)
                     {
-                        nearest.Hp = Mathf.Max(0, nearest.Hp - e.Damage * 1.6f);
+                        nearest.Hp -= e.Damage * 1.6f;
                         e.MeleeCooldown = 1.2f;
                         e.ChargeTime = 0;
                     }

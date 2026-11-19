@@ -10,6 +10,8 @@ namespace RiftWard.Client
     /// arcs and a capsule for prompts. Corner panels sit on soft dark backings so text never fights the scene.
     public sealed class Hud
     {
+        /// Name of the teammate the camera follows while you are down (null when not spectating).
+        public string Spectating;
         public readonly Canvas Canvas;
         readonly Text region, wave, stats, level, xpText, banner, combo, comboCaption, headTag, skillLabel, skillTime;
         readonly Text tierTag;
@@ -209,7 +211,7 @@ namespace RiftWard.Client
             hint.rectTransform.Place(new Vector2(1, 0), new Vector2(-38, 146), new Vector2(620, 22), new Vector2(1, 0));
 
             revive = Ui.Label(root, "", 20, Palette.Hex("7dff9a"), TextAnchor.MiddleCenter).Outlined();
-            revive.rectTransform.Place(new Vector2(0.5f, 0), new Vector2(0, 230), new Vector2(720, 30));
+            revive.rectTransform.Place(new Vector2(0.5f, 0), new Vector2(0, 243), new Vector2(720, 56));
             toastPill = Ui.Box(root, new Color(0.04f, 0.045f, 0.05f, 0.75f), "Toast").rectTransform;
             toastPill.Place(new Vector2(0.5f, 0), new Vector2(0, 150), new Vector2(360, 34));   // system prompts: bottom centre, between the panels
             Ui.Box(toastPill, Palette.Amber, "Mark").rectTransform.Place(new Vector2(0, 0.5f), Vector2.zero, new Vector2(3, 34), new Vector2(0, 0.5f));
@@ -682,7 +684,8 @@ namespace RiftWard.Client
                 hintPlate.sizeDelta = new Vector2(hint.preferredWidth + 20f, 22f);   // the plate hugs the text
                 revive.text = "";
                 if (!local.Alive && sim.Actors.Count > 1)
-                    revive.text = $"你已倒地 · 等待隊友按住 {Bindings.Name(Bindings.Action.Interact)} 救援  {Mathf.RoundToInt(100 * local.Revive / Defs.ReviveTime)}%";
+                    revive.text = $"你已倒地 · 等待隊友按住 {Bindings.Name(Bindings.Action.Interact)} 救援  {Mathf.RoundToInt(100 * local.Revive / Defs.ReviveTime)}%"
+                        + (Spectating != null ? $"\n旁觀中：{Spectating}  ·  左鍵切換隊友" : "");
                 else
                     foreach (var other in sim.Actors.Values)
                         if (other.Id != local.Id && !other.Alive && Vector3.Distance(other.Position, local.Position) < 2.4f)

@@ -350,6 +350,86 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(out["profile"]["gold"], gold + gold_spent // 2)
         self.assertEqual(out["profile"]["loadout"]["copy_levels"]["rifle"], [{"damage": 5, "mag": 3}])
 
+    def test_gear_crafting_reforge_limit_ascend_sets(self):
+        account = self.register()
+        auth = {"Authorization": "Bearer " + account["token"]}
+        aid = account["profile"]["id"]
+        def put(items, equipped=None, gold=100000, shards=100):
+            self.store._save_gear(aid, {"inventory": items, "equipped": equipped or {}})
+            with self.store.connect() as db:
+                db.execute("UPDATE progress SET gold=?, shards=? WHERE account_id=?", (gold, shards, aid))
+        def item(i, slot="module", rarity=2, level=0, **extra):
+            primary = service.GEAR_SLOTS[slot]
+            stats = {primary: service.GEAR_VALUES[primary][rarity]}
+            if rarity >= 2:
+                stats["hp" if primary != "hp" else "crit"] = 5
+            return dict({"id": i, "slot": slot, "rarity": rarity, "level": level, "stats": stats}, **extra)
+        def find(profile, i):
+            return next(x for x in profile["inventory"] if x["id"] == i)
+
+        # 重鑄: 稀世+ only; costs gold + shards; the secondary stays within its range; lock keeps stat and set.
+        put([item("a"), item("b", rarity=1)])
+        self.assertEqual(self.call("/api/gear/reforge", {"item": "b"}, auth)[0], 400)
+        code, r = self.call("/api/gear/reforge", {"item": "a"}, auth)
+        self.assertEqual(code, 200)
+        self.assertEqual((r["profile"]["gold"], r["profile"]["shards"]), (100000 - service.REFORGE_GOLD[2], 100 - service.REFORGE_SHARDS[2]))
+        got = find(r["profile"], "a")
+        self.assertIn(got["set"], service.GEAR_SETS)
+        second = [k for k in got["base"] if k != "damage"]
+        self.assertEqual(len(second), 1)
+        full = service.GEAR_VALUES[second[0]][2]
+        self.assertTrue(max(1, round(full * 0.35)) <= got["base"][second[0]] <= round(full * 0.75))
+        for _ in range(5):
+            code, r = self.call("/api/gear/reforge", {"item": "a", "lock": True}, auth)
+            locked = find(r["profile"], "a")
+            self.assertEqual((list(locked["base"])[1:], locked["set"]), (second, got["set"]))
+        put([item("a")], shards=0)
+        self.assertEqual(self.call("/api/gear/reforge", {"item": "a"}, auth)[1]["error"], "碎片不足")
+
+        # 突破: needs +5; three tiers, +8% each on top of enhancement; salvage refunds half the shards.
+        put([item("c", level=4)])
+        self.assertEqual(self.call("/api/gear/limit", {"item": "c"}, auth)[0], 400)
+        put([item("c", level=5)])
+        for tier in range(service.GEAR_LIMIT_MAX):
+            code, r = self.call("/api/gear/limit", {"item": "c"}, auth)
+            self.assertEqual(code, 200)
+        self.assertEqual(self.call("/api/gear/limit", {"item": "c"}, auth)[0], 400)
+        c = find(r["profile"], "c")
+        self.assertEqual(c["limit"], 3)
+        self.assertEqual(c["stats"]["damage"], round(service.GEAR_VALUES["damage"][2] * 1.6 * 1.24))
+        shards = r["profile"]["shards"]
+        self.assertEqual(shards, 100 - sum(service.LIMIT_SHARDS))
+        code, r = self.call("/api/gear/salvage", {"item": "c"}, auth)
+        self.assertEqual(r["profile"]["shards"], shards + sum(service.LIMIT_SHARDS) // 2)
+
+        # 升階: same slot and rarity, unequipped fodder; rarity +1, primary at the new value, level kept.
+        put([item("d", level=3), item("e"), item("f", slot="boots"), item("g", rarity=3)], {"module": "e"})
+        self.assertEqual(self.call("/api/gear/ascend", {"item": "d", "fodder": "e"}, auth)[0], 400)   # fodder worn
+        self.assertEqual(self.call("/api/gear/ascend", {"item": "d", "fodder": "f"}, auth)[0], 400)   # other slot
+        self.assertEqual(self.call("/api/gear/ascend", {"item": "d", "fodder": "g"}, auth)[0], 400)   # other rarity
+        self.assertEqual(self.call("/api/gear/ascend", {"item": "d", "fodder": "d"}, auth)[0], 400)
+        put([item("d", level=3), item("e")])
+        code, r = self.call("/api/gear/ascend", {"item": "d", "fodder": "e"}, auth)
+        self.assertEqual(code, 200)
+        d = find(r["profile"], "d")
+        self.assertEqual((d["rarity"], d["level"], d["base"]["damage"], len(r["profile"]["inventory"])), (3, 3, service.GEAR_VALUES["damage"][3], 1))
+        self.assertIn(d["set"], service.GEAR_SETS)
+        # 普通 -> 稀世 gains a secondary stat and a set.
+        put([item("h", rarity=1), item("i", rarity=1)])
+        h = find(self.call("/api/gear/ascend", {"item": "h", "fodder": "i"}, auth)[1]["profile"], "h")
+        self.assertEqual((h["rarity"], len(h["base"])), (2, 2))
+        self.assertIn(h["set"], service.GEAR_SETS)
+
+        # Sets: two pieces of 堡壘 add hp; four add more; mixed sets add nothing.
+        pieces = [item(f"s{n}", slot=slot, rarity=2, set="bulwark") for n, slot in enumerate(service.GEAR_SLOTS)]
+        put(pieces[:2], {pieces[0]["slot"]: "s0", pieces[1]["slot"]: "s1"})
+        # armor: hp 20 + crit 5; module/boots/chip: their primary + hp 5
+        self.assertEqual(self.store.profile(aid)["bonus"]["hp"], 20 + 5 + 30)
+        put(pieces[:3] + [dict(pieces[3], set="gale")], {p["slot"]: p["id"] for p in pieces})
+        self.assertEqual(self.store.profile(aid)["bonus"]["hp"], 20 + 5 * 3 + 30)   # three of a set: still the 2-piece bonus
+        put(pieces, {p["slot"]: p["id"] for p in pieces})
+        self.assertEqual(self.store.profile(aid)["bonus"]["hp"], 20 + 5 * 3 + 30 + 60)
+
     def test_levels_talents_keys_and_gear(self):
         account = self.register()
         aid = account["profile"]["id"]

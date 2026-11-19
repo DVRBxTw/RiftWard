@@ -993,7 +993,17 @@ namespace RiftWard.Client
             var g = Column(0.36f, 1f, "裝備", Palette.Hex("b07cff"));
             var total = new List<string>();
             foreach (var kv in p.Bonus) if (kv.Value > 0) total.Add(Gear.StatText(kv.Key, kv.Value));
-            Ui.Label(g, total.Count > 0 ? "總加成  " + string.Join("  ·  ", total) : "尚無加成", 13, Palette.Muted).Sized(20);
+            // Set progress of what is worn (bonuses are already inside p.Bonus, computed by the server).
+            var wornSets = new Dictionary<string, int>();
+            foreach (var kv in p.Equipment)
+            {
+                var w = p.Inventory.Find(i => i.Id == kv.Value);
+                if (w != null && w.Set != "") wornSets[w.Set] = (wornSets.TryGetValue(w.Set, out var c) ? c : 0) + 1;
+            }
+            foreach (var kv in wornSets) total.Add($"<color=#{ColorUtility.ToHtmlStringRGB(Gear.Sets[kv.Key].color)}>{Gear.Sets[kv.Key].name} {kv.Value}/4</color>");
+            var totalLine = Ui.Label(g, total.Count > 0 ? "總加成  " + string.Join("  ·  ", total) : "尚無加成", 13, Palette.Muted);
+            totalLine.supportRichText = true;
+            totalLine.Sized(20);
             var slots = Ui.HStack(g, 8).Sized(150);
             foreach (var slot in Gear.Slots)
             {
@@ -1052,9 +1062,13 @@ namespace RiftWard.Client
                 var row = Ui.Rect(list, "Item").Sized(44);
                 var hit = Ui.Button(row, "", () => CharacterRequest("/api/gear/equip", new Dictionary<string, object> { ["item"] = item.Id }), 14, null,
                     worn ? new Color(item.Color.r, item.Color.g, item.Color.b, 0.1f) : new Color(0, 0, 0, 0), worn ? item.Color : new Color(0, 0, 0, 0));
-                hit.GetComponent<RectTransform>().Fill().offsetMax = new Vector2(-150, 0);
+                hit.GetComponent<RectTransform>().Fill().offsetMax = new Vector2(-226, 0);
                 Ui.Label(hit.transform, item.Name + (worn ? "  · 已裝備" : ""), 15, item.Color, TextAnchor.UpperLeft, true).rectTransform.Place(new Vector2(0, 1), new Vector2(10, -4), new Vector2(260, 20), new Vector2(0, 1));
-                Ui.Label(hit.transform, item.StatText(), 12, Palette.Muted).rectTransform.Place(new Vector2(0, 1), new Vector2(10, -24), new Vector2(300, 16), new Vector2(0, 1));
+                var statLine = Ui.Label(hit.transform, item.StatText() + (item.Set != "" ? $"  ·  <color=#{ColorUtility.ToHtmlStringRGB(Gear.Sets[item.Set].color)}>{item.SetName}套裝</color>" : ""), 12, Palette.Muted);
+                statLine.supportRichText = true;
+                statLine.rectTransform.Place(new Vector2(0, 1), new Vector2(10, -24), new Vector2(340, 16), new Vector2(0, 1));
+                var craft = Ui.Button(row, "改造", () => CraftDialog(item.Id), 12, Gear.ShardColor);
+                craft.GetComponent<RectTransform>().Place(new Vector2(1, 0.5f), new Vector2(-150, 0), new Vector2(68, 34), new Vector2(1, 0.5f));
                 // Enhance: price depends on rarity and current level.
                 var enhance = Ui.Button(row, item.Maxed ? "已滿強化" : $"強化 {item.UpgradeCost}G", () => CharacterRequest("/api/gear/upgrade", new Dictionary<string, object> { ["item"] = item.Id }),
                     12, item.Maxed ? Palette.Muted : Palette.Amber);
@@ -1068,6 +1082,91 @@ namespace RiftWard.Client
             }
 
         }
+
+        // ------------------------------------------------------------ gear crafting
+
+        RectTransform craftDialog;
+        bool craftLock;
+
+        /// 改造: 重鑄 (reroll the secondary stat and set; lock keeps them), 突破 (past +5) and 升階 (consume a twin).
+        /// The server does every roll and charge; this only shows prices and sends the request.
+        void CraftDialog(string itemId, string message = "", bool error = false)
+        {
+            var p = app.Profile;
+            var item = p?.Inventory.Find(i => i.Id == itemId);
+            if (craftDialog != null) UnityEngine.Object.Destroy(craftDialog.gameObject);
+            craftDialog = null;
+            if (item == null || root == null) return;
+            craftDialog = Ui.Box(root, new Color(0, 0, 0, 0.62f), "CraftDialog").rectTransform.Fill();
+            var sheet = Ui.Box(craftDialog, Palette.Sheet, "Sheet").rectTransform;
+            sheet.Place(new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(560, 640));
+            TopRule(sheet, item.Color);
+            var st = Ui.VStack(sheet, 6);
+            st.Fill();
+            st.GetComponent<VerticalLayoutGroup>().padding = new RectOffset(28, 28, 22, 22);
+            Ui.Label(st, "裝備改造", 13, Gear.ShardColor).Sized(18);
+            Ui.Label(st, item.Name, 24, item.Color, TextAnchor.UpperLeft, true).Sized(32);
+            Ui.Label(st, item.StatText(), 14, Palette.Hex("d6d1c6")).Sized(20);
+            var setLine = Ui.Label(st, item.Set != "" ? Gear.SetText(item.Set) : "無套裝（稀世以上的裝備才有套裝）", 13, item.Set != "" ? Gear.Sets[item.Set].color : Palette.Muted);
+            setLine.Sized(20);
+            Ui.Label(st, $"持有  {p.Gold} G　·　{p.Shards} 碎片", 13, Palette.Muted).Sized(20);
+
+            void Send(string path, Dictionary<string, object> data, string done)
+            {
+                app.Api.Post(path, data, result =>
+                {
+                    if (!result.Bool("ok")) { CraftDialog(itemId, result.Str("error", "操作失敗"), true); return; }
+                    app.UpdateProfile(Profile.From(result.Obj("profile")));
+                    if (Mode == "character") ShowCharacter();
+                    CraftDialog(itemId, done);
+                });
+            }
+            string Cost(int shards, int gold) => shards > 0 && gold > 0 ? $"{shards} 碎片 + {gold} G" : shards > 0 ? $"{shards} 碎片" : $"{gold} G";
+
+            // ---- 重鑄
+            Widgets.Section(st, "重鑄").Sized(24);
+            bool canReforge = item.Rarity >= 2;
+            Ui.Label(st, canReforge ? "重新隨機副屬性（35%–75%）與套裝。鎖定：保留副屬性種類與套裝，只重骰數值。" : "稀世以上的裝備才能重鑄。", 12, Palette.Muted).Sized(34);
+            var reforgeRow = Ui.HStack(st, 8).Sized(38);
+            Widgets.Toggle(reforgeRow, "鎖定屬性", craftLock, on => { craftLock = on; CraftDialog(itemId); }, "鎖定", "不鎖").interactable = canReforge;
+            int rShards = canReforge ? Gear.ReforgeShards[item.Rarity] + (craftLock ? Gear.ReforgeLockShards : 0) : 0, rGold = canReforge ? Gear.ReforgeGold[item.Rarity] : 0;
+            var reforge = Ui.Button(reforgeRow, canReforge ? $"重鑄 · {Cost(rShards, rGold)}" : "無法重鑄", () =>
+                Send("/api/gear/reforge", new Dictionary<string, object> { ["item"] = itemId, ["lock"] = craftLock }, "重鑄完成"), 14, Gear.ShardColor);
+            reforge.interactable = canReforge && p.Shards >= rShards && p.Gold >= rGold;
+
+            // ---- 突破
+            Widgets.Section(st, $"突破  {item.Limit} / {Gear.LimitMax}").Sized(24);
+            bool limitMax = item.Limit >= Gear.LimitMax;
+            Ui.Label(st, !item.Maxed ? $"強化到 +{Gear.MaxLevel} 後才能突破。每階全屬性 +{Gear.LimitBonus * 100:0}%。"
+                : limitMax ? "已達最高突破。" : $"每階全屬性 +{Gear.LimitBonus * 100:0}%（目前 +{item.Limit * Gear.LimitBonus * 100:0}%）。", 12, Palette.Muted).Sized(20);
+            int lShards = limitMax ? 0 : Gear.LimitShards[item.Limit], lGold = limitMax ? 0 : Gear.LimitGold[item.Limit];
+            var limit = Ui.Button(st, limitMax ? "已滿突破" : $"突破 ★{item.Limit + 1} · {Cost(lShards, lGold)}", () =>
+                Send("/api/gear/limit", new Dictionary<string, object> { ["item"] = itemId }, "突破成功"), 14, Gear.ShardColor).Sized(38);
+            limit.interactable = item.Maxed && !limitMax && p.Shards >= lShards && p.Gold >= lGold;
+
+            // ---- 升階
+            bool top = item.Rarity >= Gear.RarityNames.Length - 1;
+            Widgets.Section(st, "升階").Sized(24);
+            var worn = new HashSet<string>(p.Equipment.Values);
+            var fodder = top ? null : p.Inventory.Where(i => i.Id != item.Id && i.Slot == item.Slot && i.Rarity == item.Rarity && !worn.Contains(i.Id))
+                .OrderBy(i => i.Limit).ThenBy(i => i.Level).FirstOrDefault();
+            Ui.Label(st, top ? "已是最高稀有度。"
+                : fodder != null ? $"消耗素材：{fodder.Name}（自動選擇強化最低的同部位{Gear.RarityNames[item.Rarity]}裝備）。強化與突破保留。"
+                : $"需要另一件未裝備的{Gear.RarityNames[item.Rarity]}{Gear.SlotNames[item.Slot]}作為素材。", 12, Palette.Muted).Sized(34);
+            int aShards = top ? 0 : Gear.AscendShards[item.Rarity], aGold = top ? 0 : Gear.AscendGold[item.Rarity];
+            var ascend = Ui.Button(st, top ? "無法升階" : $"升階為 {Gear.RarityNames[item.Rarity + 1]} · {Cost(aShards, aGold)}", () =>
+                Send("/api/gear/ascend", new Dictionary<string, object> { ["item"] = itemId, ["fodder"] = fodder.Id }, "升階成功"), 14, top ? Palette.Muted : Gear.RarityColors[Mathf.Min(4, item.Rarity + 1)]).Sized(38);
+            ascend.interactable = !top && fodder != null && p.Shards >= aShards && p.Gold >= aGold;
+
+            Ui.Rect(st, "Spacer").gameObject.AddComponent<LayoutElement>().flexibleHeight = 1;
+            var foot = Ui.Rect(st, "Foot").Sized(40);
+            Ui.Label(foot, message, 14, error ? Palette.Danger : Palette.Amber, TextAnchor.MiddleLeft).rectTransform.Fill().offsetMax = new Vector2(-130, 0);
+            Ui.Button(foot, "關閉", () => { UnityEngine.Object.Destroy(craftDialog.gameObject); craftDialog = null; }, 15, Palette.Muted)
+                .GetComponent<RectTransform>().Place(new Vector2(1, 0.5f), Vector2.zero, new Vector2(120, 40), new Vector2(1, 0.5f));
+        }
+
+        /// Automated screenshots only: the crafting dialog for the first item in the bag.
+        public void ShowCraftForCapture() { var first = app.Profile?.Inventory.FirstOrDefault(i => i.Rarity >= 2) ?? app.Profile?.Inventory.FirstOrDefault(); if (first != null) CraftDialog(first.Id); }
 
         // ------------------------------------------------------------ bulk salvage
 

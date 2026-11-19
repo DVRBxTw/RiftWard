@@ -167,6 +167,36 @@ namespace RiftWard.Tests
         }
 
         [Test]
+        public void ArmorNeverLeavesALethalHitAtASliver()
+        {
+            // Armour used to scale the clamped hit (health → 0) back up to before × armour, so a player with armour
+            // could sit at a fraction of a point forever and never go down.
+            var sim = NewMission();
+            var a = sim.Actors[1];
+            sim.Enemies.Clear();
+            for (int i = 0; i < 10; i++) sim.ApplyBuff(1, Defs.BuffArmor + 200);
+            sim.Enemies[999] = new Enemy { Id = 999, Position = a.Position + new Vector3(15, 0, 15), Hp = 9999, MaxHp = 9999, Shoots = false, MeleeCooldown = 99f };
+            a.Hp = 10f;
+            sim.Bullets[1] = new Bullet { Id = 1, Position = a.Position + Vector3.up * 0.9f, Velocity = Vector3.zero, Damage = 50f, Kind = BulletKind.Enemy };
+            sim.Tick(0.01f);
+            Assert.IsFalse(a.Alive, "50 damage at 60% armour is 20, more than the 10 left");
+            Assert.AreEqual(0f, a.Hp);
+        }
+
+        [Test]
+        public void HeadHitsOnBigEnemiesCountAsHeadshots()
+        {
+            // An elite (scale × 1.35) up close: the shot climbs to the head, and the big body sphere's centre lies
+            // nearer along the ray. The head must still win.
+            var sim = NewMission();
+            var e = PlaceEnemy(sim, new Vector3(0, 0, 3.5f), 5000f);
+            e.Elite = true;
+            e.Scale *= 1.35f;
+            sim.Fire(1, e.Position + Vector3.up * Defs.HeadHeight * e.Scale);
+            Assert.IsTrue(sim.Shots.Last().Head);
+        }
+
+        [Test]
         public void EmptyMagazineAutoReloads()
         {
             var sim = NewMission();

@@ -163,13 +163,62 @@ def gear_upgrade_cost(rarity: int, level: int) -> int:
 
 
 def gear_invested(item) -> int:
-    return sum(gear_upgrade_cost(item["rarity"], n) for n in range(item.get("level", 0)))
+    """Gold put into an item: enhancement levels plus 突破 tiers (salvage refunds half)."""
+    return sum(gear_upgrade_cost(item["rarity"], n) for n in range(item.get("level", 0))) + sum(LIMIT_GOLD[:item.get("limit", 0)])
+
+
+def gear_invested_shards(item) -> int:
+    return sum(LIMIT_SHARDS[:item.get("limit", 0)])
 
 
 def gear_stats(item) -> dict:
-    """Effective stats of an item at its enhancement level (stored stats are the +0 values)."""
-    mult = 1 + GEAR_LEVEL_BONUS * item.get("level", 0)
+    """Effective stats of an item at its enhancement level and 突破 tier (stored stats are the +0 values)."""
+    mult = (1 + GEAR_LEVEL_BONUS * item.get("level", 0)) * (1 + GEAR_LIMIT_BONUS * item.get("limit", 0))
     return {k: int(round(v * mult)) for k, v in item["stats"].items()}
+
+
+# ---- gear crafting (mirrored in Gear.cs): 重鑄, 突破, 升階 and sets
+# 重鑄 rerolls the secondary stat (and the set) of a 稀世+ item; locking keeps the stat and the set, rerolling the value.
+REFORGE_SHARDS = [0, 0, 1, 2, 3]
+REFORGE_LOCK_SHARDS = 2
+REFORGE_GOLD = [0, 0, 500, 1000, 2000]
+SECONDARY_RANGE = (0.35, 0.75)   # secondary value as a share of the stat's full value at that rarity
+# 突破: past +5, up to three tiers, each adding 8% to every stat of the item.
+GEAR_LIMIT_MAX = 3
+GEAR_LIMIT_BONUS = 0.08
+LIMIT_SHARDS = [2, 4, 6]
+LIMIT_GOLD = [3000, 6000, 12000]
+# 升階: one more item of the same slot and rarity is consumed to raise the rarity by one (index = current rarity).
+ASCEND_SHARDS = [1, 2, 4, 8]
+ASCEND_GOLD = [500, 1500, 4000, 10000]
+# Sets (稀世+ items carry one): bonuses for 2 and 4 equipped pieces of the same set, as plain stat bonuses.
+GEAR_SETS = {
+    "assault": {2: {"damage": 5}, 4: {"crit": 8}},
+    "bulwark": {2: {"hp": 30}, 4: {"hp": 60}},
+    "gale": {2: {"speed": 5}, 4: {"reload": 15}},
+}
+GEAR_SET_MIN_RARITY = 2
+
+
+def roll_secondary(rng, primary, rarity, keep=None):
+    stat = keep if keep else rng.choice([k for k in GEAR_VALUES if k != primary])
+    lo, hi = SECONDARY_RANGE
+    return stat, max(1, int(round(GEAR_VALUES[stat][rarity] * rng.uniform(lo, hi))))
+
+
+def set_bonus(items) -> dict:
+    """Stat bonuses from the sets of the equipped items."""
+    counts = {}
+    for item in items:
+        if item.get("set") in GEAR_SETS:
+            counts[item["set"]] = counts.get(item["set"], 0) + 1
+    bonus = {}
+    for name, count in counts.items():
+        for need, stats in GEAR_SETS[name].items():
+            if count >= need:
+                for k, v in stats.items():
+                    bonus[k] = bonus.get(k, 0) + v
+    return bonus
 
 
 # ---- account level, talents, gear and supply draws
@@ -224,10 +273,12 @@ def roll_item(rng, rarity=None):
         rarity = rng.choices(range(len(RARITIES)), weights=RARITY_WEIGHTS)[0]
     primary = GEAR_SLOTS[slot]
     stats = {primary: GEAR_VALUES[primary][rarity]}
-    if rarity >= 2:  # rare and better carry a random secondary stat at half strength
+    item = {"id": secrets.token_hex(6), "slot": slot, "rarity": rarity, "stats": stats}
+    if rarity >= 2:  # rare and better carry a random secondary stat at half strength, and a set
         secondary = rng.choice([k for k in GEAR_VALUES if k != primary])
         stats[secondary] = max(1, GEAR_VALUES[secondary][rarity] // 2)
-    return {"id": secrets.token_hex(6), "slot": slot, "rarity": rarity, "stats": stats}
+        item["set"] = rng.choice(list(GEAR_SETS))
+    return item
 
 
 WEAPON_WEIGHTS = {"pistol": 30, "rifle": 30, "shotgun": 20, "sniper": 20, "saber": 5}   # the 光劍 is a rare find: 5 / 105 ≈ 4.8% of draws
@@ -435,10 +486,12 @@ class Store:
         result["inventory"] = [dict(item, stats=gear_stats(item), base=item["stats"], level=item.get("level", 0)) for item in gear["inventory"]]
         result["equipment"] = gear["equipped"]
         bonus = {k: talents[k] * per for k, per in TALENTS.items()}
-        for item in gear["inventory"]:
-            if gear["equipped"].get(item["slot"]) == item["id"]:
-                for k, v in gear_stats(item).items():
-                    bonus[k] = bonus.get(k, 0) + v
+        worn = [item for item in gear["inventory"] if gear["equipped"].get(item["slot"]) == item["id"]]
+        for item in worn:
+            for k, v in gear_stats(item).items():
+                bonus[k] = bonus.get(k, 0) + v
+        for k, v in set_bonus(worn).items():
+            bonus[k] = bonus.get(k, 0) + v
         result["bonus"] = {k: round(v, 2) for k, v in bonus.items()}
         cleared = self._parse_cleared(result.pop("cleared"), result["unlocked"])
         result["cleared"] = cleared
@@ -701,6 +754,10 @@ class Store:
         for i in inventory:
             level = i.get("level", 0)
             i["level"] = max(0, min(GEAR_MAX_LEVEL, level)) if isinstance(level, int) else 0
+            limit = i.get("limit", 0)
+            i["limit"] = max(0, min(GEAR_LIMIT_MAX, limit)) if isinstance(limit, int) else 0
+            if i.get("set") not in GEAR_SETS:
+                i.pop("set", None)
         ids = {i["id"] for i in inventory}
         equipped = {k: v for k, v in (data.get("equipped") or {}).items() if k in GEAR_SLOTS and v in ids}
         return {"inventory": inventory[:INVENTORY_LIMIT], "equipped": equipped}
@@ -902,6 +959,88 @@ class Store:
         self._save_gear(account_id, gear)
         return self.profile(account_id)
 
+    def _pay(self, account_id, gold, shards):
+        """Takes gold and shards together, or neither."""
+        with self.connect() as db:
+            if not db.execute("UPDATE progress SET gold=gold-?, shards=shards-? WHERE account_id=? AND gold>=? AND shards>=?",
+                              (gold, shards, account_id, gold, shards)).rowcount:
+                row = db.execute("SELECT gold, shards FROM progress WHERE account_id=?", (account_id,)).fetchone()
+                raise ValueError("碎片不足" if row and row[1] < shards else "金幣不足")
+
+    def _gear_item(self, gear, item_id):
+        item = next((i for i in gear["inventory"] if i["id"] == item_id), None)
+        if item is None:
+            raise ValueError("找不到此裝備")
+        return item
+
+    @_locked
+    def reforge_gear(self, account_id: int, item_id, lock=False):
+        """重鑄: rerolls the secondary stat and the set of a 稀世+ item; with lock, only the value."""
+        gear = self._raw_gear(account_id)
+        item = self._gear_item(gear, item_id)
+        if item["rarity"] < 2:
+            raise ValueError("稀世以上的裝備才能重鑄")
+        lock = lock is True
+        primary = GEAR_SLOTS[item["slot"]]
+        current = next((k for k in item["stats"] if k != primary), None)
+        self._pay(account_id, REFORGE_GOLD[item["rarity"]], REFORGE_SHARDS[item["rarity"]] + (REFORGE_LOCK_SHARDS if lock else 0))
+        rng = random.SystemRandom()
+        stat, value = roll_secondary(rng, primary, item["rarity"], current if lock else None)
+        item["stats"] = {primary: item["stats"][primary], stat: value}
+        if not lock or "set" not in item:
+            item["set"] = rng.choice(list(GEAR_SETS))
+        self._save_gear(account_id, gear)
+        return self.profile(account_id)
+
+    @_locked
+    def limit_break_gear(self, account_id: int, item_id):
+        """突破: a +5 item gains a tier (up to three), each +8% to all its stats."""
+        gear = self._raw_gear(account_id)
+        item = self._gear_item(gear, item_id)
+        if item.get("level", 0) < GEAR_MAX_LEVEL:
+            raise ValueError(f"強化到 +{GEAR_MAX_LEVEL} 後才能突破")
+        tier = item.get("limit", 0)
+        if tier >= GEAR_LIMIT_MAX:
+            raise ValueError("已達最高突破")
+        self._pay(account_id, LIMIT_GOLD[tier], LIMIT_SHARDS[tier])
+        item["limit"] = tier + 1
+        self._save_gear(account_id, gear)
+        return self.profile(account_id)
+
+    @_locked
+    def ascend_gear(self, account_id: int, item_id, fodder_id):
+        """升階: consumes another item of the same slot and rarity to raise this one's rarity by one.
+        Enhancement and 突破 stay; the stats move up to the new rarity's values."""
+        gear = self._raw_gear(account_id)
+        item = self._gear_item(gear, item_id)
+        fodder = self._gear_item(gear, fodder_id)
+        if fodder is item:
+            raise ValueError("請選擇另一件裝備作為素材")
+        rarity = item["rarity"]
+        if rarity >= len(RARITIES) - 1:
+            raise ValueError("已是最高稀有度")
+        if fodder["slot"] != item["slot"] or fodder["rarity"] != rarity:
+            raise ValueError("素材必須是同部位、同稀有度的裝備")
+        if fodder["id"] in gear["equipped"].values():
+            raise ValueError("素材裝備使用中，請先卸下")
+        self._pay(account_id, ASCEND_GOLD[rarity], ASCEND_SHARDS[rarity])
+        gear["inventory"].remove(fodder)
+        rng = random.SystemRandom()
+        primary = GEAR_SLOTS[item["slot"]]
+        stats = {primary: GEAR_VALUES[primary][rarity + 1]}
+        for k, v in item["stats"].items():
+            if k != primary:
+                stats[k] = max(1, int(round(v * GEAR_VALUES[k][rarity + 1] / max(1, GEAR_VALUES[k][rarity]))))
+        if rarity + 1 >= 2 and len(stats) == 1:
+            stat, value = roll_secondary(rng, primary, rarity + 1)
+            stats[stat] = value
+        item["stats"] = stats
+        item["rarity"] = rarity + 1
+        if item["rarity"] >= GEAR_SET_MIN_RARITY and item.get("set") not in GEAR_SETS:
+            item["set"] = rng.choice(list(GEAR_SETS))
+        self._save_gear(account_id, gear)
+        return self.profile(account_id)
+
     @_locked
     def equip_gear(self, account_id: int, item_id):
         gear = self._raw_gear(account_id)
@@ -928,7 +1067,7 @@ class Store:
         self._save_gear(account_id, gear)
         with self.connect() as db:
             db.execute("UPDATE progress SET gold=gold+?, shards=shards+? WHERE account_id=?",
-                       (GEAR_SALVAGE_GOLD[item["rarity"]] + gear_invested(item) // 2, SALVAGE_SHARDS[item["rarity"]], account_id))
+                       (GEAR_SALVAGE_GOLD[item["rarity"]] + gear_invested(item) // 2, SALVAGE_SHARDS[item["rarity"]] + gear_invested_shards(item) // 2, account_id))
         return self.profile(account_id)
 
     @_locked
@@ -951,7 +1090,7 @@ class Store:
                 if item["rarity"] in chosen and item["id"] not in worn:
                     count += 1
                     gold += GEAR_SALVAGE_GOLD[item["rarity"]] + gear_invested(item) // 2
-                    shards += SALVAGE_SHARDS[item["rarity"]]
+                    shards += SALVAGE_SHARDS[item["rarity"]] + gear_invested_shards(item) // 2
                 else:
                     kept.append(item)
             gear["inventory"] = kept
@@ -1988,7 +2127,7 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(200, {"ok": True, "username": name})
             else:
                 self._json(404, {"ok": False, "error": "找不到此服務"})
-        elif self.path in ("/api/talent/assign", "/api/talent/reset", "/api/gacha/draw", "/api/gacha/weapon", "/api/gear/equip", "/api/gear/salvage", "/api/gear/upgrade", "/api/weapon/select", "/api/weapon/salvage", "/api/salvage/bulk"):
+        elif self.path in ("/api/talent/assign", "/api/talent/reset", "/api/gacha/draw", "/api/gacha/weapon", "/api/gear/equip", "/api/gear/salvage", "/api/gear/upgrade", "/api/gear/reforge", "/api/gear/limit", "/api/gear/ascend", "/api/weapon/select", "/api/weapon/salvage", "/api/salvage/bulk"):
             try:
                 extra = {}
                 if self.path == "/api/talent/assign":
@@ -2012,6 +2151,12 @@ class Handler(BaseHTTPRequestHandler):
                     result = store.equip_gear(profile["id"], data.get("item"))
                 elif self.path == "/api/gear/upgrade":
                     result = store.upgrade_gear(profile["id"], data.get("item"))
+                elif self.path == "/api/gear/reforge":
+                    result = store.reforge_gear(profile["id"], data.get("item"), data.get("lock", False))
+                elif self.path == "/api/gear/limit":
+                    result = store.limit_break_gear(profile["id"], data.get("item"))
+                elif self.path == "/api/gear/ascend":
+                    result = store.ascend_gear(profile["id"], data.get("item"), data.get("fodder"))
                 else:
                     result = store.salvage(profile["id"], data.get("item"))
             except ValueError as exc:

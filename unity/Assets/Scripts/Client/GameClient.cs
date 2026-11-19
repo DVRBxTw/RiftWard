@@ -386,6 +386,7 @@ namespace RiftWard.Client
                 if (TestAimbot && Input.GetMouseButton(1)) LockOnNearest(Time.deltaTime);
                 Ping();
                 if (Bindings.Pressed(Bindings.Action.View)) thirdPerson = !thirdPerson;
+                if (SpectatingId != 0 && Input.GetMouseButtonDown(0) && Sim.Actors.TryGetValue(LocalId, out var downed)) CycleSpectate(downed);
                 if (Bindings.Pressed(Bindings.Action.Slot1)) desiredSlot = 0;
                 if (Bindings.Pressed(Bindings.Action.Slot2)) desiredSlot = 1;
                 float wheel = Input.mouseScrollDelta.y;
@@ -940,7 +941,7 @@ namespace RiftWard.Client
                     int weaponRarity = a.Id == LocalId ? (WeaponRarity?.Invoke(a.WeaponId) ?? 1) : a.Loadout.RarityOf(a.WeaponId);
                     rig.SetWeapon(a.WeaponId, weaponRarity);
                 }
-                view.SetActive(a.Id != LocalId || thirdPerson);
+                view.SetActive(a.Id != LocalId || thirdPerson || SpectatingId != 0);   // spectating: your own body lies in view
                 RenderGadgets(a, view);
                 RenderNameTag(a, view);
             }
@@ -1025,12 +1026,53 @@ namespace RiftWard.Client
             UpdateCamera(me, dt);
             UpdateAudio(me, dt);
             string toast = Sim.State == MissionState.Playing && !Paused && !Sim.BuffPending && !ChatHud.Typing && Cursor.lockState != CursorLockMode.Locked ? Hud.CursorPrompt : Objective;
+            Hud.Spectating = SpectatingId != 0 && Sim.Actors.TryGetValue(SpectatingId, out var watchedActor) ? (string.IsNullOrEmpty(watchedActor.Name) ? "隊友" : watchedActor.Name) : null;
             Hud.Tick(dt, Sim, me, Camera, thirdPerson, toast);
+        }
+
+        /// Death spectate: while you are down and a teammate still stands, the camera follows them from behind
+        /// (you still turn it with the mouse). Left click switches to the next teammate standing. 0 = not spectating.
+        public int SpectatingId { get; private set; }
+
+        Actor SpectateTarget(Actor me)
+        {
+            if (me == null || me.Alive || Sim == null || Sim.State != MissionState.Playing) { SpectatingId = 0; return null; }
+            var standing = Sim.Actors.Values.Where(a => a.Id != me.Id && a.Alive).OrderBy(a => a.Id).ToList();
+            if (standing.Count == 0) { SpectatingId = 0; return null; }
+            var current = standing.Find(a => a.Id == SpectatingId);
+            if (current == null) { current = standing[0]; SpectatingId = current.Id; }
+            return current;
+        }
+
+        /// Next teammate standing (wraps around).
+        void CycleSpectate(Actor me)
+        {
+            var standing = Sim.Actors.Values.Where(a => a.Id != me.Id && a.Alive).OrderBy(a => a.Id).ToList();
+            if (standing.Count < 2) return;
+            int i = standing.FindIndex(a => a.Id == SpectatingId);
+            SpectatingId = standing[(i + 1) % standing.Count].Id;
         }
 
         void UpdateCamera(Actor me, float dt)
         {
             if (me == null) return;
+            var watched = SpectateTarget(me);
+            if (watched != null)
+            {
+                var spectateLook = Quaternion.Euler(-pitch * Mathf.Rad2Deg, yaw * Mathf.Rad2Deg, 0);
+                Vector3 head = actorViews.TryGetValue(watched.Id, out var theirs) ? theirs.transform.position : watched.Position;
+                head += Vector3.up * Defs.EyeHeight;
+                var want = head + spectateLook * new Vector3(0f, 0.6f, -4.2f);
+                if (want.y < 0.6f) want.y = 0.6f;
+                // Pull in front of walls between the teammate and the camera.
+                var back = want - head;
+                float reach = GameSim.RayBlock(head, back.normalized, back.magnitude);
+                if (reach < back.magnitude) want = head + back.normalized * Mathf.Max(0.6f, reach - 0.3f);
+                Camera.transform.rotation = spectateLook;
+                Camera.transform.position = Vector3.Lerp(Camera.transform.position, want, 1f - Mathf.Exp(-12f * dt));
+                weaponHolder.gameObject.SetActive(false);
+                return;
+            }
             if (recoilPending > 0.0001f)
             {
                 float back = recoilPending * Mathf.Min(1f, dt * 9f);

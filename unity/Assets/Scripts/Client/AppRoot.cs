@@ -757,16 +757,16 @@ namespace RiftWard.Client
             var demo = Profile.From(new Dictionary<string, object>
             {
                 ["id"] = 1.0, ["username"] = "DVRBXTW", ["unlocked"] = 1.0, ["gold"] = 1240.0, ["tutorial_complete"] = true, ["admin"] = true,
-                ["level"] = 7.0, ["level_xp"] = 260.0, ["level_need"] = 450.0, ["keys"] = 12.0, ["talent_points"] = 2.0,
+                ["level"] = 7.0, ["level_xp"] = 260.0, ["level_need"] = 450.0, ["keys"] = 12.0, ["shards"] = 12.0, ["talent_points"] = 2.0,
                 ["talents"] = new Dictionary<string, object> { ["hp"] = 2.0, ["damage"] = 3.0, ["crit"] = 1.0 },
                 ["inventory"] = new List<object>
                 {
-                    new Dictionary<string, object> { ["id"] = "a", ["slot"] = "armor", ["rarity"] = 3.0, ["level"] = 3.0, ["stats"] = new Dictionary<string, object> { ["hp"] = 32.0, ["crit"] = 4.0 } },
-                    new Dictionary<string, object> { ["id"] = "b", ["slot"] = "module", ["rarity"] = 4.0, ["level"] = 5.0, ["stats"] = new Dictionary<string, object> { ["damage"] = 16.0, ["speed"] = 6.0 } },
+                    new Dictionary<string, object> { ["id"] = "a", ["slot"] = "armor", ["rarity"] = 3.0, ["level"] = 3.0, ["set"] = "bulwark", ["stats"] = new Dictionary<string, object> { ["hp"] = 32.0, ["crit"] = 4.0 } },
+                    new Dictionary<string, object> { ["id"] = "b", ["slot"] = "module", ["rarity"] = 4.0, ["level"] = 5.0, ["limit"] = 2.0, ["set"] = "bulwark", ["stats"] = new Dictionary<string, object> { ["damage"] = 16.0, ["speed"] = 6.0 } },
                     new Dictionary<string, object> { ["id"] = "c", ["slot"] = "boots", ["rarity"] = 1.0, ["stats"] = new Dictionary<string, object> { ["speed"] = 3.0 } },
-                    new Dictionary<string, object> { ["id"] = "d", ["slot"] = "chip", ["rarity"] = 2.0, ["stats"] = new Dictionary<string, object> { ["crit"] = 5.0, ["hp"] = 10.0 } },
+                    new Dictionary<string, object> { ["id"] = "d", ["slot"] = "chip", ["rarity"] = 2.0, ["set"] = "assault", ["stats"] = new Dictionary<string, object> { ["crit"] = 5.0, ["hp"] = 10.0 } },
                     new Dictionary<string, object> { ["id"] = "e", ["slot"] = "armor", ["rarity"] = 0.0, ["stats"] = new Dictionary<string, object> { ["hp"] = 6.0 } },
-                    new Dictionary<string, object> { ["id"] = "f", ["slot"] = "armor", ["rarity"] = 2.0, ["level"] = 1.0, ["stats"] = new Dictionary<string, object> { ["hp"] = 14.0, ["speed"] = 2.0 } },
+                    new Dictionary<string, object> { ["id"] = "f", ["slot"] = "armor", ["rarity"] = 2.0, ["level"] = 1.0, ["set"] = "gale", ["stats"] = new Dictionary<string, object> { ["hp"] = 14.0, ["speed"] = 2.0 } },
                 },
                 ["equipment"] = new Dictionary<string, object> { ["armor"] = "a", ["module"] = "b" },
                 ["cleared"] = new List<object> { 1.0, -1.0, -1.0 },
@@ -825,6 +825,9 @@ namespace RiftWard.Client
             Screens.SetGearFilter("armor");
             yield return Settle(0.3f);
             yield return Shot(folder, "unity-character-armor");
+            Screens.ShowCraftForCapture();
+            yield return Settle(0.3f);
+            yield return Shot(folder, "unity-craft");
             Screens.SetGearFilter("");
             Screens.ShowShop();
             yield return Settle(0.4f);
@@ -1063,6 +1066,17 @@ namespace RiftWard.Client
             for (int f = 0; f < 30; f++) { Client.AimbotStepForCapture(1f / 60f); yield return null; }
             yield return Shot(folder, "unity-aimbot");
             Client.SetView(0, 0);
+            // Death spectate: you are down, the camera follows a teammate still standing.
+            var mate = sim.AddActor(2, kit, false);
+            mate.Name = "Sean";
+            mate.Position = me.Position + new Vector3(2.5f, 0, 3f);
+            mate.Yaw = 0.3f;
+            me.Hp = 0;
+            yield return Settle(0.6f);
+            yield return Shot(folder, "unity-spectate");
+            sim.RemoveActor(2);
+            me.Hp = me.MaxHp;
+            yield return Settle(0.2f);
             // Ordinary-rarity muzzle flash (傳奇+ guns have their own effect), first and third person.
             me.Loadout.Rarity["rifle"] = 1;
             kit.Rarity["rifle"] = 1;

@@ -9,6 +9,9 @@ namespace RiftWard.Client
     {
         public string Id, Slot;
         public int Rarity, Level;
+        /// 突破 tier (0-3) and set id ("" = none).
+        public int Limit;
+        public string Set = "";
         /// Effective stats (enhancement included); Base holds the +0 values.
         public Dictionary<string, int> Stats = new Dictionary<string, int>(), Base = new Dictionary<string, int>();
         /// Overrides used when a reveal card shows something other than gear (weapon draws).
@@ -22,10 +25,13 @@ namespace RiftWard.Client
             var baseStats = d.Obj("base");
             if (baseStats != null) foreach (var kv in baseStats) item.Base[kv.Key] = kv.Value is double n ? (int)n : 0;
             item.Level = Mathf.Clamp(d.Int("level"), 0, Gear.MaxLevel);
+            item.Limit = Mathf.Clamp(d.Int("limit"), 0, Gear.LimitMax);
+            item.Set = Gear.Sets.ContainsKey(d.Str("set")) ? d.Str("set") : "";
             return item;
         }
 
-        public string Name => Gear.ItemName(Slot, Rarity) + (Level > 0 ? $" +{Level}" : "");
+        public string Name => Gear.ItemName(Slot, Rarity) + (Level > 0 ? $" +{Level}" : "") + (Limit > 0 ? $" ★{Limit}" : "");
+        public string SetName => Set != "" ? Gear.Sets[Set].name : "";
         public bool Maxed => Level >= Gear.MaxLevel;
         public int UpgradeCost => Gear.UpgradeCost(Rarity, Level);
         public Color Color => Gear.RarityColors[Rarity];
@@ -48,6 +54,25 @@ namespace RiftWard.Client
         public const int MaxLevel = 5;
         public static readonly int[] UpgradeBase = { 100, 175, 300, 500, 800 };
         public static int UpgradeCost(int rarity, int level) => UpgradeBase[Mathf.Clamp(rarity, 0, 4)] * (level + 1);
+
+        // ---- crafting; mirrors REFORGE_* / LIMIT_* / ASCEND_* / GEAR_SETS in server/service.py
+        public static readonly int[] ReforgeShards = { 0, 0, 1, 2, 3 }, ReforgeGold = { 0, 0, 500, 1000, 2000 };
+        public const int ReforgeLockShards = 2;
+        public const int LimitMax = 3;
+        public const float LimitBonus = 0.08f;
+        public static readonly int[] LimitShards = { 2, 4, 6 }, LimitGold = { 3000, 6000, 12000 };
+        public static readonly int[] AscendShards = { 1, 2, 4, 8 }, AscendGold = { 500, 1500, 4000, 10000 };
+        /// Sets: name, accent, and the stat bonuses at 2 and 4 equipped pieces.
+        public static readonly Dictionary<string, (string name, Color color, (string stat, int value) two, (string stat, int value) four)> Sets =
+            new Dictionary<string, (string, Color, (string, int), (string, int))>
+            {
+                ["assault"] = ("突擊", Palette.Hex("ff7a59"), ("damage", 5), ("crit", 8)),
+                ["bulwark"] = ("堡壘", Palette.Hex("6fb8ff"), ("hp", 30), ("hp", 60)),
+                ["gale"] = ("疾風", Palette.Hex("6fe0a8"), ("speed", 5), ("reload", 15)),
+            };
+
+        public static string SetText(string set) =>
+            Sets.TryGetValue(set, out var s) ? $"{s.name}套裝　2 件：{StatText(s.two.stat, s.two.value)}　4 件：{StatText(s.four.stat, s.four.value)}" : "";
 
         /// Salvage value per piece; mirrors GEAR_SALVAGE_GOLD / DUPLICATE_GOLD / SALVAGE_SHARDS in server/service.py.
         /// 傳奇 and 神話 break down into shards instead of gold.
