@@ -10,10 +10,11 @@ import shutil
 import socket
 import subprocess
 import threading
+import zipfile
 import sys
 import time
 
-from service import BetaServer, Store, HOST, PORT, VERSION, tls_context, cert_fingerprint
+from service import BetaServer, Store, HOST, PORT, VERSION, tls_context, cert_fingerprint, publish_files
 
 GAME_PORT = int(os.environ.get("RIFTWARD_GAME_PORT", "24770"))
 CHANNEL = os.environ.get("RIFTWARD_CHANNEL", "測試服")
@@ -67,6 +68,10 @@ def main():
     version = VERSION
     if bundled.exists():
         version = json.loads(bundled.read_text(encoding="utf-8-sig")).get("version", VERSION)
+    try:
+        publish_files(pack, releases, digest)   # delta updates: per-file blobs + file list
+    except (OSError, ValueError, zipfile.BadZipFile) as error:
+        print(f"Delta update files not published ({error}); launchers fall back to the full zip.")
     manifest = {"version": version, "sha256": digest, "size": pack.stat().st_size, "package": "zip"}
     (releases / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
     try:

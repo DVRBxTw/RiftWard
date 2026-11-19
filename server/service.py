@@ -9,6 +9,7 @@ import json
 import os
 from pathlib import Path
 import random
+import zipfile
 import re
 import secrets
 import socket
@@ -1838,10 +1839,47 @@ class BetaServer(ThreadingHTTPServer):
                 return None
             if path.stat().st_size != data["size"]:
                 return None
-            return {"ok": True, "version": data["version"], "sha256": digest,
-                    "size": data["size"], "download": "/updates/" + digest + "." + ext, "package": ext, "protocol": 1}
+            result = {"ok": True, "version": data["version"], "sha256": digest,
+                      "size": data["size"], "download": "/updates/" + digest + "." + ext, "package": ext, "protocol": 1}
+            # Delta updates: launchers that know "files" fetch the list and only the changed files; older
+            # launchers ignore the field and keep downloading the whole zip.
+            if (self.releases / f"files-{digest}.json").is_file():
+                result["files"] = f"/updates/files-{digest}.json"
+            return result
         except (OSError, ValueError, KeyError):
             return None
+
+
+def publish_files(pack: Path, releases: Path, digest: str) -> Path:
+    """Delta updates: splits the game zip into content-addressed files (releases/blobs/<sha256>) and writes the
+    file list (releases/files-<zip sha256>.json). A launcher that has an earlier version copies the files whose
+    hash it already has and downloads only the rest. Blobs are shared across versions, so only changed files
+    take new space. Idempotent: an existing list is kept."""
+    listing = releases / f"files-{digest}.json"
+    if listing.is_file():
+        return listing
+    blobs = releases / "blobs"
+    blobs.mkdir(parents=True, exist_ok=True)
+    entries = []
+    with zipfile.ZipFile(pack) as archive:
+        for info in archive.infolist():
+            if info.is_dir():
+                continue
+            name = info.filename.replace("\\", "/")
+            if name.startswith("/") or ".." in name.split("/") or ":" in name:
+                raise ValueError(f"unsafe entry {name}")
+            data = archive.read(info)
+            sha = hashlib.sha256(data).hexdigest()
+            blob = blobs / sha
+            if not blob.is_file():
+                temp = blobs / (sha + ".tmp")
+                temp.write_bytes(data)
+                temp.replace(blob)
+            entries.append({"path": name, "sha256": sha, "size": len(data)})
+    temp = listing.with_suffix(".tmp")
+    temp.write_text(json.dumps({"version": 1, "files": entries}), encoding="utf-8")
+    temp.replace(listing)
+    return listing
 
 
 def tls_context(cert: Path, key: Path) -> ssl.SSLContext | None:
@@ -1910,8 +1948,16 @@ class Handler(BaseHTTPRequestHandler):
             self._json(200 if manifest else 503, manifest or {"ok": False, "error": "更新尚未發布"})
             return
         match = re.fullmatch(r"/updates/([0-9a-f]{64})\.(pck|zip)", self.path)
-        if match:
-            path = self.server.releases / (match[1] + "." + match[2])
+        path = self.server.releases / (match[1] + "." + match[2]) if match else None
+        if not match:
+            # Delta updates: the file list of a version, and one content-addressed file.
+            listed = re.fullmatch(r"/updates/files-([0-9a-f]{64})\.json", self.path)
+            blob = re.fullmatch(r"/updates/blobs/([0-9a-f]{64})", self.path)
+            if listed:
+                path = self.server.releases / f"files-{listed[1]}.json"
+            elif blob:
+                path = self.server.releases / "blobs" / blob[1]
+        if path is not None:
             if path.is_file():
                 total = path.stat().st_size
                 # Resume support: "Range: bytes=N-" continues an interrupted download from byte N.

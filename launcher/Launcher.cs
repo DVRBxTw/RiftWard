@@ -23,6 +23,15 @@ namespace RiftWard.Launcher
     {
         public string Version, Sha256, Download, Package;
         public long Size;
+        /// <summary>Delta updates: URL of the version's file list (null when the server offers none).</summary>
+        public string Files;
+    }
+
+    /// <summary>One file of a version, as the server's file list names it.</summary>
+    public class FileEntry
+    {
+        public string Path, Sha256;
+        public long Size;
     }
 
     public static class Updater
@@ -87,7 +96,51 @@ namespace RiftWard.Launcher
             double s = Convert.ToDouble(size);
             if (s < 1 || s > MaxPackSize || s != Math.Floor(s)) { problem = "檔案大小超出限制。"; return null; }
             m.Size = (long)s;
+            // Delta updates: optional, and only ever the list that belongs to this exact zip.
+            if (requireServerFields && d.ContainsKey("files") && d["files"] as string == "/updates/files-" + m.Sha256 + ".json")
+                m.Files = (string)d["files"];
             return m;
+        }
+
+        /// <summary>A relative path from a file list or zip that stays inside its folder.</summary>
+        public static bool SafeRelative(string name)
+        {
+            return !string.IsNullOrEmpty(name) && name.Length < 400 && !name.StartsWith("/") && !name.Contains("..") && !name.Contains(":") && !name.Contains("\\");
+        }
+
+        /// <summary>Parses the delta file list; returns null and sets problem on anything unexpected.</summary>
+        public static List<FileEntry> ParseFileList(string json, out string problem)
+        {
+            problem = null;
+            Dictionary<string, object> d;
+            try { d = new JavaScriptSerializer { MaxJsonLength = 16 * 1024 * 1024 }.DeserializeObject(json) as Dictionary<string, object>; }
+            catch { d = null; }
+            object raw;
+            if (d == null || !d.TryGetValue("files", out raw) || !(raw is object[])) { problem = "檔案清單格式無效。"; return null; }
+            var list = new List<FileEntry>();
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            long total = 0;
+            foreach (object o in (object[])raw)
+            {
+                var e = o as Dictionary<string, object>;
+                if (e == null || !(e.ContainsKey("path") && e.ContainsKey("sha256") && e.ContainsKey("size"))) { problem = "檔案清單項目無效。"; return null; }
+                var f = new FileEntry { Path = e["path"] as string, Sha256 = e["sha256"] as string };
+                double size;
+                try { size = Convert.ToDouble(e["size"]); } catch { problem = "檔案大小無效。"; return null; }
+                if (!SafeRelative(f.Path) || f.Sha256 == null || !HashRx.IsMatch(f.Sha256) || size < 0 || size != Math.Floor(size) || !seen.Add(f.Path)) { problem = "檔案清單項目無效。"; return null; }
+                f.Size = (long)size;
+                total += f.Size;
+                list.Add(f);
+            }
+            if (list.Count == 0 || list.Count > 20000 || total > MaxPackSize * 2) { problem = "檔案清單超出限制。"; return null; }
+            return list;
+        }
+
+        public static string Sha256Of(string path)
+        {
+            using (var stream = File.OpenRead(path))
+            using (var sha = SHA256.Create())
+                return BitConverter.ToString(sha.ComputeHash(stream)).Replace("-", "").ToLowerInvariant();
         }
 
         public static string Verify(string path, long size, string sha256)
@@ -138,7 +191,8 @@ namespace RiftWard.Launcher
         static readonly Color Muted = ColorTranslator.FromHtml("#8a877f");
 
         readonly string installDir = AppDomain.CurrentDomain.BaseDirectory;
-        readonly string updateDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "RiftWard", "updates");
+        // RIFTWARD_UPDATE_DIR: tests point the cache elsewhere so they never touch a real install.
+        readonly string updateDir = Environment.GetEnvironmentVariable("RIFTWARD_UPDATE_DIR") ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "RiftWard", "updates");
         readonly Label status, detail;
         readonly Panel bar, barFill;
         readonly Button retry;
@@ -253,6 +307,15 @@ namespace RiftWard.Launcher
             string bundled = Path.Combine(installDir, "game", "RiftWard.zip");
             if (Updater.Verify(bundled, m.Size, m.Sha256) == null) { Launch(m, bundled); return; }
 
+            // Delta update: copy unchanged files from the version already installed, download only the rest.
+            // Anything unexpected falls through to the full download below.
+            if (m.Files != null)
+            {
+                try { if (DeltaUpdate(origin, m)) return; }
+                catch (Exception) { }
+                SetProgress(0);
+            }
+
             string part = Path.Combine(updateDir, "download.part");
             SetStatus("正在下載 " + m.Version, null);
             if (!Download(origin + m.Download, part, m.Size)) return;
@@ -277,14 +340,14 @@ namespace RiftWard.Launcher
             return true;
         }
 
-        static string Get(string url, int timeout)
+        static string Get(string url, int timeout, long limit = 65536)
         {
             var req = (HttpWebRequest)WebRequest.Create(url);
             req.Timeout = timeout;
             req.AllowAutoRedirect = false;
             using (var res = (HttpWebResponse)req.GetResponse())
             {
-                if (res.StatusCode != HttpStatusCode.OK || res.ContentLength > 65536) return null;
+                if (res.StatusCode != HttpStatusCode.OK || res.ContentLength > limit) return null;
                 using (var reader = new StreamReader(res.GetResponseStream(), System.Text.Encoding.UTF8))
                     return reader.ReadToEnd();
             }
@@ -359,6 +422,125 @@ namespace RiftWard.Launcher
             }
         }
 
+        string VersionFolder(Manifest m) { return Path.Combine(updateDir, "game-" + m.Version + "-" + m.Sha256.Substring(0, 16)); }
+
+        /// <summary>Delta update. Builds the new version's folder from the server's file list: a file whose hash
+        /// matches one in an installed version (or the bundled package) is copied locally, the rest are
+        /// downloaded one by one and SHA-256 checked. Returns false (nothing launched) when there is no
+        /// installed version to build from or the list cannot be read; exceptions also mean "use the zip".</summary>
+        bool DeltaUpdate(string origin, Manifest m)
+        {
+            string target = VersionFolder(m);
+            string marker = Path.Combine(target, ".verified");
+            if (File.Exists(marker) && File.ReadAllText(marker) == m.Sha256) { StartGame(m, target, null); return true; }
+
+            SetStatus("正在比對遊戲檔案…", "只下載這次有變動的檔案");
+            string json = Get(origin + m.Files, 15000, 16 * 1024 * 1024);
+            string problem;
+            var files = json == null ? null : Updater.ParseFileList(json, out problem);
+            if (files == null) return false;
+
+            // Installed versions to copy from, newest first; a fresh install builds one from its bundled package.
+            var bases = new List<string>();
+            foreach (string dir in Directory.GetDirectories(updateDir, "game-*"))
+            {
+                if (dir.EndsWith(".partial")) continue;
+                if (string.Equals(Path.GetFullPath(dir).TrimEnd('\\'), Path.GetFullPath(target).TrimEnd('\\'), StringComparison.OrdinalIgnoreCase)) continue;
+                if (File.Exists(Path.Combine(dir, ".verified"))) bases.Add(dir);
+            }
+            bases.Sort((a, b) => Directory.GetLastWriteTimeUtc(b).CompareTo(Directory.GetLastWriteTimeUtc(a)));
+            if (bases.Count == 0)
+            {
+                string metadata = Path.Combine(installDir, "game", "manifest.json");
+                string bundled = Path.Combine(installDir, "game", "RiftWard.zip");
+                Manifest own = File.Exists(metadata) ? Updater.Parse(File.ReadAllText(metadata), false, out problem) : null;
+                if (own == null || Updater.Verify(bundled, own.Size, own.Sha256) != null) return false;
+                SetStatus("正在準備遊戲檔案…", "版本 " + own.Version);
+                bases.Add(Updater.Extract(bundled, VersionFolder(own), own.Sha256));
+            }
+
+            // Work in a side folder (kept across retries, so finished files are not fetched twice), then move it in.
+            string partial = target + ".partial";
+            Directory.CreateDirectory(partial);
+            string root = Path.GetFullPath(partial) + Path.DirectorySeparatorChar;
+            var missing = new List<FileEntry>();
+            long reused = 0;
+            foreach (var f in files)
+            {
+                string dest = Path.GetFullPath(Path.Combine(partial, f.Path));
+                if (!dest.StartsWith(root, StringComparison.OrdinalIgnoreCase)) return false;
+                if (File.Exists(dest) && new FileInfo(dest).Length == f.Size && Updater.Sha256Of(dest) == f.Sha256) { reused += f.Size; continue; }
+                string from = null;
+                foreach (string b in bases)
+                {
+                    string candidate = Path.Combine(b, f.Path);
+                    if (File.Exists(candidate) && new FileInfo(candidate).Length == f.Size && Updater.Sha256Of(candidate) == f.Sha256) { from = candidate; break; }
+                }
+                if (from == null) { missing.Add(f); continue; }
+                Directory.CreateDirectory(Path.GetDirectoryName(dest));
+                File.Copy(from, dest, true);
+                reused += f.Size;
+            }
+
+            long need = 0;
+            foreach (var f in missing) need += f.Size;
+            if (need > m.Size) return false;   // most files changed: the compressed zip is the smaller download
+            long done = 0;
+            SetStatus("正在下載 " + m.Version + " 的更新檔案", string.Format("{0} 個檔案 · {1:0.0} MB（其餘 {2:0.0} MB 沿用本機檔案）", missing.Count, need / 1048576.0, reused / 1048576.0));
+            foreach (var f in missing)
+            {
+                string dest = Path.GetFullPath(Path.Combine(partial, f.Path));
+                Directory.CreateDirectory(Path.GetDirectoryName(dest));
+                string temp = dest + ".part";
+                long before = done;
+                for (int attempt = 0; ; attempt++)
+                {
+                    try { FetchBlob(origin + "/updates/blobs/" + f.Sha256, temp, f.Size, before, need); break; }
+                    catch (Exception) { if (attempt >= 4) throw; Thread.Sleep(1500 * (attempt + 1)); }
+                }
+                if (Updater.Sha256Of(temp) != f.Sha256) { File.Delete(temp); throw new InvalidDataException("hash mismatch " + f.Path); }
+                if (File.Exists(dest)) File.Delete(dest);
+                File.Move(temp, dest);
+                done += f.Size;
+            }
+
+            File.WriteAllText(Path.Combine(partial, ".verified"), m.Sha256);
+            if (Directory.Exists(target)) Directory.Delete(target, true);
+            Directory.Move(partial, target);
+            SetProgress(1);
+            StartGame(m, target, null);
+            return true;
+        }
+
+        void FetchBlob(string url, string path, long size, long before, long need)
+        {
+            var req = (HttpWebRequest)WebRequest.Create(url);
+            req.Timeout = 45000;
+            req.ReadWriteTimeout = 45000;
+            req.AllowAutoRedirect = false;
+            using (var res = (HttpWebResponse)req.GetResponse())
+            using (var input = res.GetResponseStream())
+            using (var output = new FileStream(path, FileMode.Create, FileAccess.Write))
+            {
+                if (res.StatusCode != HttpStatusCode.OK) throw new IOException("HTTP " + (int)res.StatusCode);
+                var buffer = new byte[81920];
+                long total = 0;
+                int read, lastTick = 0;
+                while ((read = input.Read(buffer, 0, buffer.Length)) > 0)
+                {
+                    total += read;
+                    if (total > size) throw new IOException("larger than listed");
+                    output.Write(buffer, 0, read);
+                    if (need > 0 && Environment.TickCount - lastTick > 100)
+                    {
+                        lastTick = Environment.TickCount;
+                        SetProgress((float)(before + total) / need);
+                    }
+                }
+                if (total != size) throw new IOException("connection ended early");
+            }
+        }
+
         /// <summary>Removes earlier versions from the update cache (old zips, old extracted game folders and any
         /// stale partial download), keeping only the version about to start. Anything still in use, such as an
         /// older game left running, is skipped and removed on a later launch.</summary>
@@ -368,9 +550,10 @@ namespace RiftWard.Launcher
             {
                 if (!Directory.Exists(updateDir)) return;
                 string keepF = Path.GetFullPath(keepFolder).TrimEnd(Path.DirectorySeparatorChar);
-                string keepZ = Path.GetFullPath(keepZip);
+                string keepZ = keepZip == null ? "" : Path.GetFullPath(keepZip);
                 foreach (string dir in Directory.GetDirectories(updateDir, "game-*"))
                 {
+                    if (dir.EndsWith(".partial") && !string.Equals(Path.GetFullPath(dir), keepF + ".partial", StringComparison.OrdinalIgnoreCase)) { try { Directory.Delete(dir, true); } catch (IOException) { } catch (UnauthorizedAccessException) { } continue; }
                     if (string.Equals(Path.GetFullPath(dir).TrimEnd(Path.DirectorySeparatorChar), keepF, StringComparison.OrdinalIgnoreCase)) continue;
                     try { Directory.Delete(dir, true); } catch (IOException) { } catch (UnauthorizedAccessException) { }
                 }
@@ -389,8 +572,13 @@ namespace RiftWard.Launcher
         {
             SetStatus("正在安裝遊戲檔案…", "版本 " + m.Version);
             string folder;
-            try { folder = Updater.Extract(zip, Path.Combine(updateDir, "game-" + m.Version + "-" + m.Sha256.Substring(0, 16)), m.Sha256); }
+            try { folder = Updater.Extract(zip, VersionFolder(m), m.Sha256); }
             catch (Exception) { Fail("無法解壓遊戲檔案。請確認磁碟空間後重試。"); return; }
+            StartGame(m, folder, zip);
+        }
+
+        void StartGame(Manifest m, string folder, string zip)
+        {
             string cfg = Path.Combine(installDir, "server.cfg");
             if (File.Exists(cfg)) File.Copy(cfg, Path.Combine(folder, "server.cfg"), true);
             string exe = Path.Combine(folder, "RiftWard.exe");
@@ -420,6 +608,11 @@ namespace RiftWard.Launcher
             if (problem != null) { Console.WriteLine("FAIL " + problem); return 1; }
             if (Updater.Parse("{\"ok\":true,\"protocol\":1,\"version\":\"1.0.0\",\"sha256\":\"" + m.Sha256 + "\",\"download\":\"/updates/../x.zip\",\"size\":5,\"package\":\"zip\"}", true, out problem) != null)
             { Console.WriteLine("FAIL bad path accepted"); return 1; }
+            string listProblem;
+            if (Updater.ParseFileList("{\"files\":[{\"path\":\"../x.exe\",\"sha256\":\"" + m.Sha256 + "\",\"size\":1}]}", out listProblem) != null)
+            { Console.WriteLine("FAIL unsafe list path accepted"); return 1; }
+            if (Updater.ParseFileList("{\"files\":[{\"path\":\"a/b.dll\",\"sha256\":\"" + m.Sha256 + "\",\"size\":3}]}", out listProblem) == null)
+            { Console.WriteLine("FAIL list rejected: " + listProblem); return 1; }
             string temp = Path.Combine(Path.GetTempPath(), "riftward-selftest-" + Guid.NewGuid().ToString("N"));
             try
             {

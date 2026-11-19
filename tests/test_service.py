@@ -163,6 +163,36 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(sorted(results), [200, 400, 400, 400])
         self.assertEqual(self.store.profile(aid)["loadout"]["copies"]["pistol"], [1, 4])
 
+    def test_delta_update_files(self):
+        import zipfile, io
+        releases = self.base / "releases"
+        pack = self.base / "game.zip"
+        with zipfile.ZipFile(pack, "w") as z:
+            z.writestr("RiftWard.exe", b"exe-v2")
+            z.writestr("RiftWard_Data/level0", b"same-asset")
+            z.writestr("RiftWard_Data/sub/", b"")
+        digest = hashlib.sha256(pack.read_bytes()).hexdigest()
+        listing = service.publish_files(pack, releases, digest)
+        files = json.loads(listing.read_text())["files"]
+        self.assertEqual(sorted(f["path"] for f in files), ["RiftWard.exe", "RiftWard_Data/level0"])
+        for f in files:
+            body = urlopen(self.url + "/updates/blobs/" + f["sha256"], timeout=5).read()
+            self.assertEqual((hashlib.sha256(body).hexdigest(), len(body)), (f["sha256"], f["size"]))
+        listed = json.loads(urlopen(self.url + f"/updates/files-{digest}.json", timeout=5).read())
+        self.assertEqual(listed["files"], files)
+        # Publishing again is a no-op; the manifest only advertises "files" for the zip actually published.
+        self.assertEqual(service.publish_files(pack, releases, digest), listing)
+        self.assertNotIn("files", self.call("/api/version")[1])
+        (releases / f"files-{self.digest}.json").write_text(json.dumps({"version": 1, "files": []}))
+        self.assertEqual(self.call("/api/version")[1]["files"], f"/updates/files-{self.digest}.json")
+        self.assertEqual(self.call("/updates/blobs/" + "0" * 64)[0], 404)
+        self.assertEqual(self.call("/updates/blobs/../manifest.json")[0], 404)
+        bad = self.base / "bad.zip"
+        with zipfile.ZipFile(bad, "w") as z:
+            z.writestr("../evil.exe", b"x")
+        with self.assertRaises(ValueError):
+            service.publish_files(bad, self.base / "other", "1" * 64)
+
     def test_update_download_resume(self):
         url = self.url + "/updates/" + self.digest + ".pck"
         with urlopen(Request(url), timeout=5) as r:
