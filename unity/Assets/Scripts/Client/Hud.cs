@@ -543,11 +543,10 @@ namespace RiftWard.Client
             // prompts stay at the bottom centre.
             bool top = toast.text == CursorPrompt;
             var anchor = new Vector2(0.5f, top ? 1f : 0f);
-            if (toastPill.anchorMin != anchor)
-            {
-                toastPill.anchorMin = toastPill.anchorMax = toastPill.pivot = anchor;
-                toastPill.anchoredPosition = new Vector2(0, top ? -84 : 150);
-            }
+            toastPill.anchorMin = toastPill.anchorMax = toastPill.pivot = anchor;
+            // Under the boss bar while one is shown, so the prompt never covers the boss name.
+            bool bossShown = bossRoot.gameObject.activeSelf;
+            toastPill.anchoredPosition = new Vector2(0, top ? (bossShown ? -142 : -84) : 150);
 
             region.text = Defs.Regions[sim.Region].Name;
             if (Changed(tierTag, sim.Difficulty * 100 + sim.Region))

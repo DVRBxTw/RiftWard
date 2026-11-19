@@ -465,9 +465,58 @@ namespace RiftWard.Client
                 Build.Cube(torso, new Vector3(0, 0.19f, -0.3f), new Vector3(0.74f, 1.1f, 0.04f), Palette.Hex("5a1f2a")).transform.localRotation = Quaternion.Euler(-8, 0, 0);
                 foreach (float x in new[] { -0.56f, 0.56f }) Build.Cube(torso, new Vector3(x, 0.82f, 0), new Vector3(0.3f, 0.06f, 0.44f), glow, 1.2f);
             }
+            if (Fine) BossDetail(hips, torso, head, glow, plate, armor, black, commander);
             root.localScale = Vector3.one * Defs.Kinds[kind].Scale;
             CharacterRig.Attach(root.gameObject, CharacterRig.Style.Boss);
             return root.gameObject;
+        }
+
+        /// Heavy and Commander detail: twin exhaust stacks with a hot glow, rivets and lit seams on the chest plate,
+        /// shoulder fins, hydraulic pistons behind the shins, banded cannon barrel and a sensor cluster on the head.
+        static void BossDetail(Transform hips, Transform torso, Transform head, Color glow, Color plate, Color armor, Color black, bool commander)
+        {
+            Color steel = Palette.Hex("4a4a52"), rivet = Color.Lerp(plate, Color.white, 0.3f), hot = Palette.Hex("ffb347");
+            // Back: two exhaust stacks with a glowing mouth and heat bands.
+            foreach (float x in new[] { -0.2f, 0.2f })
+            {
+                D(torso, new Vector3(x, 0.72f, -0.28f), new Vector3(0.14f, 0.5f, 0.14f), steel);
+                D(torso, new Vector3(x, 0.98f, -0.28f), new Vector3(0.16f, 0.04f, 0.16f), black);
+                D(torso, new Vector3(x, 0.99f, -0.28f), new Vector3(0.1f, 0.02f, 0.1f), hot, 5f).AddComponent<Spinner>().Pulse = 0.35f;
+                foreach (float y in new[] { 0.6f, 0.75f }) D(torso, new Vector3(x, y, -0.28f), new Vector3(0.155f, 0.025f, 0.155f), black);
+            }
+            D(torso, new Vector3(0, 0.4f, -0.235f), new Vector3(0.5f, 0.42f, 0.04f), plate);
+            // Chest plate: rivets on the corners and two lit seams down the sides.
+            foreach (float x in new[] { -0.26f, 0.26f })
+            {
+                foreach (float y in new[] { 0.22f, 0.62f }) D(torso, new Vector3(x, y, 0.255f), new Vector3(0.04f, 0.04f, 0.02f), rivet);
+                D(torso, new Vector3(x * 1.12f, 0.42f, 0.24f), new Vector3(0.02f, 0.4f, 0.02f), glow, 2f);
+            }
+            D(torso, new Vector3(0, 0.12f, 0.2f), new Vector3(0.66f, 0.04f, 0.04f), plate);
+            // Shoulders: three fins on top of each pauldron.
+            foreach (float x in new[] { -0.56f, 0.56f })
+                for (int i = 0; i < 3; i++)
+                    D(torso, new Vector3(x, 0.83f, -0.14f + i * 0.14f), new Vector3(0.3f, 0.06f, 0.035f), black);
+            // Legs: a piston behind each shin and an ankle guard.
+            foreach (string side in new[] { "L", "R" })
+            {
+                var knee = hips.Find("Leg" + side + "/Knee" + side);
+                if (knee == null) continue;
+                D(knee, new Vector3(0, -0.12f, -0.17f), new Vector3(0.07f, 0.36f, 0.07f), steel);
+                D(knee, new Vector3(0, -0.2f, -0.17f), new Vector3(0.09f, 0.04f, 0.09f), black);
+                D(knee, new Vector3(0, -0.29f, 0.17f), new Vector3(0.26f, 0.06f, 0.03f), plate);
+            }
+            // Cannon arm: bands along the barrel and a glowing breech.
+            var armR = torso.Find("ArmR");
+            if (armR != null)
+            {
+                for (int i = 0; i < 3; i++) D(armR, new Vector3(0, -0.48f, 0.15f + i * 0.22f), new Vector3(0.26f, 0.28f, 0.04f), steel);
+                D(armR, new Vector3(0.13f, -0.48f, 0.0f), new Vector3(0.02f, 0.12f, 0.2f), glow, 2.5f);
+            }
+            // Head: a sensor cluster and side antennae.
+            D(head, new Vector3(0.12f, 0.26f, 0.12f), new Vector3(0.08f, 0.06f, 0.08f), black);
+            D(head, new Vector3(0.12f, 0.26f, 0.165f), new Vector3(0.04f, 0.03f, 0.01f), glow, 4f);
+            foreach (float x in new[] { -0.23f, 0.23f }) D(head, new Vector3(x, 0.18f, -0.05f), new Vector3(0.03f, 0.3f, 0.03f), black, 0f, 0f, 0f, x > 0 ? -15f : 15f);
+            if (commander) D(head, new Vector3(0, 0.06f, 0.24f), new Vector3(0.36f, 0.02f, 0.02f), Palette.Hex("ffd27a"), 3f);
         }
 
         /// First-person weapon models, parented to the camera. Returns the muzzle transform.
@@ -1265,6 +1314,7 @@ namespace RiftWard.Client
             {
                 var gem = Build.Cube(root, Vector3.zero, Vector3.one * 0.2f, Palette.Hex("5ee6ff"), 3f, false);
                 gem.transform.localRotation = Quaternion.Euler(45, 0, 45);
+                if (Fine) D(gem.transform, Vector3.zero, Vector3.one * 0.55f, Palette.Hex("e8fdff"), 6f);   // bright inner core
                 root.localScale = Vector3.one * 0.9f;
                 return root.gameObject;
             }
@@ -1294,6 +1344,31 @@ namespace RiftWard.Client
                 return root.gameObject;
             }
             Color color = kind == PickupKind.Health ? Palette.Hex("5dff8f") : Palette.Hex("ffd166");
+            if (Fine)
+            {
+                // A recognisable object instead of a glowing cube: a med case with a handle, or an open ammo box.
+                if (kind == PickupKind.Health)
+                {
+                    Build.Cube(root, Vector3.zero, new Vector3(0.56f, 0.38f, 0.3f), Palette.Hex("eef2ee"), 0.4f);
+                    Build.Cube(root, new Vector3(0, 0, 0.152f), new Vector3(0.3f, 0.08f, 0.01f), color, 3f, false);
+                    Build.Cube(root, new Vector3(0, 0, 0.152f), new Vector3(0.08f, 0.3f, 0.01f), color, 3f, false);
+                    Build.Cube(root, new Vector3(0, 0.25f, 0), new Vector3(0.22f, 0.04f, 0.05f), Palette.Hex("2a2d2a"), 0f, false);
+                    foreach (float x in new[] { -0.1f, 0.1f }) Build.Cube(root, new Vector3(x, 0.215f, 0), new Vector3(0.03f, 0.06f, 0.05f), Palette.Hex("2a2d2a"), 0f, false);
+                    Build.Cube(root, new Vector3(0, -0.19f, 0), new Vector3(0.58f, 0.03f, 0.32f), Palette.Hex("9aa39a"), 0f, false);
+                }
+                else
+                {
+                    Build.Cube(root, new Vector3(0, -0.06f, 0), new Vector3(0.52f, 0.28f, 0.34f), Palette.Hex("4a5236"));
+                    Build.Cube(root, new Vector3(0, -0.06f, 0.172f), new Vector3(0.3f, 0.08f, 0.01f), color, 2f, false);
+                    for (int i = 0; i < 5; i++)
+                    {
+                        Build.Cube(root, new Vector3(-0.18f + i * 0.09f, 0.13f, 0), new Vector3(0.05f, 0.14f, 0.05f), Palette.Hex("c9a14a"), 0.6f, false);
+                        Build.Cube(root, new Vector3(-0.18f + i * 0.09f, 0.215f, 0), new Vector3(0.04f, 0.04f, 0.04f), Palette.Hex("b07a3a"), 0f, false);
+                    }
+                }
+                Art.Beacon(root, color, kind == PickupKind.Health);
+                return root.gameObject;
+            }
             Build.Cube(root, Vector3.zero, Vector3.one * 0.45f, color, 0.9f);
             if (kind == PickupKind.Health)
             {
