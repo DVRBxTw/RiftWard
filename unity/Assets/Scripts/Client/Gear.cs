@@ -63,6 +63,7 @@ namespace RiftWard.Client
                 for (int n = 0; n < (levels.TryGetValue(stat, out var lv) ? lv : 0); n++) gold += Defs.UpgradeCost(weapon, n, rarity);
             int over = levels.TryGetValue("over", out var o) ? Mathf.Clamp(o, 0, Defs.OverloadMax) : 0;
             for (int n = 0; n < over; n++) { gold += Defs.OverloadGold[n]; shards += Defs.OverloadShards[n]; }
+            if (levels.TryGetValue("pierce", out var pierce) && pierce > 0) { gold += Defs.PierceGold; shards += Defs.PierceShards; }
             return (gold, shards);
         }
         public static readonly Color[] RarityColors =

@@ -92,6 +92,8 @@ namespace RiftWard.Sim
         public bool Aiming;
         public bool Melee => Defs.Weapons.TryGetValue(WeaponId, out var w) && w.Melee;
         public int Pellets = 1;
+        /// Extra enemies each round passes through (穿透), 0 = stops at the first.
+        public int Pierce;
         public Dictionary<string, int> AmmoByWeapon = new Dictionary<string, int>();
 
         // Mission buffs

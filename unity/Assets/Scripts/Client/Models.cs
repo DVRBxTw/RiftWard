@@ -360,9 +360,9 @@ namespace RiftWard.Client
             switch (weapon)
             {
                 case "rifle": return new Vector3(0, -0.095f, 0.3f);      // through the holo window, dot centred
-                case "shotgun": return new Vector3(0, -0.057f, 0.17f);   // along the vent rib to the bead
+                case "shotgun": return new Vector3(0, -0.074f, 0.36f);   // eye just above the vent rib, bead under the centre
                 case "sniper": return new Vector3(0, -0.1f, 0.1f);       // eye to the scope (the overlay takes over)
-                default: return new Vector3(0, -0.058f, 0.3f);           // pistol: front post between the rear dots
+                default: return new Vector3(0, -0.07f, 0.46f);           // pistol: held out, front post between the rear dots
             }
         }
 

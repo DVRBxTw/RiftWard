@@ -239,6 +239,30 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(board["top"][0]["wave"], 35)
         self.assertEqual(board["me"]["rank"], 1)
 
+    def test_pierce_needs_myth_shards_and_gold(self):
+        account = self.register()
+        auth = {"Authorization": "Bearer " + account["token"]}
+        aid = account["profile"]["id"]
+        lo = {"owned": ["rifle", "saber"], "equipped": ["rifle"], "rarity": {"rifle": 3, "saber": 4}, "copies": {"rifle": [3, 4], "saber": [4]},
+              "active": {"rifle": 0, "saber": 0}}
+        with self.store.connect() as db:
+            db.execute("UPDATE progress SET loadout=?, gold=30000, shards=4 WHERE account_id=?", (json.dumps(lo), aid))
+        def buy(weapon):
+            return self.call("/api/shop/pierce", {"weapon": weapon}, auth)
+        self.assertEqual(buy("rifle")[1]["error"], "只有神話武器可以加裝穿透")   # 傳奇 copy in use
+        self.assertEqual(buy("saber")[1]["error"], "光劍無法加裝穿透")
+        self.assertEqual(buy("shotgun")[0], 400)                                 # not owned
+        self.assertEqual(self.call("/api/weapon/select", {"weapon": "rifle", "index": 1, "rarity": 4}, auth)[0], 200)
+        self.assertEqual(buy("rifle")[1]["error"], "碎片或金幣不足")             # 4 shards
+        with self.store.connect() as db:
+            db.execute("UPDATE progress SET shards=6 WHERE account_id=?", (aid,))
+        code, out = buy("rifle")
+        self.assertEqual(code, 200)
+        self.assertEqual((out["profile"]["gold"], out["profile"]["shards"]), (10000, 1))
+        self.assertEqual(out["profile"]["loadout"]["levels"]["rifle"], {"pierce": 1})
+        self.assertEqual(buy("rifle")[1]["error"], "已加裝穿透")
+        self.assertEqual(service.weapon_invested("rifle", 4, {"pierce": 1}), (20000, 5))
+
     def test_per_copy_enhancement_overload_and_shards(self):
         account = self.register()
         auth = {"Authorization": "Bearer " + account["token"]}

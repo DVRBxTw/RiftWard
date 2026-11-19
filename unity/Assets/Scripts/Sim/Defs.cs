@@ -107,6 +107,10 @@ namespace RiftWard.Sim
         public const int MaxUpgradeLevel = 10, SoftUpgradeLevel = 5;
         /// 超載: three extra tiers for 傳奇+ copies with every stat maxed, each +5% damage, fire rate and reload speed.
         public const int OverloadMax = 3, OverloadMinRarity = 3;
+        /// 穿透 (mirrors PIERCE_* in the account service): 神話 guns only, a one-time unlock per copy. A piercing
+        /// round carries on through up to PierceExtra more enemies, losing PierceFalloff of its damage each time.
+        public const int PierceMinRarity = 4, PierceShards = 5, PierceGold = 20000, PierceExtra = 2;
+        public const float PierceFalloff = 0.3f;
         public const float OverloadStep = 0.05f;
         public static readonly int[] OverloadShards = { 1, 2, 4 };
         public static readonly int[] OverloadGold = { 5000, 10000, 20000 };

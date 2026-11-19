@@ -35,6 +35,9 @@ OVERLOAD_MAX = 3      # 超載: extra tiers for 傳奇+ copies with every stat a
 OVERLOAD_SHARDS = [1, 2, 4]
 OVERLOAD_GOLD = [5000, 10000, 20000]
 OVERLOAD_MIN_RARITY = 3
+PIERCE_MIN_RARITY = 4  # 穿透: bullets pass through enemies; 神話 guns only, one-time unlock per copy
+PIERCE_SHARDS = 5
+PIERCE_GOLD = 20000
 MAX_REWARD = 12000   # mirrors GameSim.MaxMissionGold (地獄 multiplies the gold of a cleared mission)
 
 # Difficulty tiers (普通, 困難, 噩夢, 地獄); mirrors Defs.Difficulties in the game client.
@@ -147,7 +150,8 @@ def weapon_invested(weapon: str, rarity: int, levels: dict):
     """(gold, shards) put into one weapon copy: its enhancement levels and its overload tiers."""
     gold = sum(upgrade_cost(weapon, n, rarity) for stat in UPGRADE_STATS for n in range(levels.get(stat, 0)))
     over = levels.get("over", 0)
-    return gold + sum(OVERLOAD_GOLD[:over]), sum(OVERLOAD_SHARDS[:over])
+    pierce = 1 if levels.get("pierce", 0) else 0
+    return gold + sum(OVERLOAD_GOLD[:over]) + PIERCE_GOLD * pierce, sum(OVERLOAD_SHARDS[:over]) + PIERCE_SHARDS * pierce
 
 
 def gear_upgrade_cost(rarity: int, level: int) -> int:
@@ -1390,6 +1394,8 @@ class Store:
                 over = stats.get("over")
                 if isinstance(over, int) and over > 0:
                     out["over"] = min(OVERLOAD_MAX, over)
+                if stats.get("pierce") == 1:
+                    out["pierce"] = 1
                 return out
 
             stored = data.get("copy_levels") if isinstance(data.get("copy_levels"), dict) else None
@@ -1486,6 +1492,31 @@ class Store:
         with self.connect() as db:
             cursor = db.execute("UPDATE progress SET gold=gold-?, shards=shards-?, loadout=? WHERE account_id=? AND gold>=? AND shards>=?",
                                 (gold, shards, json.dumps(loadout), account_id, gold, shards))
+            if cursor.rowcount != 1:
+                raise ValueError("碎片或金幣不足")
+        return self.profile(account_id)
+
+    @_locked
+    def pierce_weapon(self, account_id: int, weapon):
+        """穿透: unlocks piercing rounds on the copy in use. 神話 guns only (not the blade); 5 shards + 20000 gold."""
+        profile = self.profile(account_id)
+        if profile is None or weapon not in WEAPON_PRICES:
+            raise ValueError("找不到此武器")
+        loadout = profile["loadout"]
+        if weapon not in loadout["owned"]:
+            raise ValueError("尚未擁有此武器")
+        if weapon == "saber":
+            raise ValueError("光劍無法加裝穿透")
+        if loadout["rarity"][weapon] < PIERCE_MIN_RARITY:
+            raise ValueError("只有神話武器可以加裝穿透")
+        levels = loadout["copy_levels"][weapon][loadout["active"][weapon]]
+        if levels.get("pierce"):
+            raise ValueError("已加裝穿透")
+        levels["pierce"] = 1
+        sync_rarity(loadout)
+        with self.connect() as db:
+            cursor = db.execute("UPDATE progress SET gold=gold-?, shards=shards-?, loadout=? WHERE account_id=? AND gold>=? AND shards>=?",
+                                (PIERCE_GOLD, PIERCE_SHARDS, json.dumps(loadout), account_id, PIERCE_GOLD, PIERCE_SHARDS))
             if cursor.rowcount != 1:
                 raise ValueError("碎片或金幣不足")
         return self.profile(account_id)
@@ -1926,9 +1957,11 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(400, {"ok": False, "error": str(exc)})
                 return
             self._json(200, {"ok": True, "profile": result})
-        elif self.path in ("/api/shop/buy", "/api/shop/upgrade", "/api/shop/overload"):
+        elif self.path in ("/api/shop/buy", "/api/shop/upgrade", "/api/shop/overload", "/api/shop/pierce"):
             try:
-                if self.path.endswith("buy"):
+                if self.path.endswith("pierce"):
+                    result = store.pierce_weapon(profile["id"], data.get("weapon"))
+                elif self.path.endswith("buy"):
                     result = store.buy_weapon(profile["id"], data.get("weapon"))
                 elif self.path.endswith("overload"):
                     result = store.overload_weapon(profile["id"], data.get("weapon"))

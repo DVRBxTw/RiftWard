@@ -535,6 +535,12 @@ namespace RiftWard.Client
                 Ui.Label(row.transform, owned ? $"{w.Name}  ·  {Gear.RarityNames[p.Loadout.RarityOf(id)]}" : w.Name, 18, owned ? Gear.RarityColors[p.Loadout.RarityOf(id)] : Palette.Hex("a9abae"), TextAnchor.UpperLeft, owned).rectTransform.Place(new Vector2(0, 1), new Vector2(60, -8), new Vector2(300, 24), new Vector2(0, 1));
                 string detail = owned ? string.Join(" · ", Defs.UpgradeKeys.Where(k => p.Loadout.Level(id, k) > 0).Select(k => $"{UpgradeName(k, Defs.Weapons[id].Melee)} Lv {p.Loadout.Level(id, k)}")) : "未持有";
                 if (owned && p.Loadout.Level(id, "over") > 0) detail += $" · 超載 {p.Loadout.Level(id, "over")}";
+                if (owned && p.Loadout.Level(id, "pierce") > 0)
+                {
+                    // Too long for one line with every stat listed: fall back to the total.
+                    int sum = Defs.UpgradeKeys.Sum(k => p.Loadout.Level(id, k)), over = p.Loadout.Level(id, "over");
+                    detail = string.Join(" · ", new[] { sum > 0 ? $"強化 {sum}" : null, over > 0 ? $"超載 {over}" : null, "穿透" }.Where(x => x != null));
+                }
                 Ui.Label(row.transform, detail == "" ? "已擁有" : detail, 12, Palette.Muted).rectTransform.Place(new Vector2(0, 1), new Vector2(60, -33), new Vector2(260, 18), new Vector2(0, 1));
                 var tag = Ui.Label(row.transform, owned ? (slot >= 0 ? $"{slot + 1} 號" : "") : "武器補給", 13, owned ? Palette.Bone : Palette.Muted, TextAnchor.MiddleRight);
                 tag.rectTransform.Place(new Vector2(1, 0.5f), new Vector2(-16, 0), new Vector2(80, 20), new Vector2(1, 0.5f));
@@ -563,9 +569,14 @@ namespace RiftWard.Client
                     // Each copy keeps its own enhancement: show it so the player knows what a switch or a salvage means.
                     var copyLv = p.Loadout.CopyLevel(armoryPick, index);
                     int lvSum = Defs.UpgradeKeys.Sum(k => copyLv.TryGetValue(k, out var v) ? v : 0), lvOver = copyLv.TryGetValue("over", out var ov) ? ov : 0;
-                    if (lvSum > 0)
-                        Ui.Label(row, lvOver > 0 ? $"強化 {lvSum} · 超載 {lvOver}" : $"強化 {lvSum}", 11, lvOver > 0 ? Gear.ShardColor : Palette.Muted, TextAnchor.MiddleLeft)
-                            .rectTransform.Place(new Vector2(0, 0.5f), new Vector2(170, 0), new Vector2(110, 20), new Vector2(0, 0.5f));
+                    bool lvPierce = copyLv.TryGetValue("pierce", out var pv) && pv > 0;
+                    var marks = new List<string>();
+                    if (lvSum > 0) marks.Add($"強化 {lvSum}");
+                    if (lvOver > 0) marks.Add($"超載 {lvOver}");
+                    if (lvPierce) marks.Add("穿透");
+                    if (marks.Count > 0)
+                        Ui.Label(row, string.Join(" · ", marks), 11, lvPierce ? Gear.RarityColors[4] : lvOver > 0 ? Gear.ShardColor : Palette.Muted, TextAnchor.MiddleLeft)
+                            .rectTransform.Place(new Vector2(0, 0.5f), new Vector2(170, 0), new Vector2(150, 20), new Vector2(0, 0.5f));
                     if (using_)
                     {
                         Ui.Label(row, "使用中", 12, Palette.Amber, TextAnchor.MiddleRight).rectTransform.Fill().offsetMax = new Vector2(-10, 0);
@@ -613,7 +624,7 @@ namespace RiftWard.Client
             sheet.anchorMin = new Vector2(0, 0); sheet.anchorMax = new Vector2(1, 1);
             sheet.offsetMin = new Vector2(440, 0); sheet.offsetMax = new Vector2(0, -64);
             TopRule(sheet, Palette.Amber);
-            var ds = Ui.VStack(sheet, 14);
+            var ds = Ui.VStack(sheet, 10);
             ds.Fill();
             ds.GetComponent<VerticalLayoutGroup>().padding = new RectOffset(32, 32, 26, 24);
             int shownRarity = own ? p.Loadout.RarityOf(armoryPick) : 1;
@@ -665,7 +676,7 @@ namespace RiftWard.Client
                 {
                     int lv = p.Loadout.Level(armoryPick, key);
                     allMaxed &= lv >= Defs.MaxUpgradeLevel;
-                    var row = Ui.Rect(ds, "Upgrade").Sized(40);
+                    var row = Ui.Rect(ds, "Upgrade").Sized(34);
                     Ui.Label(row, UpgradeName(key, wd.Melee), 16, Palette.Bone, TextAnchor.MiddleLeft, true).rectTransform.Place(new Vector2(0, 0.5f), Vector2.zero, new Vector2(80, 24), new Vector2(0, 0.5f));
                     string step = key == "damage" ? "+12%" : key == "mag" ? (wd.Melee ? "+8%" : "+15%") : "-8%";
                     Ui.Label(row, lv >= Defs.SoftUpgradeLevel ? $"每級 {step} · 6 級起減半" : $"每級 {step}", 12, Palette.Muted, TextAnchor.MiddleLeft)
@@ -682,14 +693,14 @@ namespace RiftWard.Client
                     bool maxed = lv >= Defs.MaxUpgradeLevel;
                     int cost = Defs.UpgradeCost(armoryPick, lv, rarityNow);
                     var up = Ui.Button(row, maxed ? "已滿級" : $"升級  {cost} G", () => ArmoryRequest("/api/shop/upgrade", new Dictionary<string, object> { ["weapon"] = armoryPick, ["stat"] = key }), 14, Palette.Amber, new Color(0, 0, 0, 0), Palette.Amber);
-                    up.GetComponent<RectTransform>().Place(new Vector2(1, 0.5f), Vector2.zero, new Vector2(160, 38), new Vector2(1, 0.5f));
+                    up.GetComponent<RectTransform>().Place(new Vector2(1, 0.5f), Vector2.zero, new Vector2(160, 32), new Vector2(1, 0.5f));
                     up.interactable = !maxed && p.Gold >= cost;
                 }
                 // 超載: the shard-paid top tier, only for 傳奇+ copies with all three stats maxed.
                 {
                     int over = p.Loadout.Level(armoryPick, "over");
                     bool eligible = rarityNow >= Defs.OverloadMinRarity;
-                    var row = Ui.Rect(ds, "Overload").Sized(40);
+                    var row = Ui.Rect(ds, "Overload").Sized(34);
                     Ui.Label(row, "超載", 16, eligible ? Gear.ShardColor : Palette.Muted, TextAnchor.MiddleLeft, true).rectTransform.Place(new Vector2(0, 0.5f), Vector2.zero, new Vector2(80, 24), new Vector2(0, 0.5f));
                     string why = !eligible ? "傳奇以上的武器才能超載" : !allMaxed ? "三項強化滿級後開放" : "每級 傷害、射速、換彈 +5%";
                     Ui.Label(row, why, 12, Palette.Muted, TextAnchor.MiddleLeft).rectTransform.Place(new Vector2(0, 0.5f), new Vector2(80, 0), new Vector2(160, 20), new Vector2(0, 0.5f));
@@ -703,8 +714,25 @@ namespace RiftWard.Client
                         int shards = full ? 0 : Defs.OverloadShards[over], gold = full ? 0 : Defs.OverloadGold[over];
                         var go = Ui.Button(row, full ? "超載已滿" : $"{shards} 碎片 + {gold / 1000}K G",
                             () => ArmoryRequest("/api/shop/overload", new Dictionary<string, object> { ["weapon"] = armoryPick }), 14, Gear.ShardColor, new Color(0, 0, 0, 0), Gear.ShardColor);
-                        go.GetComponent<RectTransform>().Place(new Vector2(1, 0.5f), Vector2.zero, new Vector2(160, 38), new Vector2(1, 0.5f));
+                        go.GetComponent<RectTransform>().Place(new Vector2(1, 0.5f), Vector2.zero, new Vector2(160, 32), new Vector2(1, 0.5f));
                         go.interactable = !full && allMaxed && p.Shards >= shards && p.Gold >= gold;
+                    }
+                }
+                // 穿透: a one-time unlock for 神話 guns; rounds go through up to two more enemies.
+                if (!wd.Melee)
+                {
+                    bool has = p.Loadout.Level(armoryPick, "pierce") > 0, eligible = rarityNow >= Defs.PierceMinRarity;
+                    Color pc = Gear.RarityColors[4];
+                    var row = Ui.Rect(ds, "Pierce").Sized(34);
+                    Ui.Label(row, "穿透", 16, eligible ? pc : Palette.Muted, TextAnchor.MiddleLeft, true).rectTransform.Place(new Vector2(0, 0.5f), Vector2.zero, new Vector2(80, 24), new Vector2(0, 0.5f));
+                    string what = !eligible ? "神話武器才能加裝穿透" : $"子彈貫穿 {Defs.PierceExtra} 名敵人，每穿過一名傷害 -{Defs.PierceFalloff * 100:0}%";
+                    Ui.Label(row, what, 12, has ? pc : Palette.Muted, TextAnchor.MiddleLeft).rectTransform.Place(new Vector2(0, 0.5f), new Vector2(80, 0), new Vector2(420, 20), new Vector2(0, 0.5f));
+                    if (eligible)
+                    {
+                        var buy = Ui.Button(row, has ? "已加裝" : $"{Defs.PierceShards} 碎片 + {Defs.PierceGold / 1000}K G",
+                            () => ArmoryRequest("/api/shop/pierce", new Dictionary<string, object> { ["weapon"] = armoryPick }), 14, pc, new Color(0, 0, 0, 0), pc);
+                        buy.GetComponent<RectTransform>().Place(new Vector2(1, 0.5f), Vector2.zero, new Vector2(160, 32), new Vector2(1, 0.5f));
+                        buy.interactable = !has && p.Shards >= Defs.PierceShards && p.Gold >= Defs.PierceGold;
                     }
                 }
                 var equip = Ui.HStack(ds, 12).Sized(48);

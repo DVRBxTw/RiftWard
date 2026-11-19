@@ -865,6 +865,11 @@ namespace RiftWard.Client
                 Screens.ShowArmoryFor("sniper");
                 yield return Settle(0.6f);
                 yield return Shot(folder, "unity-armory-overload");
+                maxed["pierce"] = 1;   // the same copy once 穿透 is fitted
+                Screens.ShowArmoryFor("sniper");
+                yield return Settle(0.4f);
+                yield return Shot(folder, "unity-armory-pierce");
+                maxed.Remove("pierce");
                 // The same weapon mid-way: levels 6+ cost more, overload still locked.
                 var mid = new Dictionary<string, int> { ["damage"] = 7, ["mag"] = 5, ["reload"] = 3 };
                 l.CopyLevels["sniper"][0] = mid; l.Levels["sniper"] = mid;
@@ -992,6 +997,24 @@ namespace RiftWard.Client
             yield return Settle(0.5f);
             yield return Shot(folder, "unity-rifle-ads");
             Client.AimForCapture = false;
+            // Pistol and shotgun aimed down sights (checks the sight picture of each).
+            var keepKit = new List<string>(me.Loadout.Equipped);
+            me.Loadout.Equipped = new List<string> { "pistol", "shotgun" };
+            foreach (var (slot, name) in new[] { (1, "shotgun"), (0, "pistol") })
+            {
+                Client.SelectSlot(slot);
+                yield return Settle(0.4f);
+                Client.AimForCapture = true;
+                yield return Settle(0.5f);
+                yield return Shot(folder, "unity-" + name + "-ads");
+                Client.AimForCapture = false;
+                yield return Settle(0.3f);
+                yield return Shot(folder, "unity-" + name + "-hip");
+            }
+            me.Loadout.Equipped = keepKit;
+            Client.SelectSlot(1);
+            yield return Settle(0.3f);
+            Client.SelectSlot(0);
             yield return Settle(0.4f);
             me.Reload = me.ReloadTime * 0.55f;
             yield return Settle(0.02f);

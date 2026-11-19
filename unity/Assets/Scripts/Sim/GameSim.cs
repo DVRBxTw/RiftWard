@@ -141,6 +141,7 @@ namespace RiftWard.Sim
             a.Mag = st.Mag + a.MagBonus;
             a.ReloadTime = Mathf.Max(0.35f, st.Reload * a.ReloadMult);
             a.Pellets = st.Pellets;
+            a.Pierce = !Defs.Weapons[id].Melee && a.Loadout.RarityOf(id) >= Defs.PierceMinRarity && a.Loadout.Level(id, "pierce") > 0 ? Defs.PierceExtra : 0;
             a.Spread = st.Spread;
             a.HeadMultiplier = st.HeadMultiplier;
             a.Zoom = st.Zoom;
@@ -680,7 +681,16 @@ namespace RiftWard.Sim
                 float spread = a.Spread * (a.Aiming ? (a.Pellets > 1 ? Defs.AimSpreadPellets : Defs.AimSpread) : 1f);
                 if (spread > 0 && !(a.IsAdmin && a.Admin.AutoAim))
                     dir = (aim + new Vector3(Rand(-spread, spread), Rand(-spread, spread) * 0.7f, Rand(-spread, spread))).normalized;
-                FireRay(a, origin, dir, damage);
+                // 穿透: the same ray goes on past each enemy it hits, weaker each time; walls still stop it.
+                HashSet<Enemy> passed = null;
+                float dmg = damage;
+                for (int n = 0; n <= a.Pierce; n++)
+                {
+                    var hit = FireRay(a, origin, dir, dmg, passed);
+                    if (hit == null || n == a.Pierce) break;
+                    (passed ??= new HashSet<Enemy>()).Add(hit);
+                    dmg *= 1f - Defs.PierceFalloff;
+                }
             }
             if (a.StatHits > hitsBefore) a.StatHits = hitsBefore + 1;
         }
@@ -692,7 +702,8 @@ namespace RiftWard.Sim
             return new Vector3(f.z, 0, -f.x) * side;
         }
 
-        void FireRay(Actor a, Vector3 origin, Vector3 dir, float damage)
+        /// One ray; returns the enemy it hit (or null). Enemies in skip are passed through (piercing rounds).
+        Enemy FireRay(Actor a, Vector3 origin, Vector3 dir, float damage, HashSet<Enemy> skip = null)
         {
             Enemy best = null;
             // Walls and the ground stop the shot: nothing behind them can be hit.
@@ -700,6 +711,7 @@ namespace RiftWard.Sim
             bool head = false;
             foreach (var e in Enemies.Values)
             {
+                if (skip != null && skip.Contains(e)) continue;
                 float s = e.Scale;
                 var headCenter = e.Position + Vector3.up * Defs.HeadHeight * s;
                 float headRadius = Defs.HeadRadius * s * (e.Boss ? 1.07f : 1f);
@@ -758,6 +770,7 @@ namespace RiftWard.Sim
                 }
             }
             Shots.Add(new ShotEvent { Shooter = a.Id, Origin = origin, End = end, Hit = best != null, Head = head, Dealt = dealt, Killed = killed });
+            return best;
         }
 
         /// Shield troopers block body shots from the front; flank them or aim for the head.
