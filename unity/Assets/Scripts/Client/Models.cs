@@ -366,7 +366,7 @@ namespace RiftWard.Client
             }
         }
 
-        public static Transform Viewmodel(string weapon, Transform holder, int rarity = 1, bool firstPerson = false, int enhance = 0, int overload = 0)
+        public static Transform Viewmodel(string weapon, Transform holder, int rarity = 1, bool firstPerson = false, int enhance = 0, int overload = 0, bool pierce = false)
         {
             // Detach the old gun before destroying it: Destroy only happens at the end of the frame, and lookups by
             // name (Slide, Mag, Ammo cells) on the new gun must not find the old one's parts.
@@ -395,6 +395,7 @@ namespace RiftWard.Client
                 WeaponFinish(holder, rarity, muzzleZ);
                 if (rarity >= 3) Signature(holder, weapon, rarity, muzzleZ);
                 EnhanceMarks(holder, enhance, overload);
+                if (pierce) PierceMark(holder, muzzleZ);
                 Part(holder, "Eject", ejectAt);
             }
             Surfaces(holder);
@@ -577,12 +578,12 @@ namespace RiftWard.Client
         }
 
         /// Display model for a weapon (the first-person model with its rarity finish).
-        public static void WeaponDisplay(Transform root, string weapon, int rarity, int enhance = 0, int overload = 0)
+        public static void WeaponDisplay(Transform root, string weapon, int rarity, int enhance = 0, int overload = 0, bool pierce = false)
         {
             var holder = new GameObject("Weapon").transform;
             holder.SetParent(root, false);
             holder.localRotation = Quaternion.Euler(0, -90, 0);
-            Viewmodel(weapon, holder, rarity, false, enhance, overload);
+            Viewmodel(weapon, holder, rarity, false, enhance, overload, pierce);
         }
 
         /// Bevel highlight: a thin, lighter strip along the two top edges of every large block, so up close the
@@ -660,6 +661,26 @@ namespace RiftWard.Client
                         }
                     break;
             }
+        }
+
+        /// 穿透 fitted: a crimson penetrator tip at the muzzle (a sharp, glowing spike inside two collars) and a
+        /// pulsing red stripe down both flanks.
+        static void PierceMark(Transform h, float muzzleZ)
+        {
+            Color red = Gear.RarityColors[4], hot = Color.Lerp(red, Color.white, 0.5f);
+            var tip = Part(h, "Pierce", new Vector3(0, heatY, muzzleZ + 0.012f));
+            foreach (float z in new[] { -0.03f, 0.0f })
+            {
+                var collar = P(tip, new Vector3(0, 0, z), new Vector3(heatWidth * 1.25f, heatWidth * 1.25f, 0.008f), Palette.Hex("2a0d10"));
+                collar.transform.localRotation = Quaternion.Euler(0, 0, 45f);
+                P(tip, new Vector3(0, 0, z + 0.005f), new Vector3(heatWidth * 1.1f, heatWidth * 1.1f, 0.003f), red, 4f).transform.localRotation = Quaternion.Euler(0, 0, 45f);
+            }
+            var spike = P(tip, new Vector3(0, 0, 0.018f), new Vector3(0.008f, 0.008f, 0.03f), hot, 7f);
+            spike.transform.localRotation = Quaternion.Euler(0, 0, 45f);
+            spike.AddComponent<Spinner>().Pulse = 0.35f;
+            foreach (float sx in new[] { -1f, 1f })
+                P(h, new Vector3(sx * (flankX + 0.0016f), markY + 0.014f, markZ + markLength * 0.5f), new Vector3(0.002f, 0.0018f, markLength * 1.1f), red, 4f)
+                    .AddComponent<Spinner>().Pulse = 0.25f;
         }
 
         /// Enhancement shows on the gun: 強化 10+ a glowing line, 20+ a second line and chevrons, 30 (all maxed)

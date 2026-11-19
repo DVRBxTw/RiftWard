@@ -141,7 +141,8 @@ namespace RiftWard.Sim
             a.Mag = st.Mag + a.MagBonus;
             a.ReloadTime = Mathf.Max(0.35f, st.Reload * a.ReloadMult);
             a.Pellets = st.Pellets;
-            a.Pierce = !Defs.Weapons[id].Melee && a.Loadout.RarityOf(id) >= Defs.PierceMinRarity && a.Loadout.Level(id, "pierce") > 0 ? Defs.PierceExtra : 0;
+            a.Pierce = !Defs.Weapons[id].Melee && a.Loadout.RarityOf(id) >= Defs.PierceMinRarity && a.Loadout.Level(id, "pierce") > 0 ? Defs.PierceExtra(id) : 0;
+            a.PierceFalloff = Defs.PierceFalloff(id);
             a.Spread = st.Spread;
             a.HeadMultiplier = st.HeadMultiplier;
             a.Zoom = st.Zoom;
@@ -689,7 +690,7 @@ namespace RiftWard.Sim
                     var hit = FireRay(a, origin, dir, dmg, passed);
                     if (hit == null || n == a.Pierce) break;
                     (passed ??= new HashSet<Enemy>()).Add(hit);
-                    dmg *= 1f - Defs.PierceFalloff;
+                    dmg *= 1f - a.PierceFalloff;
                 }
             }
             if (a.StatHits > hitsBefore) a.StatHits = hitsBefore + 1;
@@ -769,7 +770,9 @@ namespace RiftWard.Sim
                     if (a.WeaponId == "pistol" && PerkStrength(a, 1f) > 0) a.PerkHaste = 2f;
                 }
             }
-            Shots.Add(new ShotEvent { Shooter = a.Id, Origin = origin, End = end, Hit = best != null, Head = head, Dealt = dealt, Killed = killed });
+            // A pierced round that finds nothing more just ends: no second tracer for it.
+            if (skip == null || best != null)
+                Shots.Add(new ShotEvent { Shooter = a.Id, Origin = origin, End = end, Hit = best != null, Head = head, Dealt = dealt, Killed = killed, Pierced = skip != null });
             return best;
         }
 

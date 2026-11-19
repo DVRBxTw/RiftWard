@@ -244,7 +244,7 @@ namespace RiftWard.Sim
         public static void WriteEvents(BinaryWriter w, GameSim sim)
         {
             w.Write(sim.Shots.Count);
-            foreach (var s in sim.Shots) { w.Write(s.Shooter); w.Write(s.Origin); w.Write(s.End); w.Write(s.Hit); w.Write(s.Head); w.Write(s.Killed); w.Write(s.Dealt); }
+            foreach (var s in sim.Shots) { w.Write(s.Shooter); w.Write(s.Origin); w.Write(s.End); w.Write(s.Hit); w.Write(s.Head); w.Write(s.Killed); w.Write(s.Dealt); w.Write(s.Pierced); }
             w.Write(sim.Explosions.Count);
             foreach (var e in sim.Explosions) { w.Write(e.Position); w.Write(e.Radius); w.Write(e.Color.r); w.Write(e.Color.g); w.Write(e.Color.b); w.Write(e.Heal); }
             w.Write(sim.Announcements.Count);
@@ -255,7 +255,7 @@ namespace RiftWard.Sim
         {
             int n = r.ReadInt32();
             for (int i = 0; i < n; i++)
-                sim.Shots.Add(new ShotEvent { Shooter = r.ReadInt32(), Origin = r.ReadVector3(), End = r.ReadVector3(), Hit = r.ReadBoolean(), Head = r.ReadBoolean(), Killed = r.ReadBoolean(), Dealt = r.ReadSingle() });
+                sim.Shots.Add(new ShotEvent { Shooter = r.ReadInt32(), Origin = r.ReadVector3(), End = r.ReadVector3(), Hit = r.ReadBoolean(), Head = r.ReadBoolean(), Killed = r.ReadBoolean(), Dealt = r.ReadSingle(), Pierced = r.ReadBoolean() });
             n = r.ReadInt32();
             for (int i = 0; i < n; i++)
                 sim.Explosions.Add(new ExplosionEvent { Position = r.ReadVector3(), Radius = r.ReadSingle(), Color = new Color32(r.ReadByte(), r.ReadByte(), r.ReadByte(), 255), Heal = r.ReadBoolean() });

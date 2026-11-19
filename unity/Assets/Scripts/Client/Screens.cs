@@ -630,7 +630,8 @@ namespace RiftWard.Client
             int shownRarity = own ? p.Loadout.RarityOf(armoryPick) : 1;
             string pick = armoryPick;
             int shownEnhance = own ? Defs.UpgradeKeys.Sum(k => p.Loadout.Level(pick, k)) : 0, shownOver = own ? p.Loadout.Level(pick, "over") : 0;
-            var show = ModelPreview.Create(sheet, t => Models.WeaponDisplay(t, pick, shownRarity, shownEnhance, shownOver), 512, 25f, 8f, true);
+            bool shownPierce = own && p.Loadout.Level(pick, "pierce") > 0;
+            var show = ModelPreview.Create(sheet, t => Models.WeaponDisplay(t, pick, shownRarity, shownEnhance, shownOver, shownPierce), 512, 25f, 8f, true);
             show.rectTransform.Place(new Vector2(1, 1), new Vector2(-24, -14), new Vector2(150, 150), new Vector2(1, 1));
             Ui.Label(sheet, "拖曳旋轉", 11, Palette.Muted, TextAnchor.UpperCenter).rectTransform.Place(new Vector2(1, 1), new Vector2(-24, -166), new Vector2(150, 16), new Vector2(1, 1));
             if (own) RarityFx.Attach(show.rectTransform, shownRarity);
@@ -725,7 +726,7 @@ namespace RiftWard.Client
                     Color pc = Gear.RarityColors[4];
                     var row = Ui.Rect(ds, "Pierce").Sized(34);
                     Ui.Label(row, "穿透", 16, eligible ? pc : Palette.Muted, TextAnchor.MiddleLeft, true).rectTransform.Place(new Vector2(0, 0.5f), Vector2.zero, new Vector2(80, 24), new Vector2(0, 0.5f));
-                    string what = !eligible ? "神話武器才能加裝穿透" : $"子彈貫穿 {Defs.PierceExtra} 名敵人，每穿過一名傷害 -{Defs.PierceFalloff * 100:0}%";
+                    string what = !eligible ? "神話武器才能加裝穿透" : $"子彈貫穿 {Defs.PierceExtra(armoryPick)} 名敵人，每穿過一名傷害 -{Defs.PierceFalloff(armoryPick) * 100:0}%";
                     Ui.Label(row, what, 12, has ? pc : Palette.Muted, TextAnchor.MiddleLeft).rectTransform.Place(new Vector2(0, 0.5f), new Vector2(80, 0), new Vector2(420, 20), new Vector2(0, 0.5f));
                     if (eligible)
                     {
@@ -2229,7 +2230,7 @@ namespace RiftWard.Client
             Ui.Label(gs, "輸入帳號或從名單點選，也可以全服發放。立即入帳，不經過信箱。", 13, Palette.Muted).Sized(36);
             adminTarget = Widgets.Input(gs, "玩家帳號", false, 24).Sized(44);
             var captions = Ui.HStack(gs, 10).Sized(14);
-            foreach (var caption in new[] { "金幣", "裝備鑰匙", "武器鑰匙" }) Caps(captions, caption).Sized(-1, 0);
+            foreach (var caption in new[] { "金幣", "裝備鑰匙", "武器鑰匙", "裂隙碎片" }) Caps(captions, caption).Sized(-1, 0);
             var row = Ui.HStack(gs, 10).Sized(44);
             var goldInput = Widgets.Input(row, "金幣數量", false, 6);
             goldInput.contentType = InputField.ContentType.IntegerNumber;
@@ -2240,6 +2241,9 @@ namespace RiftWard.Client
             var weaponKeysInput = Widgets.Input(row, "武器鑰匙", false, 4);
             weaponKeysInput.contentType = InputField.ContentType.IntegerNumber;
             weaponKeysInput.text = "0";
+            var shardsInput = Widgets.Input(row, "碎片", false, 4);
+            shardsInput.contentType = InputField.ContentType.IntegerNumber;
+            shardsInput.text = "0";
             int weaponPick = 0;
             string[] choices = { "不發放武器", "解鎖 AR-27 突擊步槍", "解鎖 SG-8 霰彈槍", "解鎖 LR-50 狙擊槍", "解鎖 EX-1 能量光劍" };
             Button weaponButton = null, rarityButton = null;
@@ -2259,6 +2263,29 @@ namespace RiftWard.Client
             weaponButton.gameObject.AddComponent<LayoutElement>().flexibleWidth = 1;
             rarityButton.interactable = false;
             PaintRarity();
+            // Gear: a slot (or a random one per piece), its rarity and how many pieces.
+            string[] gearChoices = { "不發放裝備", "隨機部位", "護甲", "模組", "靴子", "晶片" };
+            string[] gearIds = { "", "random", "armor", "module", "boots", "chip" };
+            int gearPick = 0, gearRarity = 1, gearCount = 1;
+            Button gearButton = null, gearRarityButton = null, gearCountButton = null;
+            var gearRow = Ui.HStack(gs, 10).Sized(40);
+            gearRow.GetComponent<HorizontalLayoutGroup>().childForceExpandWidth = false;
+            void PaintGear()
+            {
+                gearButton.SetCaption(gearChoices[gearPick]);
+                gearRarityButton.SetCaption($"稀有度：{Gear.RarityNames[gearRarity]}");
+                gearRarityButton.GetComponentInChildren<Text>().color = Gear.RarityColors[gearRarity];
+                gearRarityButton.GetComponent<Outline>().effectColor = gearRarity >= 3 ? Gear.RarityColors[gearRarity] : Palette.Line;
+                gearCountButton.SetCaption($"×{gearCount}");
+                gearRarityButton.interactable = gearCountButton.interactable = gearPick > 0;
+            }
+            gearButton = Ui.Button(gearRow, "", () => { gearPick = (gearPick + 1) % gearChoices.Length; PaintGear(); }, 14);
+            gearButton.gameObject.AddComponent<LayoutElement>().flexibleWidth = 1;
+            gearRarityButton = Ui.Button(gearRow, "", () => { gearRarity = (gearRarity + 1) % Gear.RarityNames.Length; PaintGear(); }, 14);
+            gearRarityButton.gameObject.AddComponent<LayoutElement>().preferredWidth = 130;
+            gearCountButton = Ui.Button(gearRow, "", () => { gearCount = gearCount >= 10 ? 1 : gearCount == 1 ? 5 : 10; PaintGear(); }, 14);
+            gearCountButton.gameObject.AddComponent<LayoutElement>().preferredWidth = 56;
+            PaintGear();
             var actions = Ui.HStack(gs, 10).Sized(46);
             void Send(bool all)
             {
@@ -2267,7 +2294,8 @@ namespace RiftWard.Client
                 int.TryParse(goldInput.text, out int gold);
                 adminStatus.color = Palette.Amber;
                 adminStatus.text = "發放中…";
-                app.Api.Post("/api/admin/grant", new Dictionary<string, object> { ["username"] = who, ["gold"] = gold, ["keys"] = int.TryParse(keysInput.text, out var keyCount) ? keyCount : 0, ["weapon_keys"] = int.TryParse(weaponKeysInput.text, out var weaponKeyCount) ? weaponKeyCount : 0, ["weapon"] = weaponPick == 0 ? "" : Defs.WeaponOrder[weaponPick], ["rarity"] = rarityPick }, result =>
+                app.Api.Post("/api/admin/grant", new Dictionary<string, object> { ["username"] = who, ["gold"] = gold, ["keys"] = int.TryParse(keysInput.text, out var keyCount) ? keyCount : 0, ["weapon_keys"] = int.TryParse(weaponKeysInput.text, out var weaponKeyCount) ? weaponKeyCount : 0, ["weapon"] = weaponPick == 0 ? "" : Defs.WeaponOrder[weaponPick], ["rarity"] = rarityPick,
+                    ["shards"] = int.TryParse(shardsInput.text, out var shardCount) ? shardCount : 0, ["gear"] = gearIds[gearPick], ["gear_rarity"] = gearRarity, ["gear_count"] = gearCount }, result =>
                 {
                     if (Mode != "admin") return;
                     if (result.Bool("ok"))
@@ -2291,6 +2319,8 @@ namespace RiftWard.Client
                 Send(true);
             }, 15);
             toAll.gameObject.AddComponent<RevertCaption>().Arm(() => Time.unscaledTime - toAllArmed > 4f, "發給全部玩家", Palette.Danger);
+            // 清除玩家資料: dangerous, so it opens its own dialog with two confirmations.
+            Ui.DangerButton(gs, "清除玩家資料…", () => WipeDialog(adminTarget.text.Trim()), 14).Sized(36);
             adminStatus = Ui.Label(gs, "", 14, Palette.Amber).Sized(22);
             Widgets.Section(gs, "玩家名單").Sized(22);
             adminList = Widgets.ScrollList(gs, out _);
@@ -2315,6 +2345,73 @@ namespace RiftWard.Client
         }
 
         /// System mail to one player or everyone, with optional attachments collected from the 信箱.
+        /// 清除玩家資料 with two confirmations: first press 清除資料 (it re-arms after 4 s), then type the account name
+        /// exactly to enable 永久清除. The server checks the typed name again and refuses the admin's own account.
+        public void WipeDialog(string target)
+        {
+            if (target == "" || target == "*")
+            {
+                adminStatus.color = Palette.Danger;
+                adminStatus.text = target == "*" ? "清除資料只能針對單一玩家。" : "請先輸入或從名單點選要清除的玩家帳號。";
+                return;
+            }
+            var dialog = Ui.Box(root, new Color(0, 0, 0, 0.7f), "WipeDialog").rectTransform.Fill();
+            var sheet = Ui.Box(dialog, Palette.Sheet, "Sheet").rectTransform;
+            sheet.Place(new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(500, 400));
+            TopRule(sheet, Palette.Danger);
+            var s = Ui.VStack(sheet, 10);
+            s.Fill();
+            s.GetComponent<VerticalLayoutGroup>().padding = new RectOffset(30, 30, 24, 24);
+            Ui.Label(s, "清除玩家資料", 26, Palette.Danger, TextAnchor.UpperLeft, true).Sized(36);
+            Ui.Label(s, $"對象：{target}", 18, Palette.Bone, TextAnchor.UpperLeft, true).Sized(26);
+            Ui.Label(s, "將清除關卡進度、等級、天賦、金幣、鑰匙、碎片、全部武器與裝備、信件、抽卡紀錄與好友，帳號密碼保留。此操作無法復原。",
+                14, Palette.Hex("e6b8b8")).Sized(60);
+            var step = Ui.Label(s, "第 1 次確認：按下「清除資料」。", 14, Palette.Muted);
+            step.Sized(22);
+            var confirm = Widgets.Input(s, $"第 2 次確認：輸入「{target}」", false, 24);
+            confirm.Sized(44);
+            confirm.interactable = false;
+            var error = Ui.Label(s, "", 13, Palette.Danger);
+            error.Sized(20);
+            var buttons = Ui.HStack(s, 12).Sized(46);
+            Ui.Button(buttons, "取消", () => UnityEngine.Object.Destroy(dialog.gameObject), 15, Palette.Muted);
+            Button go = null;
+            bool armed = false;
+            go = Ui.DangerButton(buttons, "清除資料", () =>
+            {
+                if (!armed)
+                {
+                    armed = true;
+                    confirm.interactable = true;
+                    confirm.ActivateInputField();
+                    step.text = "第 1 次確認完成。";
+                    step.color = Palette.Danger;
+                    go.SetCaption("永久清除");
+                    go.interactable = false;
+                    return;
+                }
+                if (confirm.text.Trim() != target) { error.text = "輸入的帳號不一致。"; return; }
+                go.interactable = false;
+                error.color = Palette.Amber;
+                error.text = "清除中…";
+                app.Api.Post("/api/admin/reset", new Dictionary<string, object> { ["username"] = target, ["confirm"] = confirm.text.Trim() }, result =>
+                {
+                    if (dialog == null) return;
+                    if (result.Bool("ok"))
+                    {
+                        UnityEngine.Object.Destroy(dialog.gameObject);
+                        if (Mode != "admin") return;
+                        adminStatus.color = Palette.Amber;
+                        adminStatus.text = $"已清除 {result.Str("username", target)} 的資料。";
+                        LoadPlayers();
+                    }
+                    else { error.color = Palette.Danger; error.text = result.Str("error", "清除失敗"); go.interactable = true; }
+                });
+            }, 15);
+            // The final button only lights up once the name matches exactly.
+            confirm.onValueChanged.AddListener(v => { if (armed) { go.interactable = v.Trim() == target; error.text = ""; } });
+        }
+
         void AdminMailPanel(RectTransform pad)
         {
             var ms = AdminColumn(pad, 0.36f, 0.68f, Palette.Amber, "Mail");

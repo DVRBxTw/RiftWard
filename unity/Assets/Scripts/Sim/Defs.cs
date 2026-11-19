@@ -109,8 +109,15 @@ namespace RiftWard.Sim
         public const int OverloadMax = 3, OverloadMinRarity = 3;
         /// 穿透 (mirrors PIERCE_* in the account service): 神話 guns only, a one-time unlock per copy. A piercing
         /// round carries on through up to PierceExtra more enemies, losing PierceFalloff of its damage each time.
-        public const int PierceMinRarity = 4, PierceShards = 5, PierceGold = 20000, PierceExtra = 2;
-        public const float PierceFalloff = 0.3f;
+        public const int PierceMinRarity = 4, PierceShards = 5, PierceGold = 20000;
+        /// Extra enemies a round passes through and the damage it loses at each one. The SG-8 fires eight pellets
+        /// that each pierce, so it goes through one enemy only and loses half.
+        public static int PierceExtra(string weapon) => weapon == "shotgun" ? 1 : 2;
+        public static float PierceFalloff(string weapon) => weapon == "shotgun" ? 0.5f : 0.3f;
+
+        /// Shards for the first clear of a region on a tier (on top of the keys): 噩夢 2, 地獄 3.
+        /// Mirrors FIRST_CLEAR_SHARDS in the account service.
+        public static int FirstClearShards(int tier) => tier == 2 ? 2 : tier >= 3 ? 3 : 0;
         public const float OverloadStep = 0.05f;
         public static readonly int[] OverloadShards = { 1, 2, 4 };
         public static readonly int[] OverloadGold = { 5000, 10000, 20000 };

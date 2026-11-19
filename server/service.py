@@ -62,6 +62,8 @@ def mission_gold(team_kills, wave, level, victory, region, tier, endless=False) 
 # First clear of a region on each tier pays both key kinds once (mirrors Defs.FirstClearKeys):
 # 困難 5 + 5, 噩夢 10 + 10, 地獄 15 + 15.
 FIRST_CLEAR_KEYS = {1: 5, 2: 10, 3: 15}
+# ...and shards on the two top tiers (mirrors Defs.FirstClearShards): 噩夢 2, 地獄 3.
+FIRST_CLEAR_SHARDS = {2: 2, 3: 3}
 
 
 WELCOME_MAIL = ("歡迎加入裂隙守衛",
@@ -556,6 +558,32 @@ class Store:
             for key, value in amounts.items():
                 total[key] += value
             db.execute("UPDATE progress SET stats=? WHERE account_id=?", (json.dumps(total), account_id))
+
+    @_locked
+    def admin_reset(self, admin_id: int, username, confirm):
+        """清除玩家資料: puts one account back to a fresh start (progress, weapons, gear, keys, mail, draw history,
+        friends) while keeping the login. Dangerous: the admin must type the exact account name as confirm, and can
+        never wipe their own account or every account at once."""
+        if not isinstance(username, str) or not USERNAME.fullmatch(username):
+            raise ValueError("請輸入正確的玩家帳號")
+        if not isinstance(confirm, str) or confirm != username:
+            raise ValueError("確認帳號不一致，未清除任何資料")
+        with self.connect() as db:
+            row = db.execute("SELECT id, username FROM accounts WHERE username=?", (username,)).fetchone()
+            if row is None:
+                raise ValueError("找不到此玩家")
+            account_id = row[0]
+            if account_id == admin_id:
+                raise ValueError("不能清除自己的帳號")
+            db.execute("DELETE FROM progress WHERE account_id=?", (account_id,))
+            db.execute("INSERT INTO progress(account_id) VALUES(?)", (account_id,))
+            db.execute("DELETE FROM mail WHERE account_id=?", (account_id,))
+            db.execute("DELETE FROM gacha_log WHERE account_id=?", (account_id,))
+            db.execute("DELETE FROM friendships WHERE requester=? OR addressee=?", (account_id, account_id))
+            db.execute("DELETE FROM sessions WHERE account_id=?", (account_id,))   # signed out everywhere
+        self.audit(account_id, "admin_reset", f"cleared by admin #{admin_id}")
+        self.send_mail([account_id], *WELCOME_MAIL)   # a fresh start includes the welcome gift again
+        return row[1]
 
     @staticmethod
     def _parse_cleared(raw, unlocked=0):
@@ -1319,19 +1347,30 @@ class Store:
         return [dict(row) for row in rows]
 
     @_locked
-    def admin_grant(self, username, gold, weapon, keys=0, weapon_keys=0, rarity=1):
-        """Gives gold, keys and optionally a weapon at a chosen rarity. A player without that weapon gets it
-        (equipped if a slot is free); one who has it gets the copy added to their armory."""
-        if not isinstance(gold, int) or not 0 <= gold <= 100000:
+    def admin_grant(self, username, gold, weapon, keys=0, weapon_keys=0, rarity=1, shards=0, gear=None, gear_rarity=1, gear_count=1):
+        """Gives gold, keys, shards, optionally a weapon at a chosen rarity and optionally gear pieces at a chosen
+        rarity (a slot, or "random" for a random slot per piece). A player without that weapon gets it (equipped if
+        a slot is free); one who has it gets the copy added to their armory. Gear goes into the bag."""
+        def count_ok(v, high):
+            return isinstance(v, int) and not isinstance(v, bool) and 0 <= v <= high
+        if not count_ok(gold, 100000):
             raise ValueError("金幣數量需為 0–100000")
-        if not isinstance(keys, int) or not 0 <= keys <= 1000 or not isinstance(weapon_keys, int) or not 0 <= weapon_keys <= 1000:
+        if not count_ok(keys, 1000) or not count_ok(weapon_keys, 1000):
             raise ValueError("鑰匙數量需為 0–1000")
+        if not count_ok(shards, 1000):
+            raise ValueError("碎片數量需為 0–1000")
         if weapon not in (None, "") and weapon not in WEAPON_PRICES:
             raise ValueError("找不到此武器")
         if isinstance(rarity, bool) or not isinstance(rarity, int) or not 0 <= rarity < len(RARITIES):
             raise ValueError("稀有度不正確")
-        if gold == 0 and not weapon and keys == 0 and weapon_keys == 0:
-            raise ValueError("請選擇要發放的金幣、鑰匙或武器")
+        if gear not in (None, "", "random") and gear not in GEAR_SLOTS:
+            raise ValueError("找不到此裝備部位")
+        if gear and (isinstance(gear_rarity, bool) or not isinstance(gear_rarity, int) or not 0 <= gear_rarity < len(RARITIES)):
+            raise ValueError("裝備稀有度不正確")
+        if gear and not (count_ok(gear_count, 10) and gear_count >= 1):
+            raise ValueError("裝備數量需為 1–10")
+        if gold == 0 and not weapon and keys == 0 and weapon_keys == 0 and shards == 0 and not gear:
+            raise ValueError("請選擇要發放的金幣、鑰匙、碎片、武器或裝備")
         if not isinstance(username, str) or not (username == "*" or USERNAME.fullmatch(username)):
             raise ValueError("請輸入正確的玩家帳號")
         with self.connect() as db:
@@ -1342,8 +1381,25 @@ class Store:
                 if row is None:
                     raise ValueError("找不到此玩家")
                 ids = [row[0]]
-            db.execute("UPDATE progress SET gold=gold+?, keys=keys+?, weapon_keys=weapon_keys+? WHERE account_id IN (%s)" % ",".join("?" * len(ids)),
-                       (gold, keys, weapon_keys, *ids)) if ids else None
+            db.execute("UPDATE progress SET gold=gold+?, keys=keys+?, weapon_keys=weapon_keys+?, shards=shards+? WHERE account_id IN (%s)" % ",".join("?" * len(ids)),
+                       (gold, keys, weapon_keys, shards, *ids)) if ids else None
+        if gear:
+            rng = random.SystemRandom()
+            for account_id in ids:
+                bag = self._raw_gear(account_id)
+                room = max(0, INVENTORY_LIMIT - len(bag["inventory"]))   # a full bag takes what fits
+                for _ in range(min(gear_count, room)):
+                    item = roll_item(rng, gear_rarity)
+                    if gear != "random" and item["slot"] != gear:
+                        # Same rarity, the chosen slot: re-roll the stats for that slot.
+                        primary = GEAR_SLOTS[gear]
+                        stats = {primary: GEAR_VALUES[primary][gear_rarity]}
+                        if gear_rarity >= 2:
+                            secondary = rng.choice([k for k in GEAR_VALUES if k != primary])
+                            stats[secondary] = max(1, GEAR_VALUES[secondary][gear_rarity] // 2)
+                        item = {"id": item["id"], "slot": gear, "rarity": gear_rarity, "stats": stats}
+                    bag["inventory"].append(item)
+                self._save_gear(account_id, bag)
         if weapon:
             for account_id in ids:
                 profile = self.profile(account_id)
@@ -1593,10 +1649,12 @@ class Store:
         before = cleared[mission]
         cleared[mission] = max(before, difficulty)
         # Every tier cleared here for the first time pays its first-clear keys (normally just this one).
-        bonus = sum(FIRST_CLEAR_KEYS.get(t, 0) for t in range(before + 1, difficulty + 1))
+        tiers = range(before + 1, difficulty + 1)
+        bonus = sum(FIRST_CLEAR_KEYS.get(t, 0) for t in tiers)
+        shards = sum(FIRST_CLEAR_SHARDS.get(t, 0) for t in tiers)
         with self.connect() as db:
-            db.execute("UPDATE progress SET unlocked=MAX(unlocked,?), cleared=?, keys=keys+?, weapon_keys=weapon_keys+? WHERE account_id=?",
-                       (min(REGION_COUNT - 1, mission + 1), json.dumps(cleared), bonus, bonus, account_id))
+            db.execute("UPDATE progress SET unlocked=MAX(unlocked,?), cleared=?, keys=keys+?, weapon_keys=weapon_keys+?, shards=shards+? WHERE account_id=?",
+                       (min(REGION_COUNT - 1, mission + 1), json.dumps(cleared), bonus, bonus, shards, account_id))
         return self.profile(account_id)
 
 
@@ -1913,11 +1971,19 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(200, {"ok": True, "count": count, "profile": store.profile(profile["id"])})
             elif self.path == "/api/admin/grant":
                 try:
-                    count = store.admin_grant(data.get("username"), data.get("gold", 0), data.get("weapon"), data.get("keys", 0), data.get("weapon_keys", 0), data.get("rarity", 1))
+                    count = store.admin_grant(data.get("username"), data.get("gold", 0), data.get("weapon"), data.get("keys", 0), data.get("weapon_keys", 0), data.get("rarity", 1),
+                                              data.get("shards", 0), data.get("gear"), data.get("gear_rarity", 1), data.get("gear_count", 1))
                 except ValueError as exc:
                     self._json(400, {"ok": False, "error": str(exc)})
                     return
                 self._json(200, {"ok": True, "count": count, "profile": store.profile(profile["id"])})
+            elif self.path == "/api/admin/reset":
+                try:
+                    name = store.admin_reset(profile["id"], data.get("username"), data.get("confirm"))
+                except ValueError as exc:
+                    self._json(400, {"ok": False, "error": str(exc)})
+                    return
+                self._json(200, {"ok": True, "username": name})
             else:
                 self._json(404, {"ok": False, "error": "找不到此服務"})
         elif self.path in ("/api/talent/assign", "/api/talent/reset", "/api/gacha/draw", "/api/gacha/weapon", "/api/gear/equip", "/api/gear/salvage", "/api/gear/upgrade", "/api/weapon/select", "/api/weapon/salvage", "/api/salvage/bulk"):

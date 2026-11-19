@@ -201,6 +201,41 @@ class ServiceTests(unittest.TestCase):
             server.shutdown()
             server.server_close()
 
+    def test_admin_gear_shards_and_reset(self):
+        admin = self.register()
+        auth = {"Authorization":"Bearer "+admin["token"]}
+        self.store.admin_file.write_text("# admins\nbeta_test\n",encoding="utf-8")
+        code, other = self.call("/api/register",{"username":"Target_One","password":"test-password-8921"})
+        self.assertEqual(code,201)
+        tid = other["profile"]["id"]
+        # Gear at a chosen slot and rarity, plus shards.
+        code, out = self.call("/api/admin/grant",{"username":"Target_One","shards":7,"gear":"boots","gear_rarity":4,"gear_count":5},auth)
+        self.assertEqual((code,out["count"]),(200,1))
+        target = self.store.profile(tid)
+        self.assertEqual(target["shards"],7)
+        bag = self.store._raw_gear(tid)["inventory"]
+        self.assertEqual([(i["slot"],i["rarity"]) for i in bag],[("boots",4)]*5)
+        self.assertIn("speed",bag[0]["stats"])
+        self.call("/api/admin/grant",{"username":"Target_One","gear":"random","gear_rarity":0},auth)
+        self.assertEqual(len(self.store._raw_gear(tid)["inventory"]),6)
+        for bad in ({"gear":"hat"},{"gear":"boots","gear_rarity":5},{"gear":"boots","gear_count":11},{"shards":1001},{"shards":-1}):
+            self.assertEqual(self.call("/api/admin/grant",{"username":"Target_One",**bad},auth)[0],400)
+        # Reset: the typed confirmation must match; never yourself; the login survives, progress does not.
+        self.store.complete_mission(tid,0,0)
+        self.assertEqual(self.call("/api/admin/reset",{"username":"Target_One","confirm":"target_one"},auth)[1]["error"],"確認帳號不一致，未清除任何資料")
+        self.assertEqual(self.call("/api/admin/reset",{"username":"Target_One"},auth)[0],400)
+        self.assertEqual(self.call("/api/admin/reset",{"username":"Beta_Test","confirm":"Beta_Test"},auth)[1]["error"],"不能清除自己的帳號")
+        self.assertEqual(self.call("/api/admin/reset",{"username":"*","confirm":"*"},auth)[0],400)
+        code, done = self.call("/api/admin/reset",{"username":"Target_One","confirm":"Target_One"},auth)
+        self.assertEqual((code,done["username"]),(200,"Target_One"))
+        fresh = self.store.profile(tid)
+        self.assertEqual((fresh["shards"],fresh["cleared"][0],fresh["unlocked"]),(0,-1,0))
+        self.assertEqual(self.store._raw_gear(tid)["inventory"],[])
+        self.assertEqual(self.call("/api/login",{"username":"Target_One","password":"test-password-8921"})[0],200)
+        # Not an admin: no reset.
+        plain = {"Authorization":"Bearer "+self.call("/api/login",{"username":"Target_One","password":"test-password-8921"})[1]["token"]}
+        self.assertEqual(self.call("/api/admin/reset",{"username":"Beta_Test","confirm":"Beta_Test"},plain)[0],403)
+
     def test_admin_grant(self):
         account = self.register()
         auth = {"Authorization":"Bearer "+account["token"]}
@@ -435,6 +470,7 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(keys(0,2),(15,15))    # 噩夢 +10
         self.assertEqual(keys(0,3),(30,30))    # 地獄 +15
         self.assertEqual(keys(0,3),(30,30))
+        self.assertEqual(self.store.profile(aid)["shards"], 5)   # 噩夢 2 + 地獄 3
         self.assertEqual(keys(1,0),(30,30))    # each region pays its own
         self.assertEqual(keys(1,1),(35,35))
 

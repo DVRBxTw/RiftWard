@@ -219,6 +219,7 @@ namespace RiftWard.Client
         }
 
         const float PanelScale = 0.88f;
+        public const string CursorPrompt = "點擊畫面恢復滑鼠瞄準";
         RectTransform hintPlate;
 
         static RectTransform Panel(Transform root, Vector2 anchor, Vector2 pos, Vector2 size, Vector2 pivot, Color accent)
@@ -452,6 +453,8 @@ namespace RiftWard.Client
             lastEnemies.Clear();
         }
 
+        int pierceStack, pierceFrame = -1;
+
         public void OnLocalShot(ShotEvent shot, Camera camera)
         {
             if (shot.Hit) hitTimer = 0.2f;
@@ -459,11 +462,17 @@ namespace RiftWard.Client
             if (shot.Killed) { comboCount = comboTimer > 0 ? comboCount + 1 : 1; comboTimer = 2.5f; killTimer = 0.3f; localKills++; }
             if (shot.Dealt > 0)
             {
-                var t = Mono(floaterLayer, Mathf.RoundToInt(shot.Dealt).ToString(), shot.Head ? 24 : shot.Killed ? 19 : 15, shot.Head ? Palette.Amber : shot.Killed ? Palette.Danger : Palette.Bone);
+                string label = Mathf.RoundToInt(shot.Dealt).ToString();
+                if (shot.Pierced) label = "穿透 " + label;
+                var t = Mono(floaterLayer, label, shot.Head ? 24 : shot.Killed || shot.Pierced ? 19 : 15,
+                    shot.Pierced ? Gear.RarityColors[4] : shot.Head ? Palette.Amber : shot.Killed ? Palette.Danger : Palette.Bone);
                 t.alignment = TextAnchor.MiddleCenter;
-                t.fontStyle = shot.Head || shot.Killed ? FontStyle.Bold : FontStyle.Normal;
-                t.rectTransform.sizeDelta = new Vector2(80, 30);
-                floaters.Add((t, shot.End + new Vector3(Random.Range(-0.25f, 0.25f), 0.3f, 0), 0.8f));
+                t.fontStyle = shot.Head || shot.Killed || shot.Pierced ? FontStyle.Bold : FontStyle.Normal;
+                t.rectTransform.sizeDelta = new Vector2(shot.Pierced ? 130 : 80, 30);
+                // Pierce numbers stack upward: the enemies a round passes through line up behind each other on screen.
+                if (shot.Pierced) { pierceStack = Time.frameCount == pierceFrame ? pierceStack + 1 : 1; pierceFrame = Time.frameCount; }
+                float lift = shot.Pierced ? 0.3f + 0.065f * Vector3.Distance(camera.transform.position, shot.End) * pierceStack : 0.3f;   // a fixed step on screen at any range
+                floaters.Add((t, shot.End + new Vector3(shot.Pierced ? 0f : Random.Range(-0.25f, 0.25f), lift, 0), 0.8f));
             }
         }
 
@@ -528,6 +537,15 @@ namespace RiftWard.Client
             toastPill.gameObject.SetActive(toastAlpha > 0.01f);
             toastPill.localScale = Vector3.one * (0.92f + 0.08f * toastAlpha);
             toastPill.sizeDelta = new Vector2(Mathf.Max(240, toast.preferredWidth + 48), 34);
+            // The click-to-resume prompt sits under the XP bar, away from the crosshair and the gun; mission
+            // prompts stay at the bottom centre.
+            bool top = toast.text == CursorPrompt;
+            var anchor = new Vector2(0.5f, top ? 1f : 0f);
+            if (toastPill.anchorMin != anchor)
+            {
+                toastPill.anchorMin = toastPill.anchorMax = toastPill.pivot = anchor;
+                toastPill.anchoredPosition = new Vector2(0, top ? -84 : 150);
+            }
 
             region.text = Defs.Regions[sim.Region].Name;
             if (Changed(tierTag, sim.Difficulty * 100 + sim.Region))
@@ -658,9 +676,9 @@ namespace RiftWard.Client
                 reloadBar.Color = reloading ? Palette.Amber : Palette.Bone;
                 lowAmmo.text = lowMag && local.Alive ? (local.Ammo == 0 ? $"彈匣已空 · 按 {Bindings.Name(Bindings.Action.Reload)} 換彈" : $"彈藥不足 · 按 {Bindings.Name(Bindings.Action.Reload)} 換彈") : "";
                 lowAmmo.color = new Color(Palette.Amber.r, Palette.Amber.g, Palette.Amber.b, 0.6f + 0.4f * Mathf.Sin(Time.time * 8f));
-                if (Changed(hint, (thirdPerson ? 1 : 0) | ((long)Bindings.Key(Bindings.Action.Reload) << 1) | ((long)Bindings.Key(Bindings.Action.View) << 20) | (melee ? 1L << 40 : 0)))
+                if (Changed(hint, (thirdPerson ? 1 : 0) | ((long)Bindings.Key(Bindings.Action.Reload) << 1) | ((long)Bindings.Key(Bindings.Action.View) << 20) | (melee ? 1L << 40 : 0) | ((long)Bindings.Key(Bindings.Action.Inspect) << 41)))
                     hint.text = melee ? $"左鍵 揮砍  ·  右鍵 格擋  ·  {Bindings.Name(Bindings.Action.View)} {(thirdPerson ? "第三人稱" : "第一人稱")}  ·  Esc 選單"
-                        : $"{Bindings.Name(Bindings.Action.Reload)} 換彈  ·  右鍵 瞄準  ·  {Bindings.Name(Bindings.Action.View)} {(thirdPerson ? "第三人稱" : "第一人稱")}  ·  Esc 選單";
+                        : $"{Bindings.Name(Bindings.Action.Reload)} 換彈  ·  右鍵 瞄準  ·  {Bindings.Name(Bindings.Action.Inspect)} 檢視  ·  {Bindings.Name(Bindings.Action.View)} {(thirdPerson ? "第三人稱" : "第一人稱")}  ·  Esc 選單";
                 hintPlate.sizeDelta = new Vector2(hint.preferredWidth + 20f, 22f);   // the plate hugs the text
                 revive.text = "";
                 if (!local.Alive && sim.Actors.Count > 1)

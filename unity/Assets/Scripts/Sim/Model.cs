@@ -94,6 +94,7 @@ namespace RiftWard.Sim
         public int Pellets = 1;
         /// Extra enemies each round passes through (穿透), 0 = stops at the first.
         public int Pierce;
+        public float PierceFalloff;
         public Dictionary<string, int> AmmoByWeapon = new Dictionary<string, int>();
 
         // Mission buffs
@@ -190,6 +191,8 @@ namespace RiftWard.Sim
         public int Shooter;
         public Vector3 Origin, End;
         public bool Hit, Head, Killed;
+        /// This hit came from a round that had already passed through an enemy (穿透).
+        public bool Pierced;
         public float Dealt;
     }
 

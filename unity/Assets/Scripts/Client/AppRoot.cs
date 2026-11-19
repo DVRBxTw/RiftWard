@@ -124,6 +124,7 @@ namespace RiftWard.Client
             Client.Menus.SettingsPanel = GameSettings.BuildPanel;
             Client.WeaponRarity = id => Profile?.Loadout.RarityOf(id) ?? 1;
             Client.WeaponEnhance = id => Profile == null ? (0, 0) : (Defs.UpgradeKeys.Sum(k => Profile.Loadout.Level(id, k)), Profile.Loadout.Level(id, "over"));
+            Client.WeaponPierce = id => Profile != null && Profile.Loadout.Level(id, "pierce") > 0 && Profile.Loadout.RarityOf(id) >= Defs.PierceMinRarity;
             Client.ShowcaseWeapon = () => Profile != null && Profile.Loadout.Equipped.Count > 0 ? Profile.Loadout.Equipped[0] : "rifle";
             Client.Menus.LeaveRequested = ReturnHome;
             Client.CanPause = () => !inNetMission || partySize <= 1;
@@ -236,6 +237,7 @@ namespace RiftWard.Client
                         Wave = finishedWave, BestWave = Profile.BestWave,
                         Unlocked = success && finishedTier > clearedAtDeploy && finishedTier + 1 < Defs.Difficulties.Length ? finishedTier + 1 : -1,
                         FirstClearKeys = success && finishedTier > clearedAtDeploy ? Defs.FirstClearKeys(finishedTier) : 0,
+                        FirstClearShards = success && finishedTier > clearedAtDeploy ? Defs.FirstClearShards(finishedTier) : 0,
                     };
                     Client.Menus.ShowResult(success, finishedRegion, kills, elapsed, gold, (Profile?.Gold ?? 0) + gold, grade, record, progress, finishedTier);
                     RefreshMe();
@@ -663,6 +665,10 @@ namespace RiftWard.Client
             Screens.ShowAdmin();
             yield return Settle(0.4f);
             yield return Shot(folder, "unity-admin");
+            Screens.WipeDialog("Kairo_77");
+            yield return Settle(0.3f);
+            yield return Shot(folder, "unity-admin-wipe");
+            Screens.ShowAdmin();
             var demo = Profile.From(new Dictionary<string, object>
             {
                 ["id"] = 1.0, ["username"] = "DVRBXTW", ["unlocked"] = 1.0, ["gold"] = 1240.0, ["tutorial_complete"] = true, ["admin"] = true,
@@ -923,6 +929,7 @@ namespace RiftWard.Client
             kit.Rarity["rifle"] = 4; kit.Rarity["sniper"] = 3;
             Client.WeaponRarity = id => kit.RarityOf(id);
             Client.WeaponEnhance = id => id == "rifle" ? (30, 2) : (20, 0);   // shots show the enhancement marks
+            Client.WeaponPierce = id => id == "rifle";
             Client.StartOffline(0, kit, false, null, 1);
             var sim = Client.Sim;
             sim.EnemyVariety = true;
@@ -991,6 +998,27 @@ namespace RiftWard.Client
             Client.InspectForCapture = 1f;
             yield return Settle(0.3f);
             yield return Shot(folder, "unity-rifle-inspect");
+            // 穿透: three enemies in a row straight ahead, one shot through all of them.
+            {
+                if (!me.Loadout.Levels.TryGetValue("rifle", out var rl)) me.Loadout.Levels["rifle"] = rl = new Dictionary<string, int>();
+                rl["pierce"] = 1;
+                sim.RefreshWeapon(me);
+                Client.SetView(0, 0);
+                var ahead = GameSim.LookDirection(0, 0);
+                int k = 0;
+                foreach (var e in sim.Enemies.Values.Take(3).ToList())
+                {
+                    e.Position = me.Position + ahead * (6f + 3f * k++);
+                    e.Hp = e.MaxHp = 99999f;
+                }
+                yield return Settle(0.3f);
+                Client.InspectForCapture = -1f;
+                sim.Fire(Client.LocalId, me.Position + ahead * 6f + Vector3.up * 1.2f);
+                yield return Settle(0.05f);
+                yield return Shot(folder, "unity-pierce");
+                rl.Remove("pierce");
+                sim.RefreshWeapon(me);
+            }
             Client.InspectForCapture = -1f;
             yield return Settle(0.3f);
             Client.AimForCapture = true;

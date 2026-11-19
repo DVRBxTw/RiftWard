@@ -63,6 +63,10 @@ namespace RiftWard.Client
         Transform slidePart, boltPart, pumpPart, ejectPort;
         /// Enhancement of a weapon for its looks: (sum of the three upgrade levels, 超載 level).
         public Func<string, (int sum, int over)> WeaponEnhance;
+        /// Whether a weapon has 穿透 fitted (for its look).
+        public Func<string, bool> WeaponPierce;
+        /// Ammo bars mounted on top of the gun (pistol slide, shotgun receiver) sit in the sight line: hidden when aimed.
+        Transform topAmmoBar;
         /// Inspect (F): seconds into the turn-the-gun-to-look-at-it animation; negative = not inspecting.
         float inspectT = -1f;
         const float InspectTime = 2.4f;
@@ -547,6 +551,7 @@ namespace RiftWard.Client
             bool firstOfBatch = firedThisBatch.Add(shot.Shooter);
             if (firstOfBatch) ShotSound(shot, shooter, rarity);
             if (shot.Shooter == LocalId) { localHit |= shot.Hit; localHead |= shot.Head; localKill |= shot.Killed; }
+            if (shot.Pierced) { PierceEffect(shot, origin); if (shot.Shooter == LocalId) Hud.OnLocalShot(shot, Camera); return; }
             if (rarity >= 3) { RarityShot(shot, origin, rarity); if (shot.Shooter == LocalId) { Hud.OnLocalShot(shot, Camera); ApplyRecoil(); } return; }
             if (shooter != null && firstOfBatch) MuzzleFlash(shooter.WeaponId, origin, shot.Shooter == LocalId && !thirdPerson);
             WeaponFx.Tracer(shooter?.WeaponId ?? "rifle", origin, shot.End);
@@ -745,6 +750,25 @@ namespace RiftWard.Client
 
         /// 傳奇 / 神話 weapons only: a thick glowing tracer with a white core, a coloured muzzle burst and impact
         /// sparks; 神話 adds a spiralling energy helix and a ring of shards on every hit.
+        /// 穿透: the round carries on through the first enemy. A crimson rail beam runs the full length with a
+        /// white-hot core, and the exit point bursts into a ring of sparks with a red light.
+        void PierceEffect(ShotEvent shot, Vector3 origin)
+        {
+            Color red = Gear.RarityColors[4], hot = Color.Lerp(red, Color.white, 0.55f);
+            WeaponFx.Beam.Spawn(origin, shot.End, red, 0.07f, 0.22f, 0.75f);
+            WeaponFx.Beam.Spawn(origin, shot.End, hot, 0.02f, 0.14f, 1f);
+            var flash = Burst.Sphere(shot.End, hot, 0.9f, 5f, 0.12f, shot.Head ? 0.9f : 0.65f, 0.12f);
+            flash.GetComponent<Burst>().AddLight(red, 3.5f, 4f);
+            Burst.Sphere(shot.End, red, 0.45f, 3f, 0.2f, 1.4f, 0.22f);   // expanding ring of light
+            var back = (shot.End - shot.Origin).normalized;
+            for (int i = 0; i < 8; i++)
+            {
+                var spark = Build.Cube(null, shot.End, Vector3.one * 0.045f, i % 2 == 0 ? hot : red, 5f, false);
+                // Mostly onward: the round tears out of the far side.
+                effects.Add((spark, 0.32f, (back * 1.2f + UnityEngine.Random.insideUnitSphere) * 5f + Vector3.up * 1.5f, 800f));
+            }
+        }
+
         void RarityShot(ShotEvent shot, Vector3 origin, int rarity)
         {
             bool myth = rarity >= 4;
@@ -999,7 +1023,7 @@ namespace RiftWard.Client
 
             UpdateCamera(me, dt);
             UpdateAudio(me, dt);
-            string toast = Sim.State == MissionState.Playing && !Paused && !Sim.BuffPending && !ChatHud.Typing && Cursor.lockState != CursorLockMode.Locked ? "點擊畫面恢復滑鼠瞄準" : Objective;
+            string toast = Sim.State == MissionState.Playing && !Paused && !Sim.BuffPending && !ChatHud.Typing && Cursor.lockState != CursorLockMode.Locked ? Hud.CursorPrompt : Objective;
             Hud.Tick(dt, Sim, me, Camera, thirdPerson, toast);
         }
 
@@ -1028,7 +1052,9 @@ namespace RiftWard.Client
                 shownSlot = me.Slot;
                 desiredSlot = me.Slot;
                 var en = WeaponEnhance?.Invoke(me.WeaponId) ?? (0, 0);
-                muzzle = Models.Viewmodel(me.WeaponId, weaponHolder, WeaponRarity?.Invoke(me.WeaponId) ?? 1, true, en.sum, en.over);
+                muzzle = Models.Viewmodel(me.WeaponId, weaponHolder, WeaponRarity?.Invoke(me.WeaponId) ?? 1, true, en.sum, en.over, WeaponPierce?.Invoke(me.WeaponId) ?? false);
+                var bar = weaponHolder.GetComponentsInChildren<Transform>(true).FirstOrDefault(t => t.name == "AmmoBar");
+                topAmmoBar = me.WeaponId == "pistol" || me.WeaponId == "shotgun" ? bar : null;
                 ejectPort = weaponHolder.Find("Eject");
                 ejected = true;
                 magazine = weaponHolder.Find("Mag");
@@ -1057,6 +1083,7 @@ namespace RiftWard.Client
             adsWanted = wantAds;
             ads = Mathf.Lerp(ads, wantAds ? 1f : 0f, 1f - Mathf.Exp(-16f * dt));
             bool sniper = me.WeaponId == "sniper";
+            if (topAmmoBar != null) topAmmoBar.gameObject.SetActive(ads < 0.35f);
             Hud.SetAds(ads, sniper);
             UpdateSway(sniper && ads > 0.6f, dt);
             // Sniper: once the scope fills the screen, hide the gun model so it doesn't poke into the glass.
