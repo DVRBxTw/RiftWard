@@ -2555,7 +2555,9 @@ namespace RiftWard.Client
             shardsInput.contentType = InputField.ContentType.IntegerNumber;
             shardsInput.text = "0";
             int weaponPick = 0;
-            string[] choices = { "不發放武器", "解鎖 AR-27 突擊步槍", "解鎖 SG-8 霰彈槍", "解鎖 LR-50 狙擊槍", "解鎖 EX-1 能量光劍" };
+            // Built from the weapon order, so every weapon (pistol and limited ones included) is offered and the pick
+            // always maps to the weapon it names.
+            string[] choices = new[] { "不發放武器" }.Concat(Defs.WeaponOrder.Select(w => "解鎖 " + Defs.Weapons[w].Name)).ToArray();
             Button weaponButton = null, rarityButton = null;
             int rarityPick = 1;
             var weaponRow = Ui.HStack(gs, 10).Sized(40);
@@ -2604,7 +2606,7 @@ namespace RiftWard.Client
                 int.TryParse(goldInput.text, out int gold);
                 adminStatus.color = Palette.Amber;
                 adminStatus.text = "發放中…";
-                app.Api.Post("/api/admin/grant", new Dictionary<string, object> { ["username"] = who, ["gold"] = gold, ["keys"] = int.TryParse(keysInput.text, out var keyCount) ? keyCount : 0, ["weapon_keys"] = int.TryParse(weaponKeysInput.text, out var weaponKeyCount) ? weaponKeyCount : 0, ["weapon"] = weaponPick == 0 ? "" : Defs.WeaponOrder[weaponPick], ["rarity"] = rarityPick,
+                app.Api.Post("/api/admin/grant", new Dictionary<string, object> { ["username"] = who, ["gold"] = gold, ["keys"] = int.TryParse(keysInput.text, out var keyCount) ? keyCount : 0, ["weapon_keys"] = int.TryParse(weaponKeysInput.text, out var weaponKeyCount) ? weaponKeyCount : 0, ["weapon"] = weaponPick == 0 ? "" : Defs.WeaponOrder[weaponPick - 1], ["rarity"] = rarityPick,
                     ["shards"] = int.TryParse(shardsInput.text, out var shardCount) ? shardCount : 0, ["gear"] = gearIds[gearPick], ["gear_rarity"] = gearRarity, ["gear_count"] = gearCount }, result =>
                 {
                     if (Mode != "admin") return;
@@ -2631,34 +2633,6 @@ namespace RiftWard.Client
             toAll.gameObject.AddComponent<RevertCaption>().Arm(() => Time.unscaledTime - toAllArmed > 4f, "發給全部玩家", Palette.Danger);
             // 清除玩家資料: dangerous, so it opens its own dialog with two confirmations.
             Ui.DangerButton(gs, "清除玩家資料…", () => WipeDialog(adminTarget.text.Trim()), 14).Sized(36);
-            // 限定補給: open it for N days (or change how long is left), or close it now.
-            Widgets.Section(gs, "限定補給").Sized(22);
-            var p0 = app.Profile;
-            long limitedLeft = p0.LimitedOpen ? p0.LimitedEndsAt - System.DateTimeOffset.UtcNow.ToUnixTimeSeconds() : 0;
-            Ui.Label(gs, p0.LimitedOpen ? $"進行中：{Defs.Weapons[p0.LimitedWeapon].Name}　剩 {limitedLeft / 86400} 天 {limitedLeft % 86400 / 3600} 小時" : "目前未開放", 13,
-                p0.LimitedOpen ? Palette.Hex("ff7a2a") : Palette.Muted, TextAnchor.MiddleLeft).Sized(20);
-            var limitedRow = Ui.HStack(gs, 10).Sized(40);
-            var daysInput = Widgets.Input(limitedRow, "天數", false, 2);
-            daysInput.contentType = InputField.ContentType.IntegerNumber;
-            void SetLimited(int days)
-            {
-                adminStatus.color = Palette.Amber;
-                adminStatus.text = "設定中…";
-                app.Api.Post("/api/admin/limited", new Dictionary<string, object> { ["weapon"] = "minigun", ["days"] = days }, result =>
-                {
-                    if (Mode != "admin") return;
-                    if (!result.Bool("ok")) { adminStatus.color = Palette.Danger; adminStatus.text = result.Str("error", "設定失敗"); return; }
-                    app.UpdateProfile(Profile.From(result.Obj("profile")));
-                    ShowAdmin();
-                    adminStatus.text = days > 0 ? $"限定補給已開放 {days} 天。" : "限定補給已關閉。";
-                });
-            }
-            Ui.Button(limitedRow, "開放 / 更新天數", () =>
-            {
-                if (!int.TryParse(daysInput.text, out int days) || days < 1) { adminStatus.color = Palette.Danger; adminStatus.text = "請輸入 1 到 90 的天數。"; return; }
-                SetLimited(days);
-            }, 14);
-            Ui.DangerButton(limitedRow, "立即關閉", () => SetLimited(0), 14);
             adminStatus = Ui.Label(gs, "", 14, Palette.Amber).Sized(22);
             Widgets.Section(gs, "玩家名單").Sized(22);
             adminList = Widgets.ScrollList(gs, out _);
@@ -2812,6 +2786,37 @@ namespace RiftWard.Client
             Ui.Label(head, "稽核記錄", 22, Palette.Bone, TextAnchor.MiddleLeft, true).rectTransform.Fill();
             Ui.Button(head, "重新整理", LoadAudit, 12, Palette.Muted, new Color(0, 0, 0, 0), Palette.Line)
                 .GetComponent<RectTransform>().Place(new Vector2(1, 0.5f), Vector2.zero, new Vector2(84, 28), new Vector2(1, 0.5f));
+            Text limitedStatus = null;
+            // 限定補給: open it for N days (or change how long is left), or close it now.
+            Widgets.Section(au, "限定補給").Sized(22);
+            var p0 = app.Profile;
+            long limitedLeft = p0.LimitedOpen ? p0.LimitedEndsAt - System.DateTimeOffset.UtcNow.ToUnixTimeSeconds() : 0;
+            Ui.Label(au, p0.LimitedOpen ? $"進行中：{Defs.Weapons[p0.LimitedWeapon].Name}　剩 {limitedLeft / 86400} 天 {limitedLeft % 86400 / 3600} 小時" : "目前未開放", 13,
+                p0.LimitedOpen ? Palette.Hex("ff7a2a") : Palette.Muted, TextAnchor.MiddleLeft).Sized(20);
+            var limitedRow = Ui.HStack(au, 10).Sized(40);
+            var daysInput = Widgets.Input(limitedRow, "天數", false, 2);
+            daysInput.contentType = InputField.ContentType.IntegerNumber;
+            void SetLimited(int days)
+            {
+                limitedStatus.color = Palette.Amber;
+                limitedStatus.text = "設定中…";
+                app.Api.Post("/api/admin/limited", new Dictionary<string, object> { ["weapon"] = "minigun", ["days"] = days }, result =>
+                {
+                    if (Mode != "admin") return;
+                    if (!result.Bool("ok")) { limitedStatus.color = Palette.Danger; limitedStatus.text = result.Str("error", "設定失敗"); return; }
+                    app.UpdateProfile(Profile.From(result.Obj("profile")));
+                    ShowAdmin();
+                    adminStatus.color = Palette.Amber; adminStatus.text = days > 0 ? $"限定補給已開放 {days} 天。" : "限定補給已關閉。";
+                });
+            }
+            Ui.Button(limitedRow, "開放 / 更新天數", () =>
+            {
+                if (!int.TryParse(daysInput.text, out int days) || days < 1) { limitedStatus.color = Palette.Danger; limitedStatus.text = "請輸入 1 到 90 的天數。"; return; }
+                SetLimited(days);
+            }, 14);
+            Ui.DangerButton(limitedRow, "立即關閉", () => SetLimited(0), 14);
+            limitedStatus = Ui.Label(au, "", 13, Palette.Amber).Sized(20);
+            Widgets.Section(au, "稽核").Sized(22);
             Ui.Label(au, "伺服器會檢查每場結算。紅色＝不合理，已拒絕發放；黃色＝數據可疑，已發放但請留意。", 13, Palette.Muted).Sized(54);
             auditList = Widgets.ScrollList(au, out _);
             auditList.parent.gameObject.AddComponent<LayoutElement>().flexibleHeight = 1;
