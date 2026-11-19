@@ -64,7 +64,7 @@ namespace RiftWard.Client
             bar.offsetMin = new Vector2(0, -NavHeight); bar.offsetMax = Vector2.zero;
             var line = Ui.Box(bar, Palette.Line, "Line").rectTransform;
             line.anchorMin = Vector2.zero; line.anchorMax = new Vector2(1, 0); line.offsetMin = Vector2.zero; line.offsetMax = new Vector2(0, 1);
-            Ui.Label(bar, "RIFTWARD  " + Defs.Version, 11, Palette.Amber).rectTransform.Place(new Vector2(0, 0.5f), new Vector2(40, 14), new Vector2(200, 16), new Vector2(0, 0.5f));
+            Ui.Label(bar, "RIFTWARD  " + Defs.Version + (string.IsNullOrEmpty(app.Api.Channel) ? "" : "  ·  " + app.Api.Channel), 11, app.Api.Channel == "測試服" ? Palette.Hex("6fd3ff") : Palette.Amber).rectTransform.Place(new Vector2(0, 0.5f), new Vector2(40, 14), new Vector2(200, 16), new Vector2(0, 0.5f));
             Ui.Label(bar, "裂隙守衛", 24, Palette.Bone, TextAnchor.UpperLeft, true).rectTransform.Place(new Vector2(0, 0.5f), new Vector2(40, -6), new Vector2(200, 32), new Vector2(0, 0.5f));
 
             string[] ids = { "missions", "daily", "social", "shop", "gear" };
@@ -2357,15 +2357,16 @@ namespace RiftWard.Client
             }
             var dialog = Ui.Box(root, new Color(0, 0, 0, 0.7f), "WipeDialog").rectTransform.Fill();
             var sheet = Ui.Box(dialog, Palette.Sheet, "Sheet").rectTransform;
-            sheet.Place(new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(500, 400));
+            sheet.Place(new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(500, 420));
             TopRule(sheet, Palette.Danger);
             var s = Ui.VStack(sheet, 10);
             s.Fill();
             s.GetComponent<VerticalLayoutGroup>().padding = new RectOffset(30, 30, 24, 24);
             Ui.Label(s, "清除玩家資料", 26, Palette.Danger, TextAnchor.UpperLeft, true).Sized(36);
             Ui.Label(s, $"對象：{target}", 18, Palette.Bone, TextAnchor.UpperLeft, true).Sized(26);
-            Ui.Label(s, "將清除關卡進度、等級、天賦、金幣、鑰匙、碎片、全部武器與裝備、信件、抽卡紀錄與好友，帳號密碼保留。此操作無法復原。",
-                14, Palette.Hex("e6b8b8")).Sized(60);
+            bool wipingSelf = string.Equals(target, app.Profile?.Username, StringComparison.OrdinalIgnoreCase);
+            Ui.Label(s, "將清除關卡進度、等級、天賦、金幣、鑰匙、碎片、全部武器與裝備、信件、抽卡紀錄與好友，帳號密碼保留。此操作無法復原。" + (wipingSelf ? "\n這是你自己的帳號：管理員身分會保留。" : ""),
+                14, Palette.Hex("e6b8b8")).Sized(wipingSelf ? 80 : 60);
             var step = Ui.Label(s, "第 1 次確認：按下「清除資料」。", 14, Palette.Muted);
             step.Sized(22);
             var confirm = Widgets.Input(s, $"第 2 次確認：輸入「{target}」", false, 24);
@@ -2402,7 +2403,9 @@ namespace RiftWard.Client
                         UnityEngine.Object.Destroy(dialog.gameObject);
                         if (Mode != "admin") return;
                         adminStatus.color = Palette.Amber;
-                        adminStatus.text = $"已清除 {result.Str("username", target)} 的資料。";
+                        bool self = string.Equals(result.Str("username", target), app.Profile?.Username, StringComparison.OrdinalIgnoreCase);
+                        adminStatus.text = self ? "已清除你自己的資料（保留管理員身分）。" : $"已清除 {result.Str("username", target)} 的資料。";
+                        if (self) app.RefreshProfile();   // own wipe: the lobby shows the fresh account right away
                         LoadPlayers();
                     }
                     else { error.color = Palette.Danger; error.text = result.Str("error", "清除失敗"); go.interactable = true; }

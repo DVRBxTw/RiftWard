@@ -40,6 +40,7 @@ Remove-Item (Join-Path $gameDir 'RiftWardGame.pck') -ErrorAction SilentlyContinu
 
 # 3. Server files
 foreach ($file in @('service.py','run_server.py','schema.sql')) { Copy-Item (Join-Path $project "server\$file") (Join-Path $build "server\$file") -Force }
+Copy-Item (Join-Path $project 'deploy\test\server.cfg') (Join-Path $build 'server.cfg') -Force   # build/ is the 測試服
 
 # 4. Launcher (C#)
 & (Join-Path $PSScriptRoot 'build_launcher.ps1') -Out (Join-Path $build 'RiftWard.exe') | Out-Null

@@ -15,7 +15,8 @@ import time
 
 from service import BetaServer, Store, HOST, PORT, VERSION, tls_context, cert_fingerprint
 
-GAME_PORT = 24770
+GAME_PORT = int(os.environ.get("RIFTWARD_GAME_PORT", "24770"))
+CHANNEL = os.environ.get("RIFTWARD_CHANNEL", "測試服")
 
 
 def ensure_certificate(data: Path):
@@ -78,8 +79,9 @@ def main():
         raise SystemExit(f"Cannot bind {HOST}:{PORT}: {exc}") from exc
     thread = threading.Thread(target=api.serve_forever, daemon=True)
     thread.start()
-    print(f"Account/update service: http://{HOST}:{PORT}  ·  client version {version}", flush=True)
-    environment = dict(os.environ, RIFTWARD_API_HOST=HOST, RIFTWARD_SERVER_DATA=str(base / "server-data"))
+    print(f"[{CHANNEL}] Account/update service: http://{HOST}:{PORT}  ·  client version {version}", flush=True)
+    environment = dict(os.environ, RIFTWARD_API_HOST=HOST, RIFTWARD_API_PORT=str(PORT), RIFTWARD_GAME_PORT=str(GAME_PORT),
+                       RIFTWARD_SERVER_DATA=str(base / "server-data"))
     log_path = base / "server-data" / "game-server.log"
     log_path.write_text("", encoding="utf-8")
     command = [str(engine), "-batchmode", "-nographics", "-server", "-logFile", str(log_path)]
@@ -92,7 +94,7 @@ def main():
                 with log_path.open(encoding="utf-8", errors="replace") as log:
                     ready = "SERVER_READY address=" in log.read()
                 if ready:
-                    print(f"Game server ready on TCP {GAME_PORT}", flush=True)
+                    print(f"[{CHANNEL}] Game server ready on TCP {GAME_PORT}", flush=True)
             time.sleep(0.5)
     except KeyboardInterrupt:
         process.terminate()

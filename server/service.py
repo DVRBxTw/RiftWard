@@ -19,8 +19,10 @@ import time
 from collections import defaultdict, deque
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-HOST = "192.168.213.100"
-PORT = 24771
+# 測試服 and 正式服 run side by side on one machine: each StartServer.cmd sets its own ports (正式服 24780/24781).
+HOST = os.environ.get("RIFTWARD_BIND", "192.168.213.100")
+PORT = int(os.environ.get("RIFTWARD_API_PORT", "24771"))
+CHANNEL = os.environ.get("RIFTWARD_CHANNEL", "測試服")
 ITERATIONS = 310_000
 USERNAME = re.compile(r"[A-Za-z0-9_]{3,24}\Z")
 VERSION = "0.4.2-beta.1"
@@ -563,7 +565,8 @@ class Store:
     def admin_reset(self, admin_id: int, username, confirm):
         """清除玩家資料: puts one account back to a fresh start (progress, weapons, gear, keys, mail, draw history,
         friends) while keeping the login. Dangerous: the admin must type the exact account name as confirm, and can
-        never wipe their own account or every account at once."""
+        never wipe every account at once. An admin may wipe their own account: admin status comes from admins.txt
+        by name, so it survives, and their current session is kept so they stay signed in."""
         if not isinstance(username, str) or not USERNAME.fullmatch(username):
             raise ValueError("請輸入正確的玩家帳號")
         if not isinstance(confirm, str) or confirm != username:
@@ -573,14 +576,13 @@ class Store:
             if row is None:
                 raise ValueError("找不到此玩家")
             account_id = row[0]
-            if account_id == admin_id:
-                raise ValueError("不能清除自己的帳號")
             db.execute("DELETE FROM progress WHERE account_id=?", (account_id,))
             db.execute("INSERT INTO progress(account_id) VALUES(?)", (account_id,))
             db.execute("DELETE FROM mail WHERE account_id=?", (account_id,))
             db.execute("DELETE FROM gacha_log WHERE account_id=?", (account_id,))
             db.execute("DELETE FROM friendships WHERE requester=? OR addressee=?", (account_id, account_id))
-            db.execute("DELETE FROM sessions WHERE account_id=?", (account_id,))   # signed out everywhere
+            if account_id != admin_id:
+                db.execute("DELETE FROM sessions WHERE account_id=?", (account_id,))   # signed out everywhere
         self.audit(account_id, "admin_reset", f"cleared by admin #{admin_id}")
         self.send_mail([account_id], *WELCOME_MAIL)   # a fresh start includes the welcome gift again
         return row[1]

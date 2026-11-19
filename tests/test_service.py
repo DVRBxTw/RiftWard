@@ -224,7 +224,6 @@ class ServiceTests(unittest.TestCase):
         self.store.complete_mission(tid,0,0)
         self.assertEqual(self.call("/api/admin/reset",{"username":"Target_One","confirm":"target_one"},auth)[1]["error"],"確認帳號不一致，未清除任何資料")
         self.assertEqual(self.call("/api/admin/reset",{"username":"Target_One"},auth)[0],400)
-        self.assertEqual(self.call("/api/admin/reset",{"username":"Beta_Test","confirm":"Beta_Test"},auth)[1]["error"],"不能清除自己的帳號")
         self.assertEqual(self.call("/api/admin/reset",{"username":"*","confirm":"*"},auth)[0],400)
         code, done = self.call("/api/admin/reset",{"username":"Target_One","confirm":"Target_One"},auth)
         self.assertEqual((code,done["username"]),(200,"Target_One"))
@@ -235,6 +234,12 @@ class ServiceTests(unittest.TestCase):
         # Not an admin: no reset.
         plain = {"Authorization":"Bearer "+self.call("/api/login",{"username":"Target_One","password":"test-password-8921"})[1]["token"]}
         self.assertEqual(self.call("/api/admin/reset",{"username":"Beta_Test","confirm":"Beta_Test"},plain)[0],403)
+        # An admin may wipe their own account: progress goes, admin status and the current session stay.
+        self.store.reward(admin["profile"]["id"],500)
+        code, done = self.call("/api/admin/reset",{"username":"Beta_Test","confirm":"Beta_Test"},auth)
+        self.assertEqual(code,200)
+        code, me = self.call("/api/me",{},auth)
+        self.assertEqual((code,me["profile"]["gold"],me["profile"]["admin"]),(200,0,True))
 
     def test_admin_grant(self):
         account = self.register()

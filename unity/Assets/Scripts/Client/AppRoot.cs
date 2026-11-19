@@ -114,6 +114,7 @@ namespace RiftWard.Client
             Net.Disconnected += OnNetDisconnected;
             var env = Environment.GetEnvironmentVariable("RIFTWARD_TEST_API_PORT");
             if (!string.IsNullOrEmpty(env)) { Api.Host = Environment.GetEnvironmentVariable("RIFTWARD_TEST_API_HOST") ?? "127.0.0.1"; Api.Port = int.Parse(env); }
+            gamePort = Api.GamePort;   // server.cfg: 測試服 24770, 正式服 24780
             var gp = Environment.GetEnvironmentVariable("RIFTWARD_TEST_GAME_PORT");
             if (!string.IsNullOrEmpty(gp)) gamePort = int.Parse(gp);
             netTest = Arg("-net-test") != null;
@@ -170,6 +171,8 @@ namespace RiftWard.Client
                 if (!ok) { homeStatus = "遊戲伺服器離線 · 離線單人任務"; ShowHome(); }
             });
         }
+
+        public void RefreshProfile() => RefreshMe();
 
         void RefreshMe()
         {
@@ -665,7 +668,7 @@ namespace RiftWard.Client
             Screens.ShowAdmin();
             yield return Settle(0.4f);
             yield return Shot(folder, "unity-admin");
-            Screens.WipeDialog("Kairo_77");
+            Screens.WipeDialog(Profile.Username);   // own account: the dialog notes admin status is kept
             yield return Settle(0.3f);
             yield return Shot(folder, "unity-admin-wipe");
             Screens.ShowAdmin();

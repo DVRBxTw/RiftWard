@@ -218,6 +218,9 @@ namespace RiftWard.Client
         }
 
         public string BaseUrl => $"http://{Host}:{Port}";
+        /// From server.cfg: the game server's TCP port and the server's display name (測試服 / 正式服).
+        public int GamePort = Protocol.DefaultPort;
+        public string Channel = "";
 
         /// server.cfg next to the executable: [server] address=1.2.3.4 (same file the Godot build used).
         void LoadServerConfig()
@@ -230,9 +233,13 @@ namespace RiftWard.Client
                 foreach (var raw in File.ReadAllLines(path))
                 {
                     var line = raw.Trim();
-                    if (!line.StartsWith("address")) continue;
-                    var value = line.Substring(line.IndexOf('=') + 1).Trim().Trim('"');
-                    if (System.Net.IPAddress.TryParse(value, out _)) Host = value;
+                    int eq = line.IndexOf('=');
+                    if (eq < 0) continue;
+                    string key = line.Substring(0, eq).Trim(), value = line.Substring(eq + 1).Trim().Trim('"');
+                    if (key == "address" && System.Net.IPAddress.TryParse(value, out _)) Host = value;
+                    else if (key == "port" && int.TryParse(value, out int p) && p > 0 && p < 65536) Port = p;
+                    else if (key == "game_port" && int.TryParse(value, out int g) && g > 0 && g < 65536) GamePort = g;
+                    else if (key == "name" && value.Length <= 12) Channel = value;
                 }
             }
             catch (Exception e) { Debug.LogWarning("server.cfg: " + e.Message); }

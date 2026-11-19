@@ -35,19 +35,28 @@ namespace RiftWard.Launcher
         public static string ReadOrigin(string installDir)
         {
             string address = "123.241.56.94";
+            int port = 24771;   // 測試服; the 正式服 package's server.cfg says port=24781
             string path = Path.Combine(installDir, "server.cfg");
             if (File.Exists(path))
             {
                 foreach (string raw in File.ReadAllLines(path))
                 {
                     string line = raw.Trim();
-                    if (!line.StartsWith("address")) continue;
                     int eq = line.IndexOf('=');
-                    if (eq < 0) return null;
-                    address = line.Substring(eq + 1).Trim().Trim('"').Trim();
+                    if (line.StartsWith("address"))
+                    {
+                        if (eq < 0) return null;
+                        address = line.Substring(eq + 1).Trim().Trim('"').Trim();
+                    }
+                    else if (line.StartsWith("port") && eq > 0)
+                    {
+                        int p;
+                        if (!int.TryParse(line.Substring(eq + 1).Trim().Trim('"'), out p) || p <= 0 || p >= 65536) return null;
+                        port = p;
+                    }
                 }
             }
-            return HostRx.IsMatch(address) ? "http://" + address + ":24771" : null;
+            return HostRx.IsMatch(address) ? "http://" + address + ":" + port : null;
         }
 
         /// <summary>Parses and validates a manifest; returns null and sets problem on failure.</summary>
