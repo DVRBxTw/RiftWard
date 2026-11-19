@@ -717,6 +717,9 @@ namespace RiftWard.Tests
             Assert.AreEqual(3, front.Count(e => e.Hp < 9999), "cleaves the three nearest in the arc");
             Assert.Less(front[0].Hp, 9999f);
             Assert.AreEqual(9999f, front[3].Hp, "the fourth is left for the next swing");
+            float full = 9999f - front[0].Hp;
+            Assert.AreEqual(full * Defs.MeleeCleaveFalloff, 9999f - front[1].Hp, 0.01f, "the second takes 60%");
+            Assert.AreEqual(full * Defs.MeleeCleaveFalloff, 9999f - front[2].Hp, 0.01f, "the third takes 60%");
             Assert.AreEqual(9999f, behind.Hp);
             Assert.AreEqual(9999f, far.Hp);
             Assert.AreEqual(a.Mag, a.Ammo, "a blade never uses ammo");

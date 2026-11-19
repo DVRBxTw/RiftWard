@@ -834,7 +834,8 @@ namespace RiftWard.Sim
                 if (hits >= Defs.MeleeCleave) break;
                 hits++;
                 var chest = e.Position + Vector3.up * e.Scale;
-                float dealt = damage * DamageMultiplier(e, (chest - eye).normalized, false);
+                // The nearest takes the full blow; the others in the arc take MeleeCleaveFalloff of it.
+                float dealt = damage * DamageMultiplier(e, (chest - eye).normalized, false) * (hits == 1 ? 1f : Defs.MeleeCleaveFalloff);
                 Credit(a, e, dealt);
                 e.Hp -= dealt;
                 bool killed = false;

@@ -163,6 +163,8 @@ namespace RiftWard.Sim
         public const float AimSpread = 0.3f, AimSpreadPellets = 0.65f, AimSpeed = 0.62f;
         public const float MeleeHalfArc = 55f, BlockFactor = 0.3f, BlockSpeed = 0.55f, BlockHalfArc = 70f;
         public const int MeleeCleave = 3;
+        /// Share of a swing's damage dealt to the second and third enemy it cleaves (the nearest takes it all).
+        public const float MeleeCleaveFalloff = 0.6f;
 
         public static readonly Dictionary<string, WeaponDef> Weapons = new Dictionary<string, WeaponDef>
         {
@@ -170,7 +172,7 @@ namespace RiftWard.Sim
             ["rifle"] = new WeaponDef("rifle", "AR-27 突擊步槍", "步槍", "全自動高射速，適合壓制大群敵人。", 17f, 0.1f, 30, 1.8f, 1, 0.012f, 2f, 0.75f, 400, 0.019f, 0.007f, 1.3f),
             ["shotgun"] = new WeaponDef("shotgun", "SG-8 霰彈槍", "霰彈", "一次射出 7 顆彈丸，近距離威力驚人。", 13f, 0.8f, 6, 2.2f, 7, 0.07f, 1.5f, 0.85f, 600, 0.065f, 0.015f, 1.4f),
             ["sniper"] = new WeaponDef("sniper", "LR-50 狙擊槍", "狙擊", "單發高傷害，爆頭 3 倍。右鍵開鏡。", 95f, 1.0f, 5, 2.4f, 1, 0f, 3f, 0.35f, 800, 0.09f, 0.01f, 1.6f),
-            ["saber"] = new WeaponDef("saber", "EX-1 能量光劍", "光劍", "高能電漿刃。左鍵揮砍前方扇形，一次最多砍中 3 名敵人；右鍵格擋正面子彈。", 55f, 0.42f, 1, 0f, 1, 0f, 1f, 1f, 0, 0.006f, 0f, 1.5f, melee: true, range: 2.8f),
+            ["saber"] = new WeaponDef("saber", "EX-1 能量光劍", "光劍", "高能電漿刃。左鍵揮砍前方扇形，一次最多砍中 3 名敵人（最近的一名全額，其餘 60%）；右鍵格擋正面子彈。", 55f, 0.42f, 1, 0f, 1, 0f, 1f, 1f, 0, 0.006f, 0f, 1.5f, melee: true, range: 2.8f),
         };
 
         public static readonly string[] UpgradeKeys = { "damage", "mag", "reload" };
