@@ -14,10 +14,10 @@ namespace RiftWard.Sim
             switch (weapon)
             {
                 case "rifle": return ("致命節奏", $"爆頭後，接下來 {(myth ? 2 : 1)} 發必定暴擊");
-                case "shotgun": return ("近身汲取", $"擊殺敵人回復 {(myth ? 12 : 6)} 點護盾");
+                case "shotgun": return ("近身汲取", $"擊殺敵人回復 {(myth ? 12 : 6)} 點生命");
                 case "sniper": return ("弱點洞察", $"爆頭傷害 +{(myth ? 80 : 40)}%");
                 case "pistol": return ("連擊快槍", $"擊殺後 2 秒內射速 +{(myth ? 70 : 40)}%");
-                case "saber": return ("嗜能之刃", $"每砍中一名敵人回復 {(myth ? 4 : 2)} 點護盾");
+                case "saber": return ("嗜能之刃", $"每砍中一名敵人回復 {(myth ? 4 : 2)} 點生命");
                 default: return null;
             }
         }
@@ -59,7 +59,7 @@ namespace RiftWard.Sim
         /// XP needed to go from this account level to the next; mirrors level_for() in server/service.py.
         public static int AccountLevelNeed(int level) => 100 + 50 * level;
 
-        public const string Version = "0.7.26-unity.1";
+        public const string Version = "0.7.27-unity.1";
 
         // Player movement
         public const float EyeHeight = 1.65f;
@@ -223,12 +223,12 @@ namespace RiftWard.Sim
             new BuffDef("超載彈芯", "傷害 +{0}%", 20),
             new BuffDef("急速扳機", "射速 +{0}%", 15),
             new BuffDef("動能靴", "移動速度 +{0}%", 12),
-            new BuffDef("強化護盾", "護盾上限 +{0}，並立即恢復", 30),
-            new BuffDef("修復協議", "每波開始恢復 {0} 護盾", 15),
+            new BuffDef("生命強化", "生命上限 +{0}，並立即恢復", 30),
+            new BuffDef("修復協議", "每波開始恢復 {0} 生命", 15),
             new BuffDef("弱點分析", "{0}% 機率造成雙倍傷害", 20),
             new BuffDef("擴充彈匣", "彈匣 +{0} 發，換彈加快 15%", 4),
             new BuffDef("戰術冷卻", "手榴彈冷卻 -{0}%", 20),
-            new BuffDef("吸能模組", "每次擊殺恢復 {0} 護盾（回復速度有上限）", 4),
+            new BuffDef("吸能模組", "每次擊殺恢復 {0} 生命（回復速度有上限）", 4),
             new BuffDef("爆裂彈頭", "擊殺時爆炸，造成 {0} 範圍傷害", 35),
             new BuffDef("僚機無人機", "無人機 +{0} 架，自動射擊附近敵人", 1),
             new BuffDef("無人機火控", "無人機傷害 +{0}%", 35),
