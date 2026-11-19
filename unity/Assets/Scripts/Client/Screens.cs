@@ -1483,12 +1483,204 @@ namespace RiftWard.Client
         /// Sub-navigation inside the 社交 tab, with dots for friend requests and unread mail.
         void SocialTabs(RectTransform pad, int active)
         {
-            SubTabs(pad, new[] { "好友", "信箱", "聊天" }, new Action[] { () => ShowFriends(), () => ShowMail(), ShowChat }, active);
+            SubTabs(pad, new[] { "好友", "信箱", "聊天", "回饋" }, new Action[] { () => ShowFriends(), () => ShowMail(), ShowChat, () => ShowFeedback() }, active);
             var p = app.Profile;
             bool[] waiting = { p.FriendRequests > 0 || app.PendingInvite != null, p.MailUnread + p.MailClaimable > 0, false };
             for (int i = 0; i < waiting.Length; i++)
                 if (waiting[i] && i != active)
                     Ui.Box(pad, Palette.Amber, "Badge").rectTransform.Place(new Vector2(0, 1), new Vector2(i * 156 + 134, -8), new Vector2(7, 7), new Vector2(0, 1));
+        }
+
+        // ---- 意見回饋 (players write to the admins; replies arrive as system mail)
+
+        static readonly (string id, string name)[] FeedbackKinds = { ("suggest", "建議"), ("bug", "錯誤回報"), ("other", "其他") };
+        static string FeedbackKindName(string id) => FeedbackKinds.FirstOrDefault(k => k.id == id).name ?? "其他";
+        string feedbackKind = "suggest";
+        List<Dictionary<string, object>> myFeedback;
+
+        static InputField MultiLine(Transform parent, string placeholder, int limit)
+        {
+            var field = Widgets.Input(parent, placeholder, false, limit);
+            field.lineType = InputField.LineType.MultiLineNewline;
+            field.textComponent.alignment = TextAnchor.UpperLeft;
+            field.textComponent.horizontalOverflow = HorizontalWrapMode.Wrap;
+            ((Text)field.placeholder).alignment = TextAnchor.UpperLeft;
+            field.textComponent.rectTransform.offsetMin = new Vector2(16, 10); field.textComponent.rectTransform.offsetMax = new Vector2(-16, -10);
+            field.placeholder.rectTransform.offsetMin = new Vector2(16, 10); field.placeholder.rectTransform.offsetMax = new Vector2(-16, -10);
+            return field;
+        }
+
+        /// Player-written text: shown as typed, never as markup.
+        static Text Plain(Transform parent, string text, int size, Color color)
+        {
+            var t = Ui.Label(parent, text, size, color);
+            t.supportRichText = false;
+            return t;
+        }
+
+        static float TextHeight(string text, int size, float width) =>
+            Mathf.Max(1, Mathf.CeilToInt(text.Length * size * 1.02f / Mathf.Max(1f, width))) * size * 1.5f + 4;
+
+        public void ShowFeedback(bool fetch = true)
+        {
+            SocialPage("feedback", 3, out var pad);
+            // Left: write one.
+            var left = Panel(pad, 0, 0.45f, Palette.Amber, "Write");
+            Ui.Label(left, "意見回饋", 22, Palette.Bone, TextAnchor.UpperLeft, true).Sized(30);
+            Ui.Label(left, "寫給管理員：建議、錯誤回報、平衡問題都可以，回覆會寄到你的信箱。", 13, Palette.Muted).Sized(40);
+            var kinds = Ui.HStack(left, 8).Sized(38);
+            foreach (var (id, name) in FeedbackKinds)
+            {
+                bool on = feedbackKind == id;
+                string pick = id;
+                Ui.Button(kinds, name, () => { feedbackKind = pick; ShowFeedback(false); }, 14, on ? Palette.Amber : Palette.Muted,
+                    on ? new Color(Palette.Amber.r, Palette.Amber.g, Palette.Amber.b, 0.1f) : null, on ? Palette.Amber : (Color?)null);
+            }
+            var body = MultiLine(left, feedbackKind == "bug" ? "發生了什麼事？在哪個關卡、第幾波、做了什麼操作？" : "想對遊戲說的話（最多 500 字）", 500);
+            body.gameObject.AddComponent<LayoutElement>().flexibleHeight = 1;
+            Button send = null;
+            send = PrimaryButton(left, "送出回饋", () =>
+            {
+                string text = body.text.Trim();
+                if (text.Length < 5) { SocialStatus("內容至少 5 個字", true); return; }
+                send.interactable = false;
+                SocialStatus("送出中…");
+                app.Api.Post("/api/feedback/send", new Dictionary<string, object> { ["category"] = feedbackKind, ["body"] = text }, result =>
+                {
+                    if (Mode != "feedback") return;
+                    if (!result.Bool("ok")) { send.interactable = true; SocialStatus(result.Str("error", "送出失敗"), true); return; }
+                    myFeedback = (result.Arr("feedback") ?? new List<object>()).OfType<Dictionary<string, object>>().ToList();
+                    ShowFeedback(false);
+                    SocialStatus("已送出，感謝你的回饋！");
+                });
+            }, 17);
+            send.Sized(50);
+
+            // Right: what this player has sent, with the status and any reply.
+            var right = Panel(pad, 0.45f, 1f, Palette.Hex("8c8f93"), "Mine");
+            Ui.Label(right, "我的回饋", 22, Palette.Bone, TextAnchor.UpperLeft, true).Sized(30);
+            var list = Widgets.ScrollList(right, out _);
+            list.parent.gameObject.AddComponent<LayoutElement>().flexibleHeight = 1;
+            list.GetComponent<VerticalLayoutGroup>().padding = new RectOffset(12, 12, 10, 10);
+            list.GetComponent<VerticalLayoutGroup>().spacing = 10;
+            if (myFeedback == null) Ui.Label(list, "載入中…", 13, Palette.Muted).Sized(24);
+            else if (myFeedback.Count == 0) Ui.Label(list, "還沒有送出過回饋。", 13, Palette.Muted).Sized(24);
+            else foreach (var f in myFeedback) FeedbackCard(list, f, false);
+            if (fetch)
+                app.Api.Post("/api/feedback/mine", null, result =>
+                {
+                    if (Mode != "feedback" || !result.Bool("ok")) return;
+                    myFeedback = (result.Arr("feedback") ?? new List<object>()).OfType<Dictionary<string, object>>().ToList();
+                    ShowFeedback(false);
+                });
+        }
+
+        /// One feedback entry: category, time, status, the text, and the admin's reply. On the admin page it also
+        /// carries a reply box and the handle / reopen buttons.
+        void FeedbackCard(RectTransform list, Dictionary<string, object> f, bool admin)
+        {
+            bool done = f.Str("status") == "done";
+            string text = f.Str("body"), reply = f.Str("reply");
+            const float width = 560f;
+            var card = Ui.Box(list, new Color(1, 1, 1, done ? 0.02f : 0.05f), "Feedback").rectTransform;
+            var st = Ui.VStack(card, 4);
+            st.Fill();
+            st.GetComponent<VerticalLayoutGroup>().padding = new RectOffset(14, 14, 10, 10);
+            var head = Ui.Rect(st, "Head").Sized(20);
+            string who = admin ? f.Str("username") + "  ·  " : "";
+            Ui.Label(head, $"{who}{FeedbackKindName(f.Str("category"))}  ·  {FriendPresence.Ago((long)(f.TryGetValue("created", out var c) && c is double cd ? cd : 0))}", 12,
+                f.Str("category") == "bug" ? Palette.Danger : Palette.Amber).rectTransform.Fill();
+            Ui.Label(head, done ? "已處理" : "未處理", 12, done ? Palette.Hex("5dd39e") : Palette.Muted, TextAnchor.MiddleRight).rectTransform.Fill();
+            float h = TextHeight(text, 14, width);
+            Plain(st, text, 14, Palette.Bone).Sized(h);
+            float total = 10 + 20 + 4 + h + 10;
+            if (reply != "")
+            {
+                float rh = TextHeight("管理員回覆：" + reply, 13, width);
+                Plain(st, "管理員回覆：" + reply, 13, Palette.Hex("82aaff")).Sized(rh);
+                total += 4 + rh;
+            }
+            if (admin)
+            {
+                var replyBox = Widgets.Input(st, "回覆內容（留空＝只標記已處理）", false, 500);
+                replyBox.Sized(36);
+                var actions = Ui.HStack(st, 8).Sized(32);
+                int id = Mathf.RoundToInt(f.TryGetValue("id", out var idv) && idv is double d ? (float)d : 0);
+                Ui.Button(actions, "回覆並標記已處理", () => ResolveFeedback(id, replyBox.text.Trim(), false), 13, Palette.Amber);
+                if (done) Ui.Button(actions, "重新開啟", () => ResolveFeedback(id, "", true), 13, Palette.Muted);
+                total += 4 + 36 + 4 + 32;
+            }
+            card.gameObject.AddComponent<LayoutElement>().preferredHeight = total;
+        }
+
+        string feedbackFilter = "open";
+        List<Dictionary<string, object>> adminFeedback;
+        int adminFeedbackOpen;
+
+        /// Admin: every player's feedback, filtered by status, newest first.
+        public void ShowFeedbackAdmin(string filter, bool fetch = true)
+        {
+            if (!app.Profile.Admin) return;
+            feedbackFilter = filter;
+            var r = Begin("feedbackadmin");
+            var pad = Ui.Rect(r, "Pad").Fill();
+            pad.offsetMin = new Vector2(48, 40); pad.offsetMax = new Vector2(-48, -40);
+            Ui.Button(pad, "← 返回管理員控制台", ShowAdmin, 15)
+                .GetComponent<RectTransform>().Place(new Vector2(0, 1), Vector2.zero, new Vector2(190, 32), new Vector2(0, 1));
+            Ui.Label(pad, "玩家回饋", 40, Palette.Bone, TextAnchor.UpperLeft, true).rectTransform.Place(new Vector2(0, 1), new Vector2(0, -40), new Vector2(500, 52), new Vector2(0, 1));
+            var tabs = Ui.Rect(pad, "Tabs").Place(new Vector2(1, 1), new Vector2(0, -44), new Vector2(420, 40), new Vector2(1, 1));
+            var row = Ui.HStack(tabs, 8);
+            row.Fill();
+            foreach (var (id, name) in new[] { ("open", $"未處理（{adminFeedbackOpen}）"), ("done", "已處理"), ("", "全部") })
+            {
+                bool on = filter == id;
+                string pick = id;
+                Ui.Button(row, name, () => ShowFeedbackAdmin(pick), 14, on ? Palette.Amber : Palette.Muted,
+                    on ? new Color(Palette.Amber.r, Palette.Amber.g, Palette.Amber.b, 0.1f) : null, on ? Palette.Amber : (Color?)null);
+            }
+            var box = Ui.Box(pad, Palette.Sheet, "List").rectTransform;
+            box.anchorMin = Vector2.zero; box.anchorMax = Vector2.one; box.offsetMin = Vector2.zero; box.offsetMax = new Vector2(0, -104);
+            TopRule(box, Palette.Amber);
+            var list = Widgets.ScrollList(box, out _);
+            list.parent.GetComponent<RectTransform>().Fill();
+            list.GetComponent<VerticalLayoutGroup>().padding = new RectOffset(20, 20, 16, 16);
+            list.GetComponent<VerticalLayoutGroup>().spacing = 12;
+            feedbackAdminStatus = Ui.Label(pad, "", 14, Palette.Amber, TextAnchor.MiddleLeft);
+            feedbackAdminStatus.rectTransform.Place(new Vector2(0, 1), new Vector2(520, -50), new Vector2(400, 30), new Vector2(0, 1));
+            if (adminFeedback == null) Ui.Label(list, "載入中…", 14, Palette.Muted).Sized(26);
+            else if (adminFeedback.Count == 0) Ui.Label(list, filter == "open" ? "目前沒有未處理的回饋。" : "沒有回饋。", 14, Palette.Muted).Sized(26);
+            else foreach (var f in adminFeedback) FeedbackCard(list, f, true);
+            if (fetch)
+                app.Api.Post("/api/admin/feedback", new Dictionary<string, object> { ["status"] = filter }, result =>
+                {
+                    if (Mode != "feedbackadmin") return;
+                    if (!result.Bool("ok")) { feedbackAdminStatus.color = Palette.Danger; feedbackAdminStatus.text = result.Str("error", "無法讀取回饋"); return; }
+                    adminFeedback = (result.Arr("feedback") ?? new List<object>()).OfType<Dictionary<string, object>>().ToList();
+                    adminFeedbackOpen = result.Int("open");
+                    ShowFeedbackAdmin(filter, false);
+                });
+        }
+
+        Text feedbackAdminStatus;
+
+        void ResolveFeedback(int id, string reply, bool reopen)
+        {
+            if (feedbackAdminStatus != null) { feedbackAdminStatus.color = Palette.Amber; feedbackAdminStatus.text = "處理中…"; }
+            app.Api.Post("/api/admin/feedback/resolve", new Dictionary<string, object> { ["id"] = id, ["reply"] = reply, ["reopen"] = reopen }, result =>
+            {
+                if (Mode != "feedbackadmin") return;
+                if (!result.Bool("ok")) { feedbackAdminStatus.color = Palette.Danger; feedbackAdminStatus.text = result.Str("error", "處理失敗"); return; }
+                ShowFeedbackAdmin(feedbackFilter);
+                feedbackAdminStatus.text = reopen ? "已重新開啟。" : reply != "" ? "已回覆並寄信給玩家。" : "已標記為已處理。";
+            });
+        }
+
+        /// Automated screenshots only: the feedback pages with sample entries.
+        public void DemoFeedback(List<Dictionary<string, object>> mine, List<Dictionary<string, object>> all, int open)
+        {
+            myFeedback = mine;
+            ShowFeedback(false);
+            adminFeedback = all; adminFeedbackOpen = open;
         }
 
         RectTransform SocialPage(string mode, int tab, out RectTransform pad)
@@ -2260,7 +2452,10 @@ namespace RiftWard.Client
             Icons.Key(keyRow, 34, weaponPool ? Gear.WeaponKeyColor : Gear.GearKeyColor).rectTransform.Place(new Vector2(0, 1), new Vector2(0, -20), new Vector2(34, 34), new Vector2(0, 1));
             Ui.Label(keyRow, keys.ToString(), 36, accent, TextAnchor.UpperLeft, true).rectTransform.Place(new Vector2(0, 1), new Vector2(42, -16), new Vector2(160, 42), new Vector2(0, 1));
             int pityLeft = limitedPool ? p.LimitedPity : weaponPool ? p.WeaponPity : p.GearPity;
-            Ui.Label(s, pityLeft <= 1 ? "保底：下一抽必出傳奇以上！" : $"保底：再 {pityLeft} 抽內必出傳奇以上", 13, pityLeft <= 10 ? Gear.RarityColors[3] : Palette.Muted, TextAnchor.UpperLeft, pityLeft <= 10).Sized(18);
+            // The limited supply's pity is a 神話 within 80; the regular supplies' is 傳奇+ within 50.
+            string pityPrize = limitedPool ? "神話" : "傳奇以上";
+            Ui.Label(s, pityLeft <= 1 ? $"保底：下一抽必出{pityPrize}！" : $"保底：再 {pityLeft} 抽內必出{pityPrize}", 13,
+                pityLeft <= 10 ? Gear.RarityColors[limitedPool ? 4 : 3] : Palette.Muted, TextAnchor.UpperLeft, pityLeft <= 10).Sized(18);
             var odds = Ui.HStack(s, 4).Sized(20);
             float[] weights = { 50f, 33f, 14f, 2.5f, 0.5f };   // mirrors RARITY_WEIGHTS in server/service.py
             for (int i = 0; i < Gear.RarityNames.Length; i++) Ui.Label(odds, $"{Gear.RarityNames[i]} {weights[i]:0.#}%", 12, Gear.RarityColors[i]);
@@ -2528,6 +2723,8 @@ namespace RiftWard.Client
             Ui.Label(pad, "管理員控制台", 40, Palette.Bone, TextAnchor.UpperLeft, true).rectTransform.Place(new Vector2(0, 1), new Vector2(0, -40), new Vector2(500, 52), new Vector2(0, 1));
             Ui.Button(pad, "管理員能力", ShowAbilityOverlay, 15, Palette.Danger, new Color(0, 0, 0, 0), Palette.Danger)
                 .GetComponent<RectTransform>().Place(new Vector2(1, 1), new Vector2(0, -38), new Vector2(140, 40), new Vector2(1, 1));
+            Ui.Button(pad, "玩家回饋", () => ShowFeedbackAdmin("open"), 15, Palette.Amber, new Color(0, 0, 0, 0), Palette.Amber)
+                .GetComponent<RectTransform>().Place(new Vector2(1, 1), new Vector2(-152, -38), new Vector2(140, 40), new Vector2(1, 1));
 
             var grant = Ui.Box(pad, Palette.Sheet, "Grant").rectTransform;
             grant.anchorMin = new Vector2(0, 0); grant.anchorMax = new Vector2(0.36f, 1);

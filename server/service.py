@@ -35,6 +35,10 @@ LIMITED_WEAPONS = {"minigun"}   # only from a limited supply drop: never in WEAP
 # 限定補給: same rarity odds and 50-draw pity as the weapon supply (its own counter). A 神話 is the limited weapon
 # half the time; when it is not (歪), the next 神話 is guaranteed to be the limited weapon.
 LIMITED_MYTH_SHARE = 0.5
+LIMITED_PITY = 80   # the 80th draw without a 神話 is a 神話 (replaces the weapon supply's 50-draw 傳奇+ pity here)
+# 意見回饋: players write to the admins; a reply goes back as system mail.
+FEEDBACK_CATEGORIES = {"suggest": "建議", "bug": "錯誤回報", "other": "其他"}
+FEEDBACK_MAX = 500
 LIMITED_MAX_DAYS = 90
 UPGRADE_STATS = ("damage", "mag", "reload")
 MAX_UPGRADE = 10      # weapon enhancement cap per stat; levels past SOFT_UPGRADE cost more and give half a step
@@ -293,6 +297,16 @@ def roll_rarity(rng, pity):
     return rarity, 0 if rarity >= 3 else pity + 1
 
 
+def roll_limited_rarity(rng, pity):
+    """限定補給: returns (rarity, new pity count). The count runs until a 神話; the LIMITED_PITY-th draw without
+    one is a 神話."""
+    if pity + 1 >= LIMITED_PITY:
+        rarity = len(RARITIES) - 1
+    else:
+        rarity = rng.choices(range(len(RARITIES)), weights=RARITY_WEIGHTS)[0]
+    return rarity, 0 if rarity == len(RARITIES) - 1 else pity + 1
+
+
 def roll_item(rng, rarity=None):
     slot = rng.choice(list(GEAR_SLOTS))
     if rarity is None:
@@ -408,6 +422,12 @@ class Store:
                     status TEXT NOT NULL, created INTEGER NOT NULL, PRIMARY KEY (requester, addressee)
                 );
                 CREATE INDEX IF NOT EXISTS friendship_addressee ON friendships(addressee);
+                CREATE TABLE IF NOT EXISTS feedback (
+                    id INTEGER PRIMARY KEY, account_id INTEGER NOT NULL, created INTEGER NOT NULL,
+                    category TEXT NOT NULL, body TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'open',
+                    reply TEXT NOT NULL DEFAULT '', replied INTEGER NOT NULL DEFAULT 0
+                );
+                CREATE INDEX IF NOT EXISTS feedback_account ON feedback(account_id, id);
                 CREATE TABLE IF NOT EXISTS settings (
                     key TEXT PRIMARY KEY, value TEXT NOT NULL
                 );
@@ -511,7 +531,8 @@ class Store:
         result["talents"] = talents
         result["talent_points"] = max(0, level - 1 - sum(talents.values()))
         pity = self._pity(account_id)
-        result["pity"] = {pool: PITY_LIMIT - count for pool, count in pity.items()}   # draws left until 傳奇+ is guaranteed
+        # Draws left until the pity hits: 傳奇+ for the regular supplies, 神話 for the limited one.
+        result["pity"] = {pool: (LIMITED_PITY if pool == "limited" else PITY_LIMIT) - count for pool, count in pity.items()}
         banner = self.limited_banner()
         if banner:
             with self.connect() as db:
@@ -805,7 +826,8 @@ class Store:
             data = json.loads(row[0]) if row else {}
         except (TypeError, ValueError):
             data = {}
-        return {pool: max(0, min(PITY_LIMIT - 1, data.get(pool, 0))) if isinstance(data.get(pool), int) else 0 for pool in ("gear", "weapon", "limited")}
+        cap = {"gear": PITY_LIMIT, "weapon": PITY_LIMIT, "limited": LIMITED_PITY}
+        return {pool: max(0, min(cap[pool] - 1, data.get(pool, 0))) if isinstance(data.get(pool), int) else 0 for pool in cap}
 
     def _save_pity(self, account_id, pity):
         with self.connect() as db:
@@ -996,7 +1018,7 @@ class Store:
         pity = self._pity(account_id)
         results, gold, shards = [], 0, 0
         for _ in range(count):
-            rarity, pity["limited"] = roll_rarity(rng, pity["limited"])
+            rarity, pity["limited"] = roll_limited_rarity(rng, pity["limited"])
             limited = False
             if rarity == len(RARITIES) - 1:
                 if guarantee or rng.random() < LIMITED_MYTH_SHARE:
@@ -1386,6 +1408,68 @@ class Store:
             rows = db.execute("SELECT a.username, l.created, l.reason, l.rejected FROM audit l JOIN accounts a ON a.id=l.account_id "
                               "ORDER BY l.id DESC LIMIT ?", (limit,)).fetchall()
         return [dict(row) for row in rows]
+
+    # ---- 意見回饋
+    @_locked
+    def send_feedback(self, account_id: int, category, body):
+        if category not in FEEDBACK_CATEGORIES:
+            raise ValueError("請選擇回饋類別")
+        body = body.strip() if isinstance(body, str) else ""
+        if len(body) < 5:
+            raise ValueError("內容至少 5 個字")
+        if len(body) > FEEDBACK_MAX:
+            raise ValueError(f"內容最多 {FEEDBACK_MAX} 字")
+        with self.connect() as db:
+            db.execute("INSERT INTO feedback(account_id, created, category, body) VALUES(?,?,?,?)",
+                       (account_id, int(time.time()), category, body))
+        return self.my_feedback(account_id)
+
+    def my_feedback(self, account_id: int):
+        """This account's own feedback, newest first."""
+        with self.connect() as db:
+            rows = db.execute("SELECT id, created, category, body, status, reply, replied FROM feedback WHERE account_id=? ORDER BY id DESC LIMIT 50",
+                              (account_id,)).fetchall()
+        return {"feedback": [dict(r) for r in rows]}
+
+    def list_feedback(self, status=None, limit=200):
+        """Admin: every account's feedback, newest first, optionally only open or done."""
+        if status not in (None, "", "open", "done"):
+            raise ValueError("未知的狀態")
+        query = ("SELECT f.id, a.username, f.created, f.category, f.body, f.status, f.reply, f.replied FROM feedback f "
+                 "JOIN accounts a ON a.id=f.account_id")
+        args = []
+        if status:
+            query += " WHERE f.status=?"
+            args.append(status)
+        query += " ORDER BY f.id DESC LIMIT ?"
+        args.append(limit)
+        with self.connect() as db:
+            rows = db.execute(query, args).fetchall()
+            open_count = db.execute("SELECT COUNT(*) FROM feedback WHERE status='open'").fetchone()[0]
+        return {"feedback": [dict(r) for r in rows], "open": open_count}
+
+    @_locked
+    def resolve_feedback(self, feedback_id, reply="", reopen=False):
+        """Admin: marks a feedback handled (or open again); a non-empty reply is mailed to its author."""
+        if isinstance(feedback_id, bool) or not isinstance(feedback_id, int):
+            raise ValueError("找不到此回饋")
+        reply = reply.strip() if isinstance(reply, str) else ""
+        if len(reply) > FEEDBACK_MAX:
+            raise ValueError(f"回覆最多 {FEEDBACK_MAX} 字")
+        with self.connect() as db:
+            row = db.execute("SELECT account_id, category, body FROM feedback WHERE id=?", (feedback_id,)).fetchone()
+            if row is None:
+                raise ValueError("找不到此回饋")
+            if reopen:
+                db.execute("UPDATE feedback SET status='open' WHERE id=?", (feedback_id,))
+            else:
+                db.execute("UPDATE feedback SET status='done', reply=CASE WHEN ?<>'' THEN ? ELSE reply END, replied=CASE WHEN ?<>'' THEN ? ELSE replied END WHERE id=?",
+                           (reply, reply, reply, int(time.time()), feedback_id))
+        if reply and not reopen:
+            quoted = row["body"] if len(row["body"]) <= 80 else row["body"][:80] + "…"
+            self.send_mail([row["account_id"]], f"回覆你的{FEEDBACK_CATEGORIES.get(row['category'], '回饋')}",
+                           f"{reply}\n\n——你寫的內容——\n{quoted}")
+        return self.list_feedback()
 
     # ---- system mail
 
@@ -2249,6 +2333,13 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(400, {"ok": False, "error": str(exc)})
                 return
             self._json(200, {"ok": True, "reward": reward, "profile": result})
+        elif self.path in ("/api/feedback/send", "/api/feedback/mine"):
+            try:
+                result = store.send_feedback(profile["id"], data.get("category"), data.get("body")) if self.path.endswith("send") else store.my_feedback(profile["id"])
+            except ValueError as exc:
+                self._json(400, {"ok": False, "error": str(exc)})
+                return
+            self._json(200, {"ok": True, **result})
         elif self.path.startswith("/api/admin/"):
             if not profile.get("admin"):
                 self._json(403, {"ok": False, "error": "需要管理員權限"})
@@ -2273,6 +2364,16 @@ class Handler(BaseHTTPRequestHandler):
                     self._json(400, {"ok": False, "error": str(exc)})
                     return
                 self._json(200, {"ok": True, "count": count, "profile": store.profile(profile["id"])})
+            elif self.path == "/api/admin/feedback":
+                try:
+                    self._json(200, {"ok": True, **store.list_feedback(data.get("status"))})
+                except ValueError as exc:
+                    self._json(400, {"ok": False, "error": str(exc)})
+            elif self.path == "/api/admin/feedback/resolve":
+                try:
+                    self._json(200, {"ok": True, **store.resolve_feedback(data.get("id"), data.get("reply", ""), data.get("reopen") is True)})
+                except ValueError as exc:
+                    self._json(400, {"ok": False, "error": str(exc)})
             elif self.path == "/api/admin/limited":
                 try:
                     banner = store.set_limited_banner(profile["id"], data.get("weapon"), data.get("days"))

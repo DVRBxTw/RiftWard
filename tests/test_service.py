@@ -117,7 +117,7 @@ class ServiceTests(unittest.TestCase):
     def test_pity_copies_and_concurrency(self):
         account = self.register()
         aid = account["profile"]["id"]
-        self.assertEqual(account["profile"]["pity"], {"gear": 50, "weapon": 50, "limited": 50})
+        self.assertEqual(account["profile"]["pity"], {"gear": 50, "weapon": 50, "limited": service.LIMITED_PITY})
         # Pity: a run that never rolled 傳奇+ is forced up on the 50th draw.
         rng = random.Random(1)
         pity, rarity = 0, 0
@@ -511,11 +511,55 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual((len(r["weapons"]), r["profile"]["weapon_keys"]), (10, 87))
         self.assertEqual(r["profile"]["pity"]["weapon"], service.PITY_LIMIT)
         self.assertEqual(self.store.gacha_history(aid, "limited")["totals"]["limited"], 13)
+        # 80-draw pity: 79 draws without a 神話, the next one is a 神話 (here the guarantee is clear, so 50/50).
+        with self.store.connect() as db:
+            db.execute("UPDATE progress SET pity=? WHERE account_id=?", (json.dumps({"limited": service.LIMITED_PITY - 1}), aid))
+        self.assertEqual(self.store.profile(aid)["pity"]["limited"], 1)
+        r = self.call("/api/gacha/limited", {"count": 1}, auth)[1]
+        self.assertEqual(r["weapons"][0]["rarity"], 4)
+        self.assertEqual(r["profile"]["pity"]["limited"], service.LIMITED_PITY)
+        self.assertEqual(service.roll_limited_rarity(service.random.Random(1), service.LIMITED_PITY - 1), (4, 0))
         # The regular supply never gives the limited weapon.
         self.assertNotIn("minigun", service.WEAPON_WEIGHTS)
         # Closing it.
         self.assertIsNone(self.call("/api/admin/limited", {"days": 0}, auth)[1]["banner"])
         self.assertEqual(self.call("/api/gacha/limited", {"count": 1}, auth)[0], 400)
+
+    def test_feedback_to_admins_and_replies(self):
+        account = self.register()
+        auth = {"Authorization": "Bearer " + account["token"]}
+        aid = account["profile"]["id"]
+        for bad in ({"category": "suggest", "body": "短"}, {"category": "nope", "body": "這是一個建議內容"}, {"category": "bug", "body": "x" * 501}):
+            self.assertEqual(self.call("/api/feedback/send", bad, auth)[0], 400)
+        for i in range(7):   # no daily cap
+            code, r = self.call("/api/feedback/send", {"category": "bug", "body": f"  第 {i} 波會卡住，請修正  "}, auth)
+            self.assertEqual(code, 200)
+        self.assertEqual(len(r["feedback"]), 7)
+        self.assertEqual(r["feedback"][0]["body"], "第 6 波會卡住，請修正")   # trimmed, newest first
+        # Another player sees only their own.
+        self.store.register("Other_Player", "other-password-1")
+        with self.store.connect() as db:
+            other = db.execute("SELECT id FROM accounts WHERE username='Other_Player'").fetchone()[0]
+        self.assertEqual(self.store.my_feedback(other)["feedback"], [])
+        # Admin only.
+        self.assertEqual(self.call("/api/admin/feedback", {}, auth)[0], 403)
+        self.store.admin_file.write_text("beta_test" + chr(10), encoding="utf-8")
+        code, r = self.call("/api/admin/feedback", {"status": "open"}, auth)
+        self.assertEqual((code, r["open"], r["feedback"][0]["username"]), (200, 7, "Beta_Test"))
+        fid = r["feedback"][0]["id"]
+        mail_before = len(self.store._mail_rows(aid))
+        r = self.call("/api/admin/feedback/resolve", {"id": fid, "reply": "已修正，謝謝回報！"}, auth)[1]
+        self.assertEqual(r["open"], 6)
+        mine = self.store.my_feedback(aid)["feedback"][0]
+        self.assertEqual((mine["status"], mine["reply"]), ("done", "已修正，謝謝回報！"))
+        mails = self.store._mail_rows(aid)
+        self.assertEqual(len(mails), mail_before + 1)
+        self.assertIn("已修正", mails[0]["body"])
+        # Marking handled without a reply sends no mail; reopening puts it back in the open list.
+        r = self.call("/api/admin/feedback/resolve", {"id": r["feedback"][1]["id"]}, auth)[1]
+        self.assertEqual(len(self.store._mail_rows(aid)), mail_before + 1)
+        self.assertEqual(self.call("/api/admin/feedback/resolve", {"id": fid, "reopen": True}, auth)[1]["open"], 6)
+        self.assertEqual(self.call("/api/admin/feedback/resolve", {"id": 99999}, auth)[0], 400)
 
     def test_levels_talents_keys_and_gear(self):
         account = self.register()
@@ -560,8 +604,10 @@ class ServiceTests(unittest.TestCase):
         upgraded = next(i for i in up["profile"]["inventory"] if i["id"] == other["id"])
         paid = sum(service.gear_upgrade_cost(other["rarity"], n) for n in range(service.GEAR_MAX_LEVEL))
         self.assertEqual((upgraded["level"], up["profile"]["gold"]), (5, 10000 - paid))
+        base_life = round(service.GEAR_BASE_LIFE[upgraded["rarity"]] * 1.6)   # every piece's rarity life, also +60%
         for k, v in upgraded["base"].items():
-            self.assertEqual(upgraded["stats"][k], round(v * 1.6))   # +12% per level, +60% at +5
+            self.assertEqual(upgraded["stats"][k], round(v * 1.6) + (base_life if k == "hp" else 0))   # +12% per level, +60% at +5
+        self.assertEqual(upgraded["stats"]["hp"], round(upgraded["base"].get("hp", 0) * 1.6) + base_life)
         self.assertEqual(self.call("/api/gear/upgrade", {"item": other["id"]}, auth)[0], 400)
         self.assertGreater(service.gear_upgrade_cost(4, 0), service.gear_upgrade_cost(0, 0))
         gold = up["profile"]["gold"]

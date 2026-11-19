@@ -858,7 +858,7 @@ namespace RiftWard.Client
             Profile.LimitedWeapon = "minigun";
             Profile.LimitedEndsAt = System.DateTimeOffset.UtcNow.ToUnixTimeSeconds() + 6 * 86400 + 5 * 3600;
             Profile.LimitedGuarantee = true;
-            Profile.LimitedPity = 31;
+            Profile.LimitedPity = 47;
             Profile.WeaponKeys = 24;
             Screens.ShowShop();
             yield return Settle(0.5f);
@@ -866,6 +866,29 @@ namespace RiftWard.Client
             Screens.ShowAdmin();
             yield return Settle(0.4f);
             yield return Shot(folder, "unity-admin-limited");
+            // 意見回饋: the player's page and the admin list, with sample entries.
+            Dictionary<string, object> Fb(int id, string who, string kind, string text, string status, string reply, int hoursAgo) => new Dictionary<string, object>
+            {
+                ["id"] = (double)id, ["username"] = who, ["category"] = kind, ["body"] = text, ["status"] = status, ["reply"] = reply,
+                ["created"] = (double)(System.DateTimeOffset.UtcNow.ToUnixTimeSeconds() - hoursAgo * 3600),
+            };
+            var mineFb = new List<Dictionary<string, object>>
+            {
+                Fb(3, "DVRBXTW", "bug", "熔核工廠第 14 波，Boss 跳躍落地時我卡進牆裡出不來，只能等死。", "open", "", 2),
+                Fb(1, "DVRBXTW", "suggest", "希望可以有排行榜看每週無盡模式的最高波數。", "done", "好建議！無盡排行榜已加入任務簡報頁。", 50),
+            };
+            var allFb = new List<Dictionary<string, object>>
+            {
+                Fb(3, "DVRBXTW", "bug", "熔核工廠第 14 波，Boss 跳躍落地時我卡進牆裡出不來，只能等死。", "open", "", 2),
+                Fb(2, "NightOwl", "suggest", "狙擊槍打身體太痛苦了，可以讓開鏡後的身體傷害高一點嗎？", "open", "", 5),
+                Fb(1, "Kairo_77", "other", "機槍很帥！希望之後還有其他限定武器。", "open", "", 9),
+            };
+            Screens.DemoFeedback(mineFb, allFb, 3);
+            yield return Settle(0.4f);
+            yield return Shot(folder, "unity-feedback");
+            Screens.ShowFeedbackAdmin("open", false);
+            yield return Settle(0.4f);
+            yield return Shot(folder, "unity-feedback-admin");
             Profile.LimitedWeapon = ""; Profile.LimitedGuarantee = false;
             {
                 var rows = new List<Dictionary<string, object>>();
