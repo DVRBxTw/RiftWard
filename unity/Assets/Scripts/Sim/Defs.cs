@@ -129,6 +129,8 @@ namespace RiftWard.Sim
         public static int XpNeed(int level, bool endless) => XpForLevel(endless ? Mathf.Min(level, EndlessXpLevelCap) : level);
         /// 無盡 damage picks beyond the normal cap multiply damage by 1 + this × rarity instead of adding 20%.
         public const float EndlessDamagePick = 0.12f;
+        /// 無盡 life picks beyond the normal cap multiply max life by 1 + this × rarity instead of adding 30.
+        public const float EndlessLifePick = 0.10f;
 
         /// Cover walls: center x, center z, half x, half z, height. Block movement and enemy bullets.
         public static readonly float[][] Covers =

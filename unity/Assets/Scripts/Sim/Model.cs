@@ -90,6 +90,8 @@ namespace RiftWard.Sim
         public float[] ProfileBonus;
         /// Shield talent: max shield × (1 + HpPct), applied at mission start and to every 強化護盾 pick.
         public float HpPct;
+        /// Damage reduction from gear (enhancement and 突破): applied after the in-mission armour, outside its cap.
+        public float GearDefense;
         /// Aiming down sights (right mouse with a gun): tighter spread, slower walk.
         public bool Aiming;
         public bool Melee => Defs.Weapons.TryGetValue(WeaponId, out var w) && w.Melee;

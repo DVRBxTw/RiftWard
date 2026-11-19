@@ -225,14 +225,34 @@ namespace RiftWard.Tests
         }
 
         [Test]
-        public void GearDefenseStartsAsArmourAndSharesTheCap()
+        public void GearDefenseIsItsOwnLayerOutsideTheArmourCap()
         {
             var sim = NewMission();
             var a = sim.Actors[1];
+            sim.Enemies.Clear();
             sim.ApplyProfileBonus(1, 0, 0, 0, 0, 0, 0, 22f);
-            Assert.AreEqual(0.22f, a.Armor, 1e-4f);
+            Assert.AreEqual(0.22f, a.GearDefense, 1e-4f);
             for (int i = 0; i < 10; i++) sim.ApplyBuff(1, Defs.BuffArmor + 200);
-            Assert.AreEqual(Defs.MaxArmor, a.Armor, 1e-4f, "gear defense and the in-mission pick share the 60% cap");
+            Assert.AreEqual(Defs.MaxArmor, a.Armor, 1e-4f);
+            sim.Enemies[999] = new Enemy { Id = 999, Position = a.Position + new Vector3(15, 0, 15), Hp = 9999, MaxHp = 9999, Shoots = false, MeleeCooldown = 99f };
+            a.Hp = a.MaxHp;
+            float hp = a.Hp;
+            sim.Bullets[1] = new Bullet { Id = 1, Position = a.Position + Vector3.up * 0.9f, Velocity = Vector3.zero, Damage = 100f, Kind = BulletKind.Enemy };
+            sim.Tick(0.01f);
+            Assert.AreEqual(hp - 100f * 0.4f * 0.78f, a.Hp, 0.05f, "60% armour, then 22% gear defense");
+        }
+
+        [Test]
+        public void EndlessLifePicksCompoundPastTheCap()
+        {
+            var sim = NewMission();
+            sim.Endless = true;
+            var a = sim.Actors[1];
+            for (int i = 0; i < Defs.BuffMaxStacks[3]; i++) sim.ApplyBuff(1, 3);
+            Assert.AreEqual(100f + 30f * Defs.BuffMaxStacks[3], a.MaxHp, 0.01f, "normal stacks add 30");
+            float capped = a.MaxHp;
+            sim.ApplyBuff(1, 3);
+            Assert.AreEqual(capped + Mathf.Round(capped * Defs.EndlessLifePick), a.MaxHp, 0.01f, "past the cap a pick grows by a share");
         }
 
         [Test]

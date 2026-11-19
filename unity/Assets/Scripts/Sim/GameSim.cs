@@ -81,7 +81,7 @@ namespace RiftWard.Sim
             a.Hp = a.MaxHp = 100f;
             a.Yaw = 0; a.VerticalVelocity = 0; a.FireCooldown = 0; a.DashCooldown = 0; a.DashLeft = 0;
             a.Speed = Defs.BaseSpeed; a.DamageMult = 1; a.RateMult = 1; a.ReloadMult = 1; a.SkillMult = 1;
-            a.MagBonus = 0; a.Regen = 0; a.Armor = 0; a.Critical = 0; a.Lifesteal = 0; a.Explode = 0; a.HealBudget = 0; System.Array.Clear(a.BuffStacks, 0, a.BuffStacks.Length);
+            a.MagBonus = 0; a.Regen = 0; a.Armor = 0; a.GearDefense = 0; a.Critical = 0; a.Lifesteal = 0; a.Explode = 0; a.HealBudget = 0; System.Array.Clear(a.BuffStacks, 0, a.BuffStacks.Length);
             a.SkillCooldown = 0; a.Revive = 0; a.Slot = 0; a.Reload = 0;
             a.StatKills = 0; a.StatHeadshots = 0; a.StatShots = 0; a.StatHits = 0; a.StatDamage = 0;
             a.StatDowns = 0; a.StatRevives = 0; a.StatBossKills = 0; a.StatEliteKills = 0; a.WasAlive = true; a.AimFlags = 0;
@@ -125,7 +125,8 @@ namespace RiftWard.Sim
             float hp = a.ProfileBonus[0], damagePct = a.ProfileBonus[1], speedPct = a.ProfileBonus[2], reloadPct = a.ProfileBonus[3], critPct = a.ProfileBonus[4];
             a.HpPct = a.ProfileBonus.Length > 5 ? a.ProfileBonus[5] / 100f : 0f;
             a.MaxHp = (a.MaxHp + hp) * (1f + a.HpPct);
-            if (a.ProfileBonus.Length > 6) a.Armor = Mathf.Min(Defs.MaxArmor, a.Armor + a.ProfileBonus[6] / 100f);   // gear defense
+            // Gear defense: its own layer on top of the in-mission armour, so it still counts once that is capped.
+            a.GearDefense = a.ProfileBonus.Length > 6 ? Mathf.Clamp(a.ProfileBonus[6] / 100f, 0f, 0.4f) : 0f;
             a.Hp = a.MaxHp;
             a.DamageMult *= 1f + damagePct / 100f;
             a.Speed *= 1f + speedPct / 100f;
@@ -400,8 +401,8 @@ namespace RiftWard.Sim
         {
             foreach (var a in Actors.Values)
             {
-                if (baseline.TryGetValue(a.Id, out var before) && a.Armor > 0 && a.Hp < before && before > 0)
-                    a.Hp = before - (before - a.Hp) * (1f - a.Armor);
+                if (baseline.TryGetValue(a.Id, out var before) && (a.Armor > 0 || a.GearDefense > 0) && a.Hp < before && before > 0)
+                    a.Hp = before - (before - a.Hp) * (1f - a.Armor) * (1f - a.GearDefense);
                 if (a.Hp < 0) a.Hp = 0;
                 baseline[a.Id] = a.Hp;
             }
@@ -1576,7 +1577,9 @@ namespace RiftWard.Sim
                 case 1: a.RateMult = Mathf.Max(0.3f, a.RateMult * (1f - 0.15f * m)); break;
                 case 2: a.Speed = Mathf.Min(12f, a.Speed * (1f + 0.12f * m)); break;
                 case 3:
-                    float bonus = Mathf.Round(30 * m * (1f + a.HpPct));   // the shield talent grows every pick too
+                    float bonus = Mathf.Round(30 * m * (1f + a.HpPct));   // the life talent grows every pick too
+                    // 無盡: past the normal cap a pick grows max life by a share, keeping pace with enemy damage.
+                    if (Endless && a.BuffStacks[3] > Defs.BuffMaxStacks[3]) bonus = Mathf.Round(a.MaxHp * Defs.EndlessLifePick * m);
                     a.MaxHp += bonus;
                     a.Hp = Mathf.Min(a.MaxHp, a.Hp + bonus);
                     break;
