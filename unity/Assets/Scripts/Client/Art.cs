@@ -140,8 +140,9 @@ namespace RiftWard.Client
                 Build.Cube(parent, corner, new Vector3(0.1f, h + 0.02f, 0.1f), edge, 0f, false);
                 Build.Cube(parent, new Vector3(corner.x, top + 0.09f, corner.z), new Vector3(0.07f, 0.05f, 0.07f), accent, 4f, false);
             }
-            // Band along the two long faces.
             bool alongX = size.x >= size.z;
+            if (GameSettings.Quality >= 2) CoverDetail(parent, centre, size, cover, alongX);
+            // Band along the two long faces.
             float length = alongX ? size.x : size.z, depth = alongX ? size.z : size.x;
             float bandY = Mathf.Min(top - 0.2f, centre.y + h * 0.15f);
             foreach (int side in new[] { -1, 1 })
@@ -163,6 +164,67 @@ namespace RiftWard.Client
                 {
                     var strip = Build.Cube(parent, face + Vector3.up * (h * 0.45f), alongX ? new Vector3(length * 0.8f, 0.035f, 0.012f) : new Vector3(0.012f, 0.035f, length * 0.8f), accent, 2.2f, false);
                     strip.name = "AccentStrip";
+                }
+            }
+        }
+
+        /// Cover detail: vertical panel seams and a bolt row on the long faces, and chunks knocked off two corners.
+        static void CoverDetail(Transform parent, Vector3 centre, Vector3 size, Color cover, bool alongX)
+        {
+            Color seam = cover * 0.5f; seam.a = 1f;
+            Color bolt = cover * 1.25f; bolt.a = 1f;
+            Color chip = cover * 0.72f; chip.a = 1f;
+            float h = size.y, top = centre.y + h / 2f;
+            float length = alongX ? size.x : size.z, depth = alongX ? size.z : size.x;
+            int panels = Mathf.Max(1, Mathf.RoundToInt(length / 1.4f));
+            foreach (int side in new[] { -1, 1 })
+            {
+                for (int i = 1; i < panels; i++)
+                {
+                    float offset = -length / 2f + length * i / panels;
+                    Vector3 at = alongX ? new Vector3(centre.x + offset, centre.y, centre.z + side * (depth / 2f + 0.004f)) : new Vector3(centre.x + side * (depth / 2f + 0.004f), centre.y, centre.z + offset);
+                    Build.Cube(parent, at, alongX ? new Vector3(0.025f, h * 0.9f, 0.01f) : new Vector3(0.01f, h * 0.9f, 0.025f), seam, 0f, false);
+                }
+                for (int i = 0; i < panels; i++)
+                {
+                    float offset = -length / 2f + length * (i + 0.5f) / panels;
+                    foreach (float dy in new[] { -0.3f, 0.3f })
+                    {
+                        Vector3 at = alongX ? new Vector3(centre.x + offset + dy, top - 0.16f, centre.z + side * (depth / 2f + 0.012f)) : new Vector3(centre.x + side * (depth / 2f + 0.012f), top - 0.16f, centre.z + offset + dy);
+                        Build.Cube(parent, at, new Vector3(0.05f, 0.05f, 0.05f), bolt, 0f, false);
+                    }
+                }
+            }
+            // Battle damage: rubble at the foot of two corners.
+            foreach (var (sx, sz) in new[] { (1, 1), (-1, -1) })
+            {
+                var foot = new Vector3(centre.x + sx * (size.x / 2f + 0.18f), 0.08f, centre.z + sz * (size.z / 2f + 0.12f));
+                for (int k = 0; k < 3; k++)
+                {
+                    var c = Build.Cube(parent, foot + new Vector3(k * 0.13f * sx, 0.02f * k, -k * 0.09f * sz), Vector3.one * (0.16f - 0.03f * k), chip, 0f, false);
+                    c.transform.localRotation = Quaternion.Euler(12 * k, 37 * k + 10, 8);
+                }
+            }
+        }
+
+        /// Arena boundary at 高 quality: a post every 4 m with a lit cap, a top rail and a darker base course.
+        public static void DressBoundary(Transform parent, Color wall, Color accent, bool industrial)
+        {
+            Color post = wall * 0.7f; post.a = 1f;
+            Color rail = wall * 1.15f; rail.a = 1f;
+            foreach (int side in new[] { -1, 1 })
+            {
+                foreach (bool alongX in new[] { true, false })
+                {
+                    Vector3 line = alongX ? new Vector3(0, 0, side * 23f) : new Vector3(side * 23f, 0, 0);
+                    Build.Cube(parent, line + Vector3.up * 1.03f, alongX ? new Vector3(46.2f, 0.06f, 0.5f) : new Vector3(0.5f, 0.06f, 46.2f), rail, 0f, false);
+                    Build.Cube(parent, line + Vector3.up * 0.08f, alongX ? new Vector3(46.2f, 0.16f, 0.52f) : new Vector3(0.52f, 0.16f, 46.2f), post, 0f, false);
+                    for (int i = -5; i <= 5; i++)
+                    {
+                        Vector3 at = line + (alongX ? new Vector3(i * 4.2f, 0, 0) : new Vector3(0, 0, i * 4.2f));
+                        Build.Cube(parent, at + Vector3.up * 0.6f, new Vector3(0.32f, 1.2f, 0.32f), post, 0f, false);
+                        Build.Cube(parent, at + Vector3.up * 1.24f, new Vector3(0.18f, 0.05f, 0.18f), industrial ? Palette.Hex("e0a32e") : accent, 2.5f, false);
+                    }
                 }
             }
         }

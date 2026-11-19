@@ -18,24 +18,27 @@ namespace RiftWard.Client
         {
             public Color Sky, Fog, Ambient, Sun, Ground, Cover, Wall;
             public float FogDensity, SunIntensity;
+            /// Gradient sky (the scene's procedural skybox, tinted per region): exposure and atmosphere thickness.
+            /// 0 exposure keeps the flat colour: the night and void regions read better without a daylight sky.
+            public float SkyExposure, SkyThickness;
         }
 
         static readonly Look[] Looks =
         {
-            new Look { Sky = Palette.Hex("5b9bd5"), Fog = Palette.Hex("9fc3d9"), FogDensity = 0.0045f, Ambient = Palette.Hex("66786a"), Sun = Palette.Hex("fff0d0"), SunIntensity = 1.1f,
+            new Look { Sky = Palette.Hex("5b9bd5"), Fog = Palette.Hex("9fc3d9"), FogDensity = 0.0045f, Ambient = Palette.Hex("66786a"), Sun = Palette.Hex("fff0d0"), SunIntensity = 1.1f, SkyExposure = 1.15f, SkyThickness = 0.9f,
                 Ground = Palette.Hex("3a6326"), Cover = Palette.Hex("8a8270"), Wall = Palette.Hex("6e5c46") },
-            new Look { Sky = Palette.Hex("2a1510"), Fog = Palette.Hex("3a1d12"), FogDensity = 0.018f, Ambient = Palette.Hex("6b4a3a"), Sun = Palette.Hex("ffc9a0"), SunIntensity = 0.9f,
+            new Look { Sky = Palette.Hex("2a1510"), Fog = Palette.Hex("3a1d12"), FogDensity = 0.018f, Ambient = Palette.Hex("6b4a3a"), Sun = Palette.Hex("ffc9a0"), SunIntensity = 0.9f, SkyExposure = 0f, SkyThickness = 0f,
                 Ground = Palette.Hex("493429"), Cover = Palette.Hex("4a3a32"), Wall = Palette.Hex("3e3029") },
-            new Look { Sky = Palette.Hex("160f28"), Fog = Palette.Hex("24183d"), FogDensity = 0.018f, Ambient = Palette.Hex("4f4670"), Sun = Palette.Hex("d9c9ff"), SunIntensity = 0.85f,
+            new Look { Sky = Palette.Hex("160f28"), Fog = Palette.Hex("24183d"), FogDensity = 0.018f, Ambient = Palette.Hex("4f4670"), Sun = Palette.Hex("d9c9ff"), SunIntensity = 0.85f, SkyExposure = 0f, SkyThickness = 0f,
                 Ground = Palette.Hex("352c4c"), Cover = Palette.Hex("3a3450"), Wall = Palette.Hex("332d48") },
             // 霜冕要塞: pale overcast sky, drifting snow fog, cold blue light over a snowfield.
-            new Look { Sky = Palette.Hex("aebfd0"), Fog = Palette.Hex("c9d6e2"), FogDensity = 0.016f, Ambient = Palette.Hex("8a9cb0"), Sun = Palette.Hex("dfe9ff"), SunIntensity = 0.9f,
+            new Look { Sky = Palette.Hex("aebfd0"), Fog = Palette.Hex("c9d6e2"), FogDensity = 0.016f, Ambient = Palette.Hex("8a9cb0"), Sun = Palette.Hex("dfe9ff"), SunIntensity = 0.9f, SkyExposure = 1.0f, SkyThickness = 0.55f,
                 Ground = Palette.Hex("c7d2dc"), Cover = Palette.Hex("6b7684"), Wall = Palette.Hex("4e5866") },
             // 天穹船塢: sunset above the clouds, warm low sun on steel decking.
-            new Look { Sky = Palette.Hex("e2875a"), Fog = Palette.Hex("f0a57a"), FogDensity = 0.006f, Ambient = Palette.Hex("7a6070"), Sun = Palette.Hex("ffc79a"), SunIntensity = 1.15f,
+            new Look { Sky = Palette.Hex("e2875a"), Fog = Palette.Hex("f0a57a"), FogDensity = 0.006f, Ambient = Palette.Hex("7a6070"), Sun = Palette.Hex("ffc79a"), SunIntensity = 1.15f, SkyExposure = 1.1f, SkyThickness = 1.15f,
                 Ground = Palette.Hex("4a4e57"), Cover = Palette.Hex("5d6470"), Wall = Palette.Hex("3a3e46") },
             // 赫利奧王座: crimson-black void, golden light, dark marble.
-            new Look { Sky = Palette.Hex("1a0608"), Fog = Palette.Hex("2a0c10"), FogDensity = 0.014f, Ambient = Palette.Hex("6a4a40"), Sun = Palette.Hex("ffd9a0"), SunIntensity = 1.0f,
+            new Look { Sky = Palette.Hex("1a0608"), Fog = Palette.Hex("2a0c10"), FogDensity = 0.014f, Ambient = Palette.Hex("6a4a40"), Sun = Palette.Hex("ffd9a0"), SunIntensity = 1.0f, SkyExposure = 0f, SkyThickness = 0f,
                 Ground = Palette.Hex("1e1a1c"), Cover = Palette.Hex("3a2e2a"), Wall = Palette.Hex("2a2224") },
         };
 
@@ -67,13 +70,30 @@ namespace RiftWard.Client
             RenderSettings.fogMode = FogMode.ExponentialSquared;
             RenderSettings.ambientMode = UnityEngine.Rendering.AmbientMode.Trilight;
             camera.clearFlags = CameraClearFlags.SolidColor;
+            // The scene's own skybox is the built-in procedural sky: an instance of it is tinted per region.
+            if (RenderSettings.skybox != null) sky = new Material(RenderSettings.skybox);
+            RenderSettings.sun = Sun;
         }
+
+        Material sky;
 
         public void ApplyRegion(int region)
         {
             region = Mathf.Clamp(region, 0, Looks.Length - 1);
             var look = Looks[region];
             camera.backgroundColor = look.Sky;
+            // Gradient sky with a sun at 中 quality and up; 低 keeps the flat colour.
+            if (sky != null && GameSettings.Quality >= 1 && look.SkyExposure > 0f)
+            {
+                sky.SetColor("_SkyTint", look.Sky);
+                sky.SetColor("_GroundColor", look.Fog);
+                sky.SetFloat("_Exposure", look.SkyExposure);
+                sky.SetFloat("_AtmosphereThickness", look.SkyThickness);
+                sky.SetFloat("_SunSize", 0.035f);
+                RenderSettings.skybox = sky;
+                camera.clearFlags = CameraClearFlags.Skybox;
+            }
+            else camera.clearFlags = CameraClearFlags.SolidColor;
             RenderSettings.fogColor = look.Fog;
             RenderSettings.fogDensity = look.FogDensity;
             RenderSettings.ambientSkyColor = look.Ambient * 0.85f;
@@ -106,6 +126,7 @@ namespace RiftWard.Client
                 Art.DressCover(dressing, new Vector3(c[0], c[4] / 2f, c[1]), new Vector3(c[2] * 2, c[4], c[3] * 2), look.Cover, accent, industrial);
             }
             Art.GroundVariation(dressing, new System.Random(77 + region), look.Ground);
+            if (GameSettings.Quality >= 2) Art.DressBoundary(dressing, look.Wall, accent, industrial);
             Art.AmbientParticles(dressing, region);
         }
 
@@ -126,7 +147,8 @@ namespace RiftWard.Client
                 float angle = R(rng, 0, Mathf.PI * 2f), radius = R(rng, 26, 48);
                 Tree(new Vector3(Mathf.Sin(angle) * radius, 0, Mathf.Cos(angle) * radius), R(rng, 0.8f, 1.5f), greens[rng.Next(greens.Length)]);
             }
-            for (int i = 0; i < 220; i++)
+            int blades = GameSettings.Quality >= 2 ? 560 : 220;   // denser grass at 高 quality and up
+            for (int i = 0; i < blades; i++)
             {
                 var p = new Vector3(R(rng, -22, 22), 0, R(rng, -22, 22));
                 if (GameSim.InCover(p + Vector3.up * 0.1f)) continue;

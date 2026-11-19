@@ -729,6 +729,23 @@ namespace RiftWard.Client
             ShowHome();
             yield return Settle(0.8f);
             yield return Shot(folder, "unity-home");
+            // Scene check: every region's arena from the lobby camera, interface hidden; first at 低 quality (the
+            // plain look), then at the current quality.
+            int sceneQuality = GameSettings.Quality;
+            foreach (int pass in new[] { 0, 1 })
+            {
+                GameSettings.Quality = pass == 0 ? 0 : sceneQuality;
+                for (int region = 0; region < Defs.Regions.Length; region++)
+                {
+                    Screens.Clear();
+                    Client.ShowShowcase(region);
+                    yield return Settle(0.5f);
+                    yield return Shot(folder, $"unity-region-{region}{(pass == 0 ? "-low" : "")}");
+                }
+            }
+            GameSettings.Quality = sceneQuality;
+            ShowHome();
+            yield return Settle(0.5f);
             // 16:9 at 2K with the room section on: the left column must fit without clipping.
             Screen.SetResolution(2560, 1440, FullScreenMode.Windowed);
             Screens.PreviewRoom = true;
