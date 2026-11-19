@@ -26,6 +26,10 @@ namespace RiftWard.Sim
         Ping = 18,
         /// [string username]: you just sent this account a friend request; the server tells them if they are online.
         FriendRequest = 19,
+        /// [int account id]: ask a friend who is in a room to let you in.
+        JoinRequest = 20,
+        /// [int account id][bool accept]: answer a friend's join request (accept pulls them into your room).
+        JoinAnswer = 21,
         // server → client
         Welcome = 50, Error = 51, Lobby = 52, Deploy = 53, Snapshot = 54, Events = 55, BuffOffer = 56, Finish = 57, ProfileSync = 58, Notice = 59, BackHome = 60,
         /// [byte channel][int account id][string name][string title][string text][bool admin]
@@ -38,6 +42,8 @@ namespace RiftWard.Sim
         PingMark = 64,
         /// [string name]: someone just sent you a friend request.
         FriendRequestIn = 65,
+        /// [int account id][string name]: a friend asks to join your room.
+        JoinRequestIn = 66,
     }
 
     /// Chat channels: everyone on the server, the player's room, server notices, and private messages.

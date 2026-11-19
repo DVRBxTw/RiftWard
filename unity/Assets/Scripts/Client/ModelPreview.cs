@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using UnityEngine;
 using UnityEngine.EventSystems;
 using UnityEngine.UI;
@@ -42,6 +43,7 @@ namespace RiftWard.Client
             build(model);
             SetLayer(preview.stage.gameObject);
             preview.Frame(model, tilt);
+            foreach (var trail in model.GetComponentsInChildren<TrailRenderer>()) trail.Clear();   // no streak from the reframing move
 
             foreach (var (pos, intensity, color) in new[] { (new Vector3(-1.6f, 1.8f, -2.2f), 3.2f, new Color(1f, 0.96f, 0.9f)), (new Vector3(2f, 0.6f, -1f), 1.6f, new Color(0.7f, 0.8f, 1f)), (new Vector3(0, 1.2f, 2.2f), 2.2f, Color.white) })
             {
@@ -85,7 +87,9 @@ namespace RiftWard.Client
         /// Centres the model on the pivot and scales it so its largest dimension is about 1.6 units.
         void Frame(Transform model, float tilt)
         {
-            var renderers = model.GetComponentsInChildren<Renderer>();
+            // Trails and particles have no size of their own (a fresh saber trail reports bounds at the world origin,
+            // far from this stage), so only solid meshes decide the framing.
+            var renderers = model.GetComponentsInChildren<Renderer>().Where(r => r is MeshRenderer || r is SkinnedMeshRenderer).ToArray();
             if (renderers.Length == 0) return;
             var bounds = renderers[0].bounds;
             foreach (var r in renderers) bounds.Encapsulate(r.bounds);

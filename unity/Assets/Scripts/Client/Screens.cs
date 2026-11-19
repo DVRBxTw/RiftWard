@@ -387,7 +387,7 @@ namespace RiftWard.Client
                 {
                     new AppRoot.PartyMember { Id = app.Net.LocalId, Name = app.Profile?.Username ?? "你", Weapon = app.Profile?.Loadout.Equipped.FirstOrDefault() ?? "rifle", Rarity = 3 },
                     new AppRoot.PartyMember { Id = 11, Name = "NightOwl", Weapon = "sniper", Rarity = 4 },
-                    new AppRoot.PartyMember { Id = 12, Name = "Kairo_77", Weapon = "shotgun", Rarity = 2 },
+                    new AppRoot.PartyMember { Id = 12, Name = "Kairo_77", Weapon = "saber", Rarity = 2 },
                 }
                 : app.PartyMembers;
             int leader = PreviewRoom ? app.Net.LocalId : app.LeaderId;
@@ -1414,6 +1414,7 @@ namespace RiftWard.Client
             SocialPage("friends", 0, out var pad);
             var p = app.Profile;
             friendRows.Clear();
+            friendJoin.Clear();
             var friends = (friendData?.Arr("friends") ?? new List<object>()).OfType<Dictionary<string, object>>().ToList();
             var incoming = (friendData?.Arr("incoming") ?? new List<object>()).OfType<Dictionary<string, object>>().ToList();
             var outgoing = (friendData?.Arr("outgoing") ?? new List<object>()).OfType<Dictionary<string, object>>().ToList();
@@ -1525,7 +1526,21 @@ namespace RiftWard.Client
             PaintInvite(invite, app.Net.Welcomed && FriendPresence.StateOf(id) != PresenceState.Offline);
             var whisper = Ui.Button(rt, "私訊", () => ShowWhisper(who), 14, Palette.Hex("ff8fd0"));
             whisper.GetComponent<RectTransform>().Place(new Vector2(1, 0.5f), new Vector2(-188, 0), new Vector2(68, 32), new Vector2(1, 0.5f));
+            // 申請入隊: only while the friend is in a room (or a mission) that is not yours.
+            var join = Ui.Button(rt, "申請入隊", () => { app.RequestJoin(id); SocialStatus($"已向 {who} 申請入隊"); }, 14, Palette.Amber, null, Palette.Amber);
+            join.GetComponent<RectTransform>().Place(new Vector2(1, 0.5f), new Vector2(-264, 0), new Vector2(96, 32), new Vector2(1, 0.5f));
+            friendJoin[id] = join;
+            PaintJoin(join, id);
             friendRows[id] = (status, dot, invite, rt, who ?? "");
+        }
+
+        readonly Dictionary<int, Button> friendJoin = new Dictionary<int, Button>();
+
+        void PaintJoin(Button join, int id)
+        {
+            byte state = FriendPresence.StateOf(id);
+            bool can = (app.Net.Welcomed || PreviewRoom) && (state == PresenceState.InRoom || state == PresenceState.InMission);
+            join.gameObject.SetActive(can);
         }
 
         static void PaintInvite(Button invite, bool can)
@@ -1547,6 +1562,7 @@ namespace RiftWard.Client
                 kv.Value.status.color = FriendPresence.ColorOf(kv.Key);
                 kv.Value.dot.color = FriendPresence.ColorOf(kv.Key);
                 PaintInvite(kv.Value.invite, app.Net.Welcomed && FriendPresence.StateOf(kv.Key) != PresenceState.Offline);
+                if (friendJoin.TryGetValue(kv.Key, out var join) && join != null) PaintJoin(join, kv.Key);
             }
             // The count and the online-first order were drawn before presence arrived: keep them in step too.
             int online = friendRows.Keys.Count(id => FriendPresence.StateOf(id) != PresenceState.Offline);

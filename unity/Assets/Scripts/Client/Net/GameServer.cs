@@ -470,6 +470,17 @@ namespace RiftWard.Client
                         var to = players.Values.FirstOrDefault(o => o != p && o.Profile != null && string.Equals(o.Profile.Username, friendName, StringComparison.OrdinalIgnoreCase));
                         to?.Conn.Send(Protocol.Frame(Msg.FriendRequestIn, w => w.Write(p.ChatName)));
                         break;
+                    case Msg.JoinRequest:
+                        int joinHost = r.ReadInt32();
+                        if (p.Profile == null || clock - p.LastFriendNotice < 1f) break;
+                        p.LastFriendNotice = clock;
+                        AskToJoin(p, joinHost);
+                        break;
+                    case Msg.JoinAnswer:
+                        int asker = r.ReadInt32();
+                        bool letIn = r.ReadBoolean();
+                        AnswerJoin(p, asker, letIn);
+                        break;
                     case Msg.DeclineInvite:
                         int inviter = r.ReadInt32();
                         var host = Online(inviter);
@@ -580,6 +591,35 @@ namespace RiftWard.Client
             friend.Conn.Send(Protocol.Frame(Msg.Invite, w => { w.Write(p.AccountId); w.Write(p.ChatName); w.Write(room.Code); }));
             Notice(p, $"已邀請 {friend.ChatName}");
             Debug.Log($"INVITE from={p.AccountId} to={accountId} room={room.Code}");
+        }
+
+        /// 申請入隊: a friend in a room is asked (a pop-up on their side); they decide.
+        void AskToJoin(Player p, int accountId)
+        {
+            if (!p.Friends.Contains(accountId)) { Notice(p, "只能向好友申請入隊"); return; }
+            var friend = Online(accountId);
+            if (friend == null) { Notice(p, "好友目前不在線上"); return; }
+            if (friend.Room == null) { Notice(p, $"{friend.ChatName} 目前不在房間中"); return; }
+            if (friend.Room == p.Room) { Notice(p, $"你已經在 {friend.ChatName} 的房間"); return; }
+            if (friend.Room.Members.Count >= RoomSize) { Notice(p, "對方房間已滿（最多 4 人）"); return; }
+            friend.Conn.Send(Protocol.Frame(Msg.JoinRequestIn, w => { w.Write(p.AccountId); w.Write(p.ChatName); }));
+            Notice(p, $"已向 {friend.ChatName} 申請入隊");
+        }
+
+        void AnswerJoin(Player host, int accountId, bool accept)
+        {
+            var asker = Online(accountId);
+            if (asker == null || !host.Friends.Contains(accountId)) return;
+            if (!accept) { Notice(asker, $"{host.ChatName} 婉拒了你的入隊申請"); SystemLine(asker, $"{host.ChatName} 婉拒了你的入隊申請"); return; }
+            var room = host.Room;
+            if (room == null) { Notice(host, "你已不在房間中"); return; }
+            if (asker.Room != null && asker.Room.Mode == "playing" && asker.Room.Sim != null && asker.Room.Sim.Actors.ContainsKey(asker.Conn.Id))
+            {
+                Notice(host, $"{asker.ChatName} 正在任務中，無法加入");
+                return;
+            }
+            room.Invited.Add(accountId);   // lets them into a private room too
+            JoinRoom(asker, room.Code);
         }
 
         void LoadChatFilter()

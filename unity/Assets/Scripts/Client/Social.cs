@@ -143,6 +143,7 @@ namespace RiftWard.Client
         public Action<string> Join;
         public Action<int> Decline;
         public Action<string, bool> RespondFriend;
+        public Action<int, bool> AnswerJoin;
 
         public SocialOverlay() { canvas = Ui.Canvas("Social", 30); }
         /// Parent for modal sheets that sit above every screen.
@@ -178,6 +179,12 @@ namespace RiftWard.Client
         {
             Enqueue("friend", "friend:" + fromName.ToLowerInvariant(), Palette.Amber, "好友邀請", $"{fromName} 想加你為好友",
                 ("拒絕", false, () => RespondFriend?.Invoke(fromName, false)), ("接受", true, () => RespondFriend?.Invoke(fromName, true)));
+        }
+
+        public void ShowJoinRequest(int fromId, string fromName)
+        {
+            Enqueue("join", "join:" + fromId, Palette.Teammate, "入隊申請", $"{fromName} 申請加入你的房間",
+                ("拒絕", false, () => AnswerJoin?.Invoke(fromId, false)), ("同意", true, () => AnswerJoin?.Invoke(fromId, true)));
         }
 
         void Enqueue(string kind, string key, Color accent, string title, string message, params (string label, bool primary, Action act)[] buttons)

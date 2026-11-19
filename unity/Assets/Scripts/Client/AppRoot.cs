@@ -75,6 +75,11 @@ namespace RiftWard.Client
         /// Tells the game server we sent a friend request, so the other player sees it pop up right away.
         public void NotifyFriendRequest(string username) { if (Net.Welcomed && !string.IsNullOrWhiteSpace(username)) Net.Send(Msg.FriendRequest, w => w.Write(username.Trim())); }
 
+        /// 申請入隊 from the friends list: the friend gets a pop-up and decides.
+        public void RequestJoin(int accountId) { if (Net.Welcomed) Net.Send(Msg.JoinRequest, w => w.Write(accountId)); else Overlay.Toast("離線模式無法申請入隊"); }
+
+        public void AnswerJoin(int accountId, bool accept) { if (Net.Welcomed) Net.Send(Msg.JoinAnswer, w => { w.Write(accountId); w.Write(accept); }); }
+
         /// Accept or refuse a friend request from its pop-up card.
         public void RespondFriend(string username, bool accept)
         {
@@ -138,7 +143,7 @@ namespace RiftWard.Client
             Client.Setup();
             Api = new AccountApi(this);
             Screens = new Screens(this);
-            Overlay = new SocialOverlay { Join = AcceptInvite, Decline = DeclineInvite, RespondFriend = RespondFriend, Hold = () => inNetMission || Client.Sim != null };
+            Overlay = new SocialOverlay { Join = AcceptInvite, Decline = DeclineInvite, RespondFriend = RespondFriend, AnswerJoin = AnswerJoin, Hold = () => inNetMission || Client.Sim != null };
             FriendPresence.CameOnline += name => Overlay.Toast($"好友 {name} 上線了");
             Chat = new ChatHud { Send = SendChat };
             Net.Message += OnNetMessage;
@@ -296,6 +301,11 @@ namespace RiftWard.Client
                     var chatLine = ChatLog.Read(r);
                     ChatLog.Add(chatLine);
                     if (netTest && chatLine.Channel == ChatChannel.World && Profile != null && chatLine.AccountId != Profile.Id) testChats++;
+                    break;
+                case Msg.JoinRequestIn:
+                    int askerId = r.ReadInt32();
+                    string askerName = r.ReadString();
+                    Overlay.ShowJoinRequest(askerId, askerName);
                     break;
                 case Msg.FriendRequestIn:
                     string requester = r.ReadString();
@@ -850,6 +860,7 @@ namespace RiftWard.Client
             // Social pages with sample friends, mail and chat.
             Dictionary<string, object> Person(int id, string name, int level, string title) =>
                 new Dictionary<string, object> { ["id"] = (double)id, ["username"] = name, ["level"] = (double)level, ["title"] = title };
+            Screens.PreviewRoom = true;   // shows 申請入隊 without a server
             FriendPresence.States[11] = (PresenceState.InMission, "");
             FriendPresence.States[12] = (PresenceState.InRoom, "K7QM");
             FriendPresence.States[13] = (PresenceState.Lobby, "");
@@ -861,6 +872,7 @@ namespace RiftWard.Client
             });
             yield return Settle(0.4f);
             yield return Shot(folder, "unity-friends");
+            Screens.PreviewRoom = false;
             double now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
             Dictionary<string, object> Mail(int id, string title, string body, bool read, bool claimed, double age, Dictionary<string, object> reward) =>
                 new Dictionary<string, object> { ["id"] = (double)id, ["title"] = title, ["body"] = body, ["read"] = read, ["claimed"] = claimed, ["created"] = now - age, ["expires"] = now - age + 30 * 86400, ["reward"] = reward };

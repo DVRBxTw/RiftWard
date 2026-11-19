@@ -15,6 +15,15 @@ namespace RiftWard.Client
         {
             new Entry
             {
+                Version = "0.7.23-unity.1", Date = "2026-11-19",
+                Lines = new[]
+                {
+                    "好友名單新增「申請入隊」：好友在房間或任務中時可申請加入，對方同意後直接進入房間。",
+                    "修正裝備光劍時，隊伍面板中自己的角色模型縮得幾乎看不見的問題。",
+                },
+            },
+            new Entry
+            {
                 Version = "0.7.22-unity.1", Date = "2026-11-19",
                 Lines = new[]
                 {
