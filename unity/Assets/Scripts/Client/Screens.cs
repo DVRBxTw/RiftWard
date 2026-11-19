@@ -1031,11 +1031,11 @@ namespace RiftWard.Client
                     stat.anchorMin = new Vector2(0, 0); stat.anchorMax = new Vector2(1, 1);
                     stat.offsetMin = new Vector2(8, 2); stat.offsetMax = new Vector2(-4, -124);
                     stat.GetComponent<Text>().alignment = TextAnchor.UpperCenter;
-                    stat.GetComponent<Text>().text = item.StatText();
+                    stat.GetComponent<Text>().text = item.StatText(false);
                 }
             }
             var bagHead = Ui.Rect(g, "BagHead").Sized(28);
-            Ui.Label(bagHead, $"背包  {p.Inventory.Count} 件    點選裝備可穿上 / 卸下，強化可提升屬性", 13, Palette.Muted, TextAnchor.MiddleLeft).rectTransform.Fill().offsetMax = new Vector2(-110, 0);
+            Ui.Label(bagHead, $"背包  {p.Inventory.Count} 件    點選裝備可穿上 / 卸下，強化可提升屬性與防禦（每級 +0.5%）", 13, Palette.Muted, TextAnchor.MiddleLeft).rectTransform.Fill().offsetMax = new Vector2(-110, 0);
             Ui.Button(bagHead, "一鍵分解", () => BulkSalvage("gear"), 12, Palette.Amber).GetComponent<RectTransform>().Place(new Vector2(1, 0.5f), Vector2.zero, new Vector2(100, 28), new Vector2(1, 0.5f));
             // Category tabs, like the weapon list: all, then one per slot with its count.
             var tabs = Ui.HStack(g, 6).Sized(34);
@@ -1137,8 +1137,8 @@ namespace RiftWard.Client
             // ---- 突破
             Widgets.Section(st, $"突破  {item.Limit} / {Gear.LimitMax}").Sized(24);
             bool limitMax = item.Limit >= Gear.LimitMax;
-            Ui.Label(st, !item.Maxed ? $"強化到 +{Gear.MaxLevel} 後才能突破。每階全屬性 +{Gear.LimitBonus * 100:0}%。"
-                : limitMax ? "已達最高突破。" : $"每階全屬性 +{Gear.LimitBonus * 100:0}%（目前 +{item.Limit * Gear.LimitBonus * 100:0}%）。", 12, Palette.Muted).Sized(20);
+            Ui.Label(st, !item.Maxed ? $"強化到 +{Gear.MaxLevel} 後才能突破。每階全屬性 +{Gear.LimitBonus * 100:0}%、防禦 +1%。"
+                : limitMax ? "已達最高突破。" : $"每階全屬性 +{Gear.LimitBonus * 100:0}%、防禦 +1%（目前 +{item.Limit * Gear.LimitBonus * 100:0}%）。", 12, Palette.Muted).Sized(20);
             int lShards = limitMax ? 0 : Gear.LimitShards[item.Limit], lGold = limitMax ? 0 : Gear.LimitGold[item.Limit];
             var limit = Ui.Button(st, limitMax ? "已滿突破" : $"突破 ★{item.Limit + 1} · {Cost(lShards, lGold)}", () =>
                 Send("/api/gear/limit", new Dictionary<string, object> { ["item"] = itemId }, "突破成功"), 14, Gear.ShardColor).Sized(38);

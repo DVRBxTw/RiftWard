@@ -396,6 +396,13 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(self.call("/api/gear/limit", {"item": "c"}, auth)[0], 400)
         c = find(r["profile"], "c")
         self.assertEqual(c["limit"], 3)
+        self.assertEqual(c["defense"], 5 * service.GEAR_DEF_PER_LEVEL + 3 * service.GEAR_DEF_PER_LIMIT)
+        put([item("c", level=5, limit=3)], {"module": "c"})
+        self.assertEqual(self.store.profile(aid)["bonus"]["def"], 5 * service.GEAR_DEF_PER_LEVEL + 3 * service.GEAR_DEF_PER_LIMIT)
+        put([item("c", level=5)])
+        for tier in range(service.GEAR_LIMIT_MAX):
+            r = self.call("/api/gear/limit", {"item": "c"}, auth)[1]
+        c = find(r["profile"], "c")
         self.assertEqual(c["stats"]["damage"], round(service.GEAR_VALUES["damage"][2] * 1.6 * 1.24))
         shards = r["profile"]["shards"]
         self.assertEqual(shards, 100 - sum(service.LIMIT_SHARDS))

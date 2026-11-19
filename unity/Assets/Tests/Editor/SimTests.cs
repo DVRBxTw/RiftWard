@@ -225,6 +225,17 @@ namespace RiftWard.Tests
         }
 
         [Test]
+        public void GearDefenseStartsAsArmourAndSharesTheCap()
+        {
+            var sim = NewMission();
+            var a = sim.Actors[1];
+            sim.ApplyProfileBonus(1, 0, 0, 0, 0, 0, 0, 22f);
+            Assert.AreEqual(0.22f, a.Armor, 1e-4f);
+            for (int i = 0; i < 10; i++) sim.ApplyBuff(1, Defs.BuffArmor + 200);
+            Assert.AreEqual(Defs.MaxArmor, a.Armor, 1e-4f, "gear defense and the in-mission pick share the 60% cap");
+        }
+
+        [Test]
         public void EmptyMagazineAutoReloads()
         {
             var sim = NewMission();

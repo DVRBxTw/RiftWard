@@ -81,7 +81,7 @@ namespace RiftWard.Sim
             a.Hp = a.MaxHp = 100f;
             a.Yaw = 0; a.VerticalVelocity = 0; a.FireCooldown = 0; a.DashCooldown = 0; a.DashLeft = 0;
             a.Speed = Defs.BaseSpeed; a.DamageMult = 1; a.RateMult = 1; a.ReloadMult = 1; a.SkillMult = 1;
-            a.MagBonus = 0; a.Regen = 0; a.Critical = 0; a.Lifesteal = 0; a.Explode = 0; a.HealBudget = 0; System.Array.Clear(a.BuffStacks, 0, a.BuffStacks.Length);
+            a.MagBonus = 0; a.Regen = 0; a.Armor = 0; a.Critical = 0; a.Lifesteal = 0; a.Explode = 0; a.HealBudget = 0; System.Array.Clear(a.BuffStacks, 0, a.BuffStacks.Length);
             a.SkillCooldown = 0; a.Revive = 0; a.Slot = 0; a.Reload = 0;
             a.StatKills = 0; a.StatHeadshots = 0; a.StatShots = 0; a.StatHits = 0; a.StatDamage = 0;
             a.StatDowns = 0; a.StatRevives = 0; a.StatBossKills = 0; a.StatEliteKills = 0; a.WasAlive = true; a.AimFlags = 0;
@@ -108,12 +108,13 @@ namespace RiftWard.Sim
         // ------------------------------------------------------------ weapons
 
         /// Permanent account bonuses (talents + equipped gear) applied when a player joins a mission.
-        public void ApplyProfileBonus(int id, float hp, float damagePct, float speedPct, float reloadPct, float critPct, float hpPct = 0f)
+        public void ApplyProfileBonus(int id, float hp, float damagePct, float speedPct, float reloadPct, float critPct, float hpPct = 0f, float defPct = 0f)
         {
             if (!Actors.TryGetValue(id, out var a)) return;
             hp = Mathf.Clamp(hp, 0, 400); damagePct = Mathf.Clamp(damagePct, 0, 200); speedPct = Mathf.Clamp(speedPct, 0, 60);
             reloadPct = Mathf.Clamp(reloadPct, 0, 60); critPct = Mathf.Clamp(critPct, 0, 60); hpPct = Mathf.Clamp(hpPct, 0, 60);
-            a.ProfileBonus = new[] { hp, damagePct, speedPct, reloadPct, critPct, hpPct };
+            defPct = Mathf.Clamp(defPct, 0, 40);
+            a.ProfileBonus = new[] { hp, damagePct, speedPct, reloadPct, critPct, hpPct, defPct };
             ApplyBonusStats(a);
         }
 
@@ -124,6 +125,7 @@ namespace RiftWard.Sim
             float hp = a.ProfileBonus[0], damagePct = a.ProfileBonus[1], speedPct = a.ProfileBonus[2], reloadPct = a.ProfileBonus[3], critPct = a.ProfileBonus[4];
             a.HpPct = a.ProfileBonus.Length > 5 ? a.ProfileBonus[5] / 100f : 0f;
             a.MaxHp = (a.MaxHp + hp) * (1f + a.HpPct);
+            if (a.ProfileBonus.Length > 6) a.Armor = Mathf.Min(Defs.MaxArmor, a.Armor + a.ProfileBonus[6] / 100f);   // gear defense
             a.Hp = a.MaxHp;
             a.DamageMult *= 1f + damagePct / 100f;
             a.Speed *= 1f + speedPct / 100f;

@@ -15,6 +15,15 @@ namespace RiftWard.Client
         {
             new Entry
             {
+                Version = "0.7.27-unity.1", Date = "2026-11-19",
+                Lines = new[]
+                {
+                    "裝備強化會增加防禦力：每強化 1 級防禦 +0.5%，每突破 1 階防禦 +1%（減少受到的傷害，與局內護甲合計上限 60%）。",
+                    "「護盾」更名為「生命值」：生命強化、恢復生命、生命上限等說明一併更新。",
+                },
+            },
+            new Entry
+            {
                 Version = "0.7.26-unity.1", Date = "2026-11-19",
                 Lines = new[]
                 {

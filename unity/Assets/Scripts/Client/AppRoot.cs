@@ -531,7 +531,7 @@ namespace RiftWard.Client
             int offlineRegion = Mathf.Clamp(SelectedRegion, 0, Profile.Unlocked);
             Client.StartOffline(offlineRegion, Profile.Loadout, Profile.Admin, AdminSettings, OpenTier(offlineRegion, SelectedDifficulty));
             if (Client.Sim != null) Client.Sim.Endless = SelectedEndless && EndlessOpen(offlineRegion);
-            Client.Sim?.ApplyProfileBonus(Client.LocalId, Profile.BonusOf("hp"), Profile.BonusOf("damage"), Profile.BonusOf("speed"), Profile.BonusOf("reload"), Profile.BonusOf("crit"), Profile.BonusOf("hp_pct"));
+            Client.Sim?.ApplyProfileBonus(Client.LocalId, Profile.BonusOf("hp"), Profile.BonusOf("damage"), Profile.BonusOf("speed"), Profile.BonusOf("reload"), Profile.BonusOf("crit"), Profile.BonusOf("hp_pct"), Profile.BonusOf("def"));
         }
 
         void ReturnHome()
@@ -763,8 +763,8 @@ namespace RiftWard.Client
                 ["talents"] = new Dictionary<string, object> { ["hp"] = 2.0, ["damage"] = 3.0, ["crit"] = 1.0 },
                 ["inventory"] = new List<object>
                 {
-                    new Dictionary<string, object> { ["id"] = "a", ["slot"] = "armor", ["rarity"] = 3.0, ["level"] = 3.0, ["set"] = "bulwark", ["stats"] = new Dictionary<string, object> { ["hp"] = 32.0, ["crit"] = 4.0 } },
-                    new Dictionary<string, object> { ["id"] = "b", ["slot"] = "module", ["rarity"] = 4.0, ["level"] = 5.0, ["limit"] = 2.0, ["set"] = "bulwark", ["stats"] = new Dictionary<string, object> { ["damage"] = 16.0, ["speed"] = 6.0 } },
+                    new Dictionary<string, object> { ["id"] = "a", ["slot"] = "armor", ["rarity"] = 3.0, ["level"] = 3.0, ["defense"] = 1.5, ["set"] = "bulwark", ["stats"] = new Dictionary<string, object> { ["hp"] = 32.0, ["crit"] = 4.0 } },
+                    new Dictionary<string, object> { ["id"] = "b", ["slot"] = "module", ["rarity"] = 4.0, ["level"] = 5.0, ["limit"] = 2.0, ["defense"] = 4.5, ["set"] = "bulwark", ["stats"] = new Dictionary<string, object> { ["damage"] = 16.0, ["speed"] = 6.0 } },
                     new Dictionary<string, object> { ["id"] = "c", ["slot"] = "boots", ["rarity"] = 1.0, ["stats"] = new Dictionary<string, object> { ["speed"] = 3.0 } },
                     new Dictionary<string, object> { ["id"] = "d", ["slot"] = "chip", ["rarity"] = 2.0, ["set"] = "assault", ["stats"] = new Dictionary<string, object> { ["crit"] = 5.0, ["hp"] = 10.0 } },
                     new Dictionary<string, object> { ["id"] = "e", ["slot"] = "armor", ["rarity"] = 0.0, ["stats"] = new Dictionary<string, object> { ["hp"] = 6.0 } },
@@ -783,7 +783,7 @@ namespace RiftWard.Client
                     },
                     ["bonus"] = new Dictionary<string, object> { ["reward"] = new Dictionary<string, object> { ["keys"] = 2.0, ["weapon_keys"] = 1.0 }, ["ready"] = false, ["claimed"] = false },
                 },
-                ["bonus"] = new Dictionary<string, object> { ["hp"] = 42.0, ["damage"] = 22.0, ["speed"] = 6.0, ["crit"] = 5.0 },
+                ["bonus"] = new Dictionary<string, object> { ["hp"] = 42.0, ["damage"] = 22.0, ["speed"] = 6.0, ["crit"] = 5.0, ["def"] = 6.5 },
                 ["loadout"] = new Dictionary<string, object>
                 {
                     ["owned"] = new List<object> { "pistol", "rifle", "sniper", "saber" }, ["equipped"] = new List<object> { "pistol", "sniper" },

@@ -157,7 +157,7 @@ namespace RiftWard.Client
             // ---- bottom-left vitals panel
             var vitals = Panel(root, new Vector2(0, 0), new Vector2(28, 24), new Vector2(392, 132), new Vector2(0, 0), Palette.Bone);
             vitals.localScale = Vector3.one * PanelScale;   // slimmer: keeps the floor around your feet visible
-            Ui.Label(vitals, "護盾", 15, Palette.Hex("c9c5bb")).Outlined().rectTransform.Place(new Vector2(0, 1), new Vector2(18, -14), new Vector2(60, 16), new Vector2(0, 1));
+            Ui.Label(vitals, "生命值", 15, Palette.Hex("c9c5bb")).Outlined().rectTransform.Place(new Vector2(0, 1), new Vector2(18, -14), new Vector2(60, 16), new Vector2(0, 1));
             shieldValue = Mono(vitals, "100", 38, Palette.Bone);
             shieldValue.rectTransform.Place(new Vector2(0, 1), new Vector2(16, -28), new Vector2(110, 44), new Vector2(0, 1));
             shieldMax = Mono(vitals, "/ 100", 14, Palette.Hex("c9c5bb"));

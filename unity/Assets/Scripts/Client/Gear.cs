@@ -11,6 +11,8 @@ namespace RiftWard.Client
         public int Rarity, Level;
         /// 突破 tier (0-3) and set id ("" = none).
         public int Limit;
+        /// Damage reduction (%) from enhancement and 突破, worked out by the server.
+        public float Defense;
         public string Set = "";
         /// Effective stats (enhancement included); Base holds the +0 values.
         public Dictionary<string, int> Stats = new Dictionary<string, int>(), Base = new Dictionary<string, int>();
@@ -26,6 +28,7 @@ namespace RiftWard.Client
             if (baseStats != null) foreach (var kv in baseStats) item.Base[kv.Key] = kv.Value is double n ? (int)n : 0;
             item.Level = Mathf.Clamp(d.Int("level"), 0, Gear.MaxLevel);
             item.Limit = Mathf.Clamp(d.Int("limit"), 0, Gear.LimitMax);
+            item.Defense = d.TryGetValue("defense", out var dv) && dv is double dd ? (float)dd : 0f;
             item.Set = Gear.Sets.ContainsKey(d.Str("set")) ? d.Str("set") : "";
             return item;
         }
@@ -36,10 +39,12 @@ namespace RiftWard.Client
         public int UpgradeCost => Gear.UpgradeCost(Rarity, Level);
         public Color Color => Gear.RarityColors[Rarity];
 
-        public string StatText()
+        /// withDefense: false for the small slot tiles, where a third entry no longer fits.
+        public string StatText(bool withDefense = true)
         {
             var parts = new List<string>();
             foreach (var kv in Stats) parts.Add(Gear.StatText(kv.Key, kv.Value));
+            if (withDefense && Defense > 0) parts.Add(Gear.StatText("def", Defense));
             return string.Join("  ·  ", parts);
         }
     }
@@ -103,7 +108,7 @@ namespace RiftWard.Client
         public static readonly string[] Talents = { "hp", "damage", "speed", "reload", "crit" };
         public static readonly Dictionary<string, (string name, string per)> TalentInfo = new Dictionary<string, (string, string)>
         {
-            ["hp"] = ("強韌體魄", "護盾上限 +3%"), ["damage"] = ("火力專精", "傷害 +2%"), ["speed"] = ("機動訓練", "移動速度 +1.5%"),
+            ["hp"] = ("強韌體魄", "生命上限 +3%"), ["damage"] = ("火力專精", "傷害 +2%"), ["speed"] = ("機動訓練", "移動速度 +1.5%"),
             ["reload"] = ("快速裝填", "換彈速度 +3%"), ["crit"] = ("致命直覺", "爆擊率 +1%"),
         };
         public const int TalentMax = 10;
@@ -128,12 +133,13 @@ namespace RiftWard.Client
 
         public static string StatText(string key, float value) => key switch
         {
-            "hp" => $"護盾 +{value:0}",
-            "hp_pct" => $"護盾 +{value:0}%",
+            "hp" => $"生命 +{value:0}",
+            "hp_pct" => $"生命 +{value:0}%",
             "damage" => $"傷害 +{value:0.#}%",
             "speed" => $"移速 +{value:0.#}%",
             "reload" => $"換彈 +{value:0.#}%",
             "crit" => $"爆擊 +{value:0.#}%",
+            "def" => $"防禦 +{value:0.#}%",
             _ => $"{key} +{value}",
         };
     }

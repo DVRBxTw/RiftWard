@@ -162,6 +162,15 @@ def gear_upgrade_cost(rarity: int, level: int) -> int:
     return GEAR_UPGRADE_BASE[rarity] * (level + 1)
 
 
+# Defense (% damage taken removed) grows with each item's enhancement and 突破, on top of its stats.
+GEAR_DEF_PER_LEVEL = 0.5
+GEAR_DEF_PER_LIMIT = 1.0
+
+
+def gear_defense(item) -> float:
+    return GEAR_DEF_PER_LEVEL * item.get("level", 0) + GEAR_DEF_PER_LIMIT * item.get("limit", 0)
+
+
 def gear_invested(item) -> int:
     """Gold put into an item: enhancement levels plus 突破 tiers (salvage refunds half)."""
     return sum(gear_upgrade_cost(item["rarity"], n) for n in range(item.get("level", 0))) + sum(LIMIT_GOLD[:item.get("limit", 0)])
@@ -486,13 +495,15 @@ class Store:
         result["talent_points"] = max(0, level - 1 - sum(talents.values()))
         pity = self._pity(account_id)
         result["pity"] = {pool: PITY_LIMIT - count for pool, count in pity.items()}   # draws left until 傳奇+ is guaranteed
-        result["inventory"] = [dict(item, stats=gear_stats(item), base=item["stats"], level=item.get("level", 0)) for item in gear["inventory"]]
+        result["inventory"] = [dict(item, stats=gear_stats(item), base=item["stats"], level=item.get("level", 0), defense=gear_defense(item)) for item in gear["inventory"]]
         result["equipment"] = gear["equipped"]
         bonus = {TALENT_BONUS_KEY.get(k, k): talents[k] * per for k, per in TALENTS.items()}
         worn = [item for item in gear["inventory"] if gear["equipped"].get(item["slot"]) == item["id"]]
         for item in worn:
             for k, v in gear_stats(item).items():
                 bonus[k] = bonus.get(k, 0) + v
+            if gear_defense(item) > 0:
+                bonus["def"] = bonus.get("def", 0) + gear_defense(item)
         for k, v in set_bonus(worn).items():
             bonus[k] = bonus.get(k, 0) + v
         result["bonus"] = {k: round(v, 2) for k, v in bonus.items()}
