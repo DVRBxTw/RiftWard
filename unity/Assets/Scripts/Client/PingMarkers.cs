@@ -5,7 +5,7 @@ using UnityEngine.UI;
 
 namespace RiftWard.Client
 {
-    /// Middle-mouse map pings, shown to everyone in the room for a few seconds.
+    /// Rebindable map pings, shown to everyone in the room for a few seconds.
     /// Tap: mark what the crosshair points at (an enemy, which the mark then follows; a supply; or the ground).
     /// Double tap: 危險 at that spot. Hold: a four-way wheel (集合 / 危險 / 需要彈藥 / 這裡), pick by moving the mouse.
     public sealed class PingMarkers
@@ -95,10 +95,10 @@ namespace RiftWard.Client
         public bool Poll(Camera cam, GameSim sim, out Vector3 position, out byte kind, out int target)
         {
             position = default; kind = Ground; target = 0;
-            if (Input.GetMouseButtonDown(2)) { pressedAt = Time.unscaledTime; wheelAim = Vector2.zero; wheelChoice = -1; }
+            if (Bindings.Pressed(Bindings.Action.Ping)) { pressedAt = Time.unscaledTime; wheelAim = Vector2.zero; wheelChoice = -1; }
             if (pressedAt < 0) return false;
             float held = Time.unscaledTime - pressedAt;
-            if (Input.GetMouseButton(2))
+            if (Bindings.Held(Bindings.Action.Ping))
             {
                 if (held >= HoldForWheel && !wheelOpen) { wheelOpen = true; wheel.gameObject.SetActive(true); }
                 if (wheelOpen)

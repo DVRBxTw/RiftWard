@@ -30,6 +30,7 @@ namespace RiftWard.Sim
         public float Elapsed;
         public int Kills;
         public bool EnemyVariety = true;
+        int EnemyLimit => Defs.MaxEnemies * Mathf.Max(1, Actors.Count);
         /// 無盡模式: waves never stop; enemies keep scaling past wave 20 and a boss comes every 10 waves.
         public bool Endless;
 
@@ -559,7 +560,8 @@ namespace RiftWard.Sim
         {
             int players = Mathf.Max(1, Actors.Count);
             var tier = Defs.Difficulty(Difficulty);
-            int count = Mathf.Min(24 + tier.ExtraEnemies, Defs.Regions[Region].BaseEnemies + Mathf.CeilToInt(Wave / 2f) + (players - 1) * 2 + tier.ExtraEnemies);
+            int soloCount = Mathf.Min(24 + tier.ExtraEnemies, Defs.Regions[Region].BaseEnemies + Mathf.CeilToInt(Wave / 2f) + tier.ExtraEnemies);
+            int count = soloCount * players;
             int elapsedWaves = Mathf.Max(0, Wave - 1);
             float region = Region;
             float partyScale = 1f + 0.6f * (players - 1);
@@ -891,7 +893,7 @@ namespace RiftWard.Sim
                 Announcements.Add("BOSS 掉落超級寶箱！");
             }
             if (e.Kind == Defs.KindSplitter)
-                for (int i = 0; i < 2 && Enemies.Count < Defs.MaxEnemies; i++)
+                for (int i = 0; i < 2 && Enemies.Count < EnemyLimit; i++)
                 {
                     var spawn = NewEnemy(PushOutOfCover(e.Position + new Vector3(i == 0 ? -0.7f : 0.7f, 0, 0), 0.4f));
                     spawn.Hp *= 1f + 0.08f * Mathf.Max(0, Wave - 1);
@@ -1256,7 +1258,7 @@ namespace RiftWard.Sim
                     e.Phase = 2;
                     e.State = 2;
                     e.Speed *= 1.3f;
-                    for (int i = 0; i < 4 && Enemies.Count < Defs.MaxEnemies; i++)
+                    for (int i = 0; i < 4 && Enemies.Count < EnemyLimit; i++)
                     {
                         float angle = Mathf.PI * 2f * i / 4f;
                         var minion = NewEnemy(e.Position + new Vector3(Mathf.Sin(angle) * 3, 0, Mathf.Cos(angle) * 3));
@@ -1367,7 +1369,7 @@ namespace RiftWard.Sim
             if (e.SummonCooldown <= 0)
             {
                 e.SummonCooldown = e.Phase >= 3 ? 9f : 13f;
-                for (int i = 0; i < 2 && Enemies.Count < Defs.MaxEnemies; i++)
+                for (int i = 0; i < 2 && Enemies.Count < EnemyLimit; i++)
                 {
                     float angle = Rand(0f, Mathf.PI * 2f);
                     var guard = NewEnemy(e.Position + new Vector3(Mathf.Sin(angle) * 3.5f, 0, Mathf.Cos(angle) * 3.5f));

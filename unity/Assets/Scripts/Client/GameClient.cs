@@ -108,6 +108,7 @@ namespace RiftWard.Client
         readonly Dictionary<int, CharacterRig> actorRigs = new Dictionary<int, CharacterRig>();   // reused each frame to find views whose entity is gone
         readonly Dictionary<int, List<Transform>> droneViews = new Dictionary<int, List<Transform>>();
         readonly Dictionary<int, Text> nameTags = new Dictionary<int, Text>();
+        readonly Dictionary<int, Ui.Bar> teammateHealthBars = new Dictionary<int, Ui.Bar>();
         readonly Dictionary<int, List<Transform>> bladeViews = new Dictionary<int, List<Transform>>();
         readonly Dictionary<int, GameObject> enemyViews = new Dictionary<int, GameObject>();
         readonly Dictionary<int, GameObject> bulletViews = new Dictionary<int, GameObject>();
@@ -317,7 +318,7 @@ namespace RiftWard.Client
             foreach (var list in droneViews.Values) foreach (var t in list) if (t != null) Destroy(t.gameObject);
             foreach (var list in bladeViews.Values) foreach (var t in list) if (t != null) Destroy(t.gameObject);
             foreach (var tag in nameTags.Values) if (tag != null) Destroy(tag.gameObject);
-            droneViews.Clear(); bladeViews.Clear(); nameTags.Clear(); bladeSlots.Clear();
+            droneViews.Clear(); bladeViews.Clear(); nameTags.Clear(); teammateHealthBars.Clear(); bladeSlots.Clear();
             enemyHp.Clear(); enemyParts.Clear(); actorRigs.Clear(); plasmaMounted.Clear();
         }
 
@@ -741,6 +742,11 @@ namespace RiftWard.Client
                 tag.rectTransform.pivot = new Vector2(0.5f, 0f);
                 tag.rectTransform.anchorMin = tag.rectTransform.anchorMax = Vector2.zero;
                 tag.rectTransform.SetAsFirstSibling();   // under the HUD panels
+                tag.raycastTarget = false;
+                var health = new Ui.Bar(tag.transform, new Color(1, 1, 1, 0.18f), Palette.Teammate);
+                health.Root.Place(new Vector2(0.5f, 0), new Vector2(0, -6), new Vector2(80, 4), new Vector2(0.5f, 1));
+                foreach (var graphic in health.Root.GetComponentsInChildren<Graphic>()) graphic.raycastTarget = false;
+                teammateHealthBars[a.Id] = health;
                 nameTags[a.Id] = tag;
             }
             tag.text = a.Alive ? a.Name : a.Name + $"  [{Bindings.Name(Bindings.Action.Interact)} 救援]";
@@ -748,6 +754,10 @@ namespace RiftWard.Client
             Vector3 screen = Camera.WorldToScreenPoint(view.transform.position + Vector3.up * 2.6f);
             bool visible = screen.z > 0.2f && Hud.Canvas.gameObject.activeInHierarchy;
             tag.enabled = visible;
+            var healthBar = teammateHealthBars[a.Id];
+            healthBar.Root.gameObject.SetActive(visible);
+            healthBar.Value = a.Hp / Mathf.Max(1f, a.MaxHp);
+            healthBar.Color = a.Alive ? Palette.Teammate : Palette.Danger;
             if (visible)
             {
                 float scale = Hud.Canvas.scaleFactor > 0 ? Hud.Canvas.scaleFactor : 1f;
@@ -956,7 +966,7 @@ namespace RiftWard.Client
             {
                 Destroy(actorViews[id]); actorViews.Remove(id); actorRigs.Remove(id);
                 if (droneViews.TryGetValue(id, out var ds)) { foreach (var d in ds) Destroy(d.gameObject); droneViews.Remove(id); }
-                if (nameTags.TryGetValue(id, out var tag)) { Destroy(tag.gameObject); nameTags.Remove(id); }
+                if (nameTags.TryGetValue(id, out var tag)) { Destroy(tag.gameObject); nameTags.Remove(id); teammateHealthBars.Remove(id); }
                 if (bladeViews.TryGetValue(id, out var bs)) { foreach (var b in bs) Destroy(b.gameObject); bladeViews.Remove(id); }
                 bladeSlots.Remove(id);
             }

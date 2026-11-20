@@ -52,6 +52,26 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(code,201)
         return response
 
+    def test_feedback_submit_validation_and_private_history(self):
+        account = self.register()
+        auth = {"Authorization": "Bearer " + account["token"]}
+        body = "四人房間開始遊戲後無法繼續，請協助檢查。"
+        code, response = self.call("/api/feedback/send", {"category": "bug", "body": body}, auth)
+        self.assertEqual(code, 200)
+        self.assertTrue(response["ok"])
+        self.assertEqual(response["feedback"][0]["body"], body)
+        code, history = self.call("/api/feedback/mine", {}, auth)
+        self.assertEqual(code, 200)
+        self.assertEqual(len(history["feedback"]), 1)
+        code, invalid = self.call("/api/feedback/send", {"category": "bug", "body": "短"}, auth)
+        self.assertEqual(code, 400)
+        self.assertIn("5", invalid["error"])
+        code, other = self.call("/api/register", {"username": "Other_Test", "password": "other-password-8921"})
+        self.assertEqual(code, 201)
+        code, history = self.call("/api/feedback/mine", {}, {"Authorization": "Bearer " + other["token"]})
+        self.assertEqual(code, 200)
+        self.assertEqual(history["feedback"], [])
+
     def test_gold_and_armory(self):
         account = self.register()
         auth = {"Authorization":"Bearer "+account["token"]}

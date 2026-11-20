@@ -28,6 +28,47 @@ namespace RiftWard.Tests
         }
 
         [Test]
+        public void PartyWaveCountsScaleWithPlayersAcrossChaptersAndTiers()
+        {
+            for (int region = 0; region < Defs.Regions.Length; region++)
+            for (int tier = 0; tier < Defs.Difficulties.Length; tier++)
+            foreach (int wave in new[] { 1, 10, 20, 100 })
+            {
+                int solo = 0;
+                for (int players = 1; players <= 4; players++)
+                {
+                    var sim = new GameSim(42);
+                    for (int id = 1; id <= players; id++) sim.AddActor(id, new Loadout());
+                    sim.StartMission(region, tier);
+                    sim.Endless = wave > Defs.WavesPerMission;
+                    sim.Wave = wave;
+                    sim.SpawnWave();
+                    if (players == 1) solo = sim.Enemies.Count;
+                    Assert.AreEqual(solo * players, sim.Enemies.Count, $"region={region} tier={tier} wave={wave} players={players}");
+                    Assert.AreEqual(wave % 10 == 0 ? 1 : 0, sim.Enemies.Values.Count(e => e.Boss));
+                }
+            }
+        }
+
+        [Test]
+        public void NextWaveUsesRemainingPartySizeIncludingDownedMembers()
+        {
+            var sim = NewMission();
+            sim.Wave = 1;
+            sim.SpawnWave();
+            int solo = sim.Enemies.Count;
+            for (int id = 2; id <= 4; id++) sim.AddActor(id, new Loadout());
+            sim.Actors[4].Hp = 0;
+            sim.Enemies.Clear();
+            sim.SpawnWave();
+            Assert.AreEqual(solo * 4, sim.Enemies.Count);
+            sim.RemoveActor(3);
+            sim.Enemies.Clear();
+            sim.SpawnWave();
+            Assert.AreEqual(solo * 3, sim.Enemies.Count);
+        }
+
+        [Test]
         public void ProfileBonusSurvivesMissionStart()
         {
             // Online order: the server adds players and applies talents + gear before StartMission resets stats.
@@ -528,9 +569,10 @@ namespace RiftWard.Tests
             Assert.AreEqual(0, a.Slot);
             sim.SwitchWeapon(a, 1);
             Assert.AreEqual("shotgun", a.WeaponId);
-            Assert.AreEqual(7, a.Pellets);
+            Assert.AreEqual(9, a.Pellets);
             var e = PlaceEnemy(sim, new Vector3(0, 0, 3));
             sim.Fire(1, e.Position + Vector3.up);
+            Assert.AreEqual(9, sim.Shots.Count, "one shot emits nine pellet rays");
             Assert.Less(e.Hp, 1000f - 11f * 3);
         }
 
@@ -1089,7 +1131,8 @@ namespace RiftWard.Tests
             for (int i = 0; i < 4; i++) sim.ApplyBuff(1, 201);
             Assert.AreEqual(0.025f, sim.Actors[1].FireInterval, 0.0001f);
             var shotgun = Defs.Weapons["shotgun"];
-            Assert.AreEqual(112, shotgun.Damage * shotgun.Pellets);
+            Assert.AreEqual(16f * 1.05f, shotgun.Damage, 0.001f);
+            Assert.AreEqual(151.2f, shotgun.Damage * shotgun.Pellets, 0.001f);
             Assert.Greater(shotgun.Damage * shotgun.Pellets / shotgun.Interval, Defs.Weapons["pistol"].Damage / Defs.Weapons["pistol"].Interval);
         }
 

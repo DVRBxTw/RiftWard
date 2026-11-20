@@ -1497,6 +1497,10 @@ namespace RiftWard.Client
         static string FeedbackKindName(string id) => FeedbackKinds.FirstOrDefault(k => k.id == id).name ?? "其他";
         string feedbackKind = "suggest";
         List<Dictionary<string, object>> myFeedback;
+        string feedbackDraft = "";
+        bool feedbackSending;
+        InputField feedbackBody;
+        Button feedbackSend;
 
         static InputField MultiLine(Transform parent, string placeholder, int limit)
         {
@@ -1538,23 +1542,35 @@ namespace RiftWard.Client
             }
             var body = MultiLine(left, feedbackKind == "bug" ? "發生了什麼事？在哪個關卡、第幾波、做了什麼操作？" : "想對遊戲說的話（最多 500 字）", 500);
             body.gameObject.AddComponent<LayoutElement>().flexibleHeight = 1;
+            feedbackBody = body;
+            body.text = feedbackDraft;
+            body.onValueChanged.AddListener(value => feedbackDraft = value);
             Button send = null;
             send = PrimaryButton(left, "送出回饋", () =>
             {
+                if (feedbackSending) return;
                 string text = body.text.Trim();
                 if (text.Length < 5) { SocialStatus("內容至少 5 個字", true); return; }
+                feedbackSending = true;
                 send.interactable = false;
                 SocialStatus("送出中…");
                 app.Api.Post("/api/feedback/send", new Dictionary<string, object> { ["category"] = feedbackKind, ["body"] = text }, result =>
                 {
+                    feedbackSending = false;
+                    if (result.Bool("ok") && feedbackDraft.Trim() == text) feedbackDraft = "";
                     if (Mode != "feedback") return;
-                    if (!result.Bool("ok")) { send.interactable = true; SocialStatus(result.Str("error", "送出失敗"), true); return; }
+                    if (feedbackSend != null) feedbackSend.interactable = true;
+                    if (!result.Bool("ok")) { SocialStatus(result.Str("error", "送出失敗"), true); return; }
                     myFeedback = (result.Arr("feedback") ?? new List<object>()).OfType<Dictionary<string, object>>().ToList();
-                    ShowFeedback(false);
+                    if (feedbackBody != null) feedbackBody.text = feedbackDraft;
+                    RefreshFeedbackList();
                     SocialStatus("已送出，感謝你的回饋！");
                 });
             }, 17);
             send.Sized(50);
+            feedbackSend = send;
+            send.interactable = !feedbackSending;
+            if (feedbackSending) SocialStatus("送出中…");
 
             // Right: what this player has sent, with the status and any reply.
             var right = Panel(pad, 0.45f, 1f, Palette.Hex("8c8f93"), "Mine");
@@ -1563,16 +1579,35 @@ namespace RiftWard.Client
             list.parent.gameObject.AddComponent<LayoutElement>().flexibleHeight = 1;
             list.GetComponent<VerticalLayoutGroup>().padding = new RectOffset(12, 12, 10, 10);
             list.GetComponent<VerticalLayoutGroup>().spacing = 10;
-            if (myFeedback == null) Ui.Label(list, "載入中…", 13, Palette.Muted).Sized(24);
-            else if (myFeedback.Count == 0) Ui.Label(list, "還沒有送出過回饋。", 13, Palette.Muted).Sized(24);
-            else foreach (var f in myFeedback) FeedbackCard(list, f, false);
+            feedbackList = list;
+            RefreshFeedbackList();
             if (fetch)
+            {
                 app.Api.Post("/api/feedback/mine", null, result =>
                 {
-                    if (Mode != "feedback" || !result.Bool("ok")) return;
+                    if (Mode != "feedback") return;
+                    if (!result.Bool("ok")) { SocialStatus(result.Str("error", "無法讀取回饋"), true); return; }
                     myFeedback = (result.Arr("feedback") ?? new List<object>()).OfType<Dictionary<string, object>>().ToList();
-                    ShowFeedback(false);
+                    RefreshFeedbackList();
                 });
+            }
+        }
+
+        RectTransform feedbackList;
+
+        void RefreshFeedbackList()
+        {
+            if (Mode != "feedback" || feedbackList == null) return;
+            for (int i = feedbackList.childCount - 1; i >= 0; i--)
+            {
+                var child = feedbackList.GetChild(i);
+                child.gameObject.SetActive(false);
+                if (Application.isPlaying) UnityEngine.Object.Destroy(child.gameObject);
+                else UnityEngine.Object.DestroyImmediate(child.gameObject);
+            }
+            if (myFeedback == null) Ui.Label(feedbackList, "載入中…", 13, Palette.Muted).Sized(24);
+            else if (myFeedback.Count == 0) Ui.Label(feedbackList, "還沒有送出過回饋。", 13, Palette.Muted).Sized(24);
+            else foreach (var f in myFeedback) FeedbackCard(feedbackList, f, false);
         }
 
         /// One feedback entry: category, time, status, the text, and the admin's reply. On the admin page it also

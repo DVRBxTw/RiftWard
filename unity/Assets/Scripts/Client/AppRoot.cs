@@ -243,7 +243,8 @@ namespace RiftWard.Client
                     if (Screens.Mode == "home" || Screens.Mode == "connecting") ShowHome();
                     // A teammate dropped while the menu was open: now alone, reopen it so it really freezes the mission.
                     if (inNetMission && partySize <= 1 && Client.Menus.PauseOpenUnfrozen) { Client.Menus.ClosePause(); Client.Menus.OpenPause(); }
-                    if (netTest && leaderId == Net.LocalId && partySize >= 2 && lobbyMode == "lobby" && !inNetMission && !testDone) Net.Send(Msg.RequestDeploy, w => { w.Write(0); w.Write(0); });
+                    if (netTest && leaderId == Net.LocalId && partySize >= TestSetting("RIFTWARD_TEST_PLAYERS", 2) && lobbyMode == "lobby" && !inNetMission && !testDone)
+                        Net.Send(Msg.RequestDeploy, w => { w.Write(TestSetting("RIFTWARD_TEST_REGION", 0) + testRounds); w.Write(0); });
                     break;
                 case Msg.Deploy:
                     int region = r.ReadInt32(), packedTier = r.ReadInt32(), difficulty = Defs.TierOf(packedTier);
@@ -259,6 +260,7 @@ namespace RiftWard.Client
                     Overlay.HideInvite();
                     PushAdmin();
                     Debug.Log($"UNITY_CLIENT_DEPLOY region={region} difficulty={difficulty}");
+                    if (netTest) testPicks = 0;
                     break;
                 case Msg.Snapshot: Client.ApplySnapshot(r); break;
                 case Msg.Events: Client.ApplyEvents(r); break;
@@ -351,7 +353,10 @@ namespace RiftWard.Client
         }
 
         int testPicks, testChats;
+        int testRounds;
         bool testDone;
+
+        static int TestSetting(string name, int fallback) => int.TryParse(Environment.GetEnvironmentVariable(name), out var n) ? n : fallback;
 
         IEnumerator TestFinish(bool success, int gold)
         {
@@ -359,8 +364,10 @@ namespace RiftWard.Client
             Debug.Log(success && gold > 0 && testPicks == Defs.WavesPerMission && Profile.Gold > 0 && testChats > 0
                 ? $"UNITY_CLIENT_PASS gold={gold} picks={testPicks} total={Profile.Gold} chats={testChats}"
                 : $"UNITY_CLIENT_FAIL success={success} gold={gold} picks={testPicks} total={Profile?.Gold} chats={testChats}");
-            testDone = true;
+            testRounds++;
+            testDone = testRounds >= TestSetting("RIFTWARD_TEST_ROUNDS", 1);
             Net.Send(Msg.RequestHome);
+            if (!testDone) yield break;
             yield return new WaitForSecondsRealtime(10f);
             Application.Quit(1);
         }
@@ -440,7 +447,12 @@ namespace RiftWard.Client
             if (StoryDue("ch2", Profile.Unlocked >= Defs.RegionsPerChapter))
             {
                 Client.ShowShowcase(Defs.RegionsPerChapter);
-                Screens.ShowPages(Screens.ChapterTwo, 0, "前往第二章", () => { SelectRegion(Defs.RegionsPerChapter); });
+                Screens.ShowPages(Screens.ChapterTwo, 0, "前往第二章", () =>
+                {
+                    SelectRegion(Defs.RegionsPerChapter);
+                    // A room member cannot change the leader's selection; they still leave the story.
+                    if (Net.Welcomed && InRoom) ShowHome();
+                });
                 return;
             }
             int last = Defs.Regions.Length - 1;

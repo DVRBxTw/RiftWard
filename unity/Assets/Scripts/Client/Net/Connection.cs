@@ -14,6 +14,10 @@ namespace RiftWard.Client
         readonly TcpClient tcp;
         readonly NetworkStream stream;
         readonly object sendLock = new object();
+        readonly ConcurrentQueue<byte[]> outgoing = new ConcurrentQueue<byte[]>();
+        readonly AutoResetEvent sendReady = new AutoResetEvent(false);
+        const int MaxQueuedBytes = 4 << 20;
+        int queuedBytes;
         public readonly ConcurrentQueue<(Msg type, byte[] payload)> Inbox = new ConcurrentQueue<(Msg, byte[])>();
         volatile bool closed;
         public bool Closed => closed;
@@ -26,7 +30,9 @@ namespace RiftWard.Client
             tcp.NoDelay = true;
             tcp.ReceiveBufferSize = tcp.SendBufferSize = 1 << 18;
             stream = tcp.GetStream();
+            stream.WriteTimeout = 10000;
             new Thread(ReadLoop) { IsBackground = true, Name = "rw-net-" + id }.Start();
+            new Thread(WriteLoop) { IsBackground = true, Name = "rw-send-" + id }.Start();
         }
 
         void ReadLoop()
@@ -62,9 +68,37 @@ namespace RiftWard.Client
 
         public void Send(byte[] frame)
         {
-            if (closed) return;
-            try { lock (sendLock) stream.Write(frame, 0, frame.Length); }
+            lock (sendLock)
+            {
+                if (closed) return;
+                if (Interlocked.Add(ref queuedBytes, frame.Length) > MaxQueuedBytes)
+                {
+                    Close("send queue full");
+                    return;
+                }
+                outgoing.Enqueue(frame);
+                sendReady.Set();
+            }
+        }
+
+        // Never block Unity's main thread on a member who is loading or has a slow connection.
+        // Frames remain FIFO; a stalled peer is closed without freezing the other rooms or players.
+        void WriteLoop()
+        {
+            try
+            {
+                while (!closed)
+                {
+                    while (!closed && outgoing.TryDequeue(out var frame))
+                    {
+                        stream.Write(frame, 0, frame.Length);
+                        Interlocked.Add(ref queuedBytes, -frame.Length);
+                    }
+                    if (!closed) sendReady.WaitOne();
+                }
+            }
             catch (Exception e) { Close(e.Message); }
+            finally { while (outgoing.TryDequeue(out _)) { } }
         }
 
         public void Close(string reason = "")
@@ -72,6 +106,7 @@ namespace RiftWard.Client
             if (closed) return;
             closed = true;
             CloseReason = reason;
+            sendReady.Set();
             try { tcp.Close(); } catch { }
         }
 

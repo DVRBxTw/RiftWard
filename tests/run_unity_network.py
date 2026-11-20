@@ -1,4 +1,4 @@
-"""End-to-end test: account service + Unity dedicated server + two Unity clients play a full mission."""
+"""End-to-end test: four Unity clients clear chapter one, return home, then deploy into chapter two."""
 import hashlib, importlib.util, json, os, secrets, socket, subprocess, sys, tempfile, threading, time
 from pathlib import Path
 
@@ -34,15 +34,18 @@ def main():
         game_port = free_port(socket.SOCK_STREAM)
         env = dict(os.environ, RIFTWARD_SERVER_DATA=str(temp / "data"), RIFTWARD_API_HOST="127.0.0.1", RIFTWARD_API_PORT=str(api.server_port),
                    RIFTWARD_GAME_PORT=str(game_port), RIFTWARD_BIND="127.0.0.1", RIFTWARD_TEST_FAST="1",
-                   RIFTWARD_TEST_API_HOST="127.0.0.1", RIFTWARD_TEST_API_PORT=str(api.server_port), RIFTWARD_TEST_GAME_PORT=str(game_port))
+                   RIFTWARD_TEST_API_HOST="127.0.0.1", RIFTWARD_TEST_API_PORT=str(api.server_port), RIFTWARD_TEST_GAME_PORT=str(game_port),
+                   RIFTWARD_TEST_PLAYERS="4", RIFTWARD_TEST_ROUNDS="2", RIFTWARD_TEST_REGION="2")
         logs = [temp / "server.log"]
         procs = [subprocess.Popen([str(exe), "-batchmode", "-nographics", "-server", "-logFile", str(logs[0])], env=env)]
         deadline = time.time() + 30
         while time.time() < deadline and not (logs[0].exists() and "SERVER_READY" in logs[0].read_text(errors="replace")):
             time.sleep(0.3)
-        for n in range(2):
+        for n in range(4):
             account = store.register("QA_" + secrets.token_hex(4), secrets.token_urlsafe(16))
             store.tutorial(account["profile"]["id"])
+            for region in range(2):
+                store.complete_mission(account["profile"]["id"], region, 0)
             client_env = dict(env, RIFTWARD_TEST_TOKEN=account["token"])
             logs.append(temp / f"client{n}.log")
             procs.append(subprocess.Popen([str(exe), "-batchmode", "-nographics", "-net-test", "-logFile", str(logs[-1])], env=client_env))
@@ -56,7 +59,7 @@ def main():
             text = logs[i].read_text(errors="replace") if logs[i].exists() else ""
             interesting = [l for l in text.splitlines() if "UNITY_CLIENT" in l or "Exception" in l]
             print(f"CLIENT {i}:", *interesting, sep="\n  ")
-            if "UNITY_CLIENT_PASS" not in text or "UNITY_CLIENT_RETURN_PASS" not in text:
+            if text.count("UNITY_CLIENT_PASS") != 2 or "UNITY_CLIENT_RETURN_PASS" not in text or "UNITY_CLIENT_FAIL" in text:
                 failed.append(i)
         procs[0].kill()
         server_text = logs[0].read_text(errors="replace")

@@ -22,6 +22,7 @@ namespace RiftWard.Client
             public int[] OfferSent;
             public float LastInput, LastPing = -9f, PingWindow, LastFriendNotice = -9f;
             public int PingCount;
+            public bool ReceivedMissionInput;
             public AdminSettings Admin = new AdminSettings();
             public Room Room;
             /// Region and difficulty picked while playing alone (no room).
@@ -37,6 +38,7 @@ namespace RiftWard.Client
         /// A party with its own leader, mission and snapshots. Players outside a room are alone.
         /// Seconds without input during a mission before a player is treated as disconnected.
         const float DisconnectTimeout = 10f;
+        const float DeploymentTimeout = 45f;
 
         sealed class Room
         {
@@ -169,7 +171,8 @@ namespace RiftWard.Client
             // A member whose game stopped sending input (network gone, socket not yet closed) counts as disconnected:
             // they leave the mission without its reward, and the rest play on.
             foreach (var kv in MembersOf(room))
-                if (sim.Actors.ContainsKey(kv.Key) && clock - kv.Value.LastInput > DisconnectTimeout)
+                if (!room.Finishing && sim.Actors.ContainsKey(kv.Key) && clock - kv.Value.LastInput >
+                    (kv.Value.ReceivedMissionInput ? DisconnectTimeout : DeploymentTimeout))
                 {
                     Debug.Log("PEER_TIMEOUT " + kv.Key);
                     LeaveRoom(kv.Value, true);
@@ -185,7 +188,10 @@ namespace RiftWard.Client
                 sim.Enemies.Clear();
                 sim.GainXp(sim.XpNeed);
             }
-            sim.Tick(Time.fixedDeltaTime);
+            // Loading the world can take longer on a four-player deployment. Keep publishing the initial
+            // snapshot, but do not start combat until every remaining actor has sent their first input.
+            if (MembersOf(room).Where(kv => sim.Actors.ContainsKey(kv.Key)).All(kv => kv.Value.ReceivedMissionInput))
+                sim.Tick(Time.fixedDeltaTime);
             if (sim.Shots.Count + sim.Explosions.Count + sim.Announcements.Count > 0)
             {
                 var events = Protocol.Frame(Msg.Events, w => Protocol.WriteEvents(w, sim));
@@ -379,6 +385,7 @@ namespace RiftWard.Client
                         {
                             sim.Inputs[id] = input;
                             p.LastInput = clock;
+                            p.ReceivedMissionInput = true;
                         }
                         break;
                     case Msg.ChooseBuff:
@@ -785,6 +792,7 @@ namespace RiftWard.Client
             sim.ApplyProfileBonus(id, b.BonusOf("hp"), b.BonusOf("damage"), b.BonusOf("speed"), b.BonusOf("reload"), b.BonusOf("crit"), b.BonusOf("hp_pct"), b.BonusOf("def"));
             p.OfferSent = null;
             p.LastInput = clock;
+            p.ReceivedMissionInput = false;
         }
 
         void JoinMission(Room room, int id)

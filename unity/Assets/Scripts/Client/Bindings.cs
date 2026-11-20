@@ -5,10 +5,10 @@ using UnityEngine.UI;
 
 namespace RiftWard.Client
 {
-    /// Rebindable keyboard controls, saved on this computer. Mouse buttons (fire / aim) and Esc stay fixed.
+    /// Rebindable controls, saved on this computer. Mouse buttons (fire / aim) and Esc stay fixed.
     public static class Bindings
     {
-        public enum Action { Forward, Back, Left, Right, Jump, Dash, Descend, Reload, Skill, Interact, View, Slot1, Slot2, Chat, Inspect }
+        public enum Action { Forward, Back, Left, Right, Jump, Dash, Descend, Reload, Skill, Interact, View, Slot1, Slot2, Chat, Inspect, Ping }
 
         static readonly (Action action, string label, KeyCode key)[] Defaults =
         {
@@ -17,6 +17,7 @@ namespace RiftWard.Client
             (Action.Reload, "換彈", KeyCode.R), (Action.Skill, "手榴彈", KeyCode.Q), (Action.Interact, "救援 / 互動", KeyCode.E),
             (Action.View, "切換視角", KeyCode.V), (Action.Slot1, "1 號武器", KeyCode.Alpha1), (Action.Slot2, "2 號武器", KeyCode.Alpha2),
             (Action.Chat, "聊天", KeyCode.Return), (Action.Inspect, "檢視武器", KeyCode.F),
+            (Action.Ping, "標點 / 標點輪盤", KeyCode.Mouse2),
         };
 
         static readonly KeyCode[] keys = new KeyCode[Defaults.Length];
@@ -79,7 +80,7 @@ namespace RiftWard.Client
         public static string Summary()
         {
             string move = Name(Action.Forward) + Name(Action.Left) + Name(Action.Back) + Name(Action.Right);
-            return $"{move} 移動 · 左鍵射擊 · 右鍵瞄準 · {Name(Action.Reload)} 換彈 · {Name(Action.Slot1)}/{Name(Action.Slot2)} 換槍 · {Name(Action.Skill)} 手榴彈 · {Name(Action.Dash)} 衝刺 · {Name(Action.Interact)} 救援 · {Name(Action.View)} 視角 · {Name(Action.Inspect)} 檢視武器";
+            return $"{move} 移動 · 左鍵射擊 · 右鍵瞄準 · {Name(Action.Reload)} 換彈 · {Name(Action.Slot1)}/{Name(Action.Slot2)} 換槍 · {Name(Action.Skill)} 手榴彈 · {Name(Action.Dash)} 衝刺 · {Name(Action.Interact)} 救援 · {Name(Action.View)} 視角 · {Name(Action.Inspect)} 檢視武器 · {Name(Action.Ping)} 標點（雙擊危險／長按輪盤）";
         }
 
         /// Assigns a key; if another action already uses it, the two swap so nothing is left unbound.
