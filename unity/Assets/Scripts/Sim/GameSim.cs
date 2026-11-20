@@ -44,6 +44,8 @@ namespace RiftWard.Sim
         /// Letter grades of cleared waves, in order.
         public readonly List<string> WaveGrades = new List<string>();
         readonly List<float> waveScores = new List<float>();
+        readonly List<float> waveWeights = new List<float>();
+        int waveDowns;
         float waveStart, waveDamage;
         bool waveGraded = true;
 
@@ -102,7 +104,7 @@ namespace RiftWard.Sim
             Enemies.Clear(); Bullets.Clear(); Pickups.Clear(); Inputs.Clear(); BuffOffers.Clear();
             Wave = 0; WaveDelay = 1.8f; Elapsed = 0; Kills = 0;
             Level = 1; Xp = 0; XpNeed = Defs.XpForLevel(1); PendingLevels = 0; BuffPending = false; SuperRounds = 0; SuperPick = 0;
-            WaveGrades.Clear(); waveScores.Clear(); waveGraded = true; waveDamage = 0;
+            WaveGrades.Clear(); waveScores.Clear(); waveWeights.Clear(); waveGraded = true; waveDamage = 0;
             foreach (var a in Actors.Values) ResetActor(a);
             State = MissionState.Playing;
         }
@@ -143,7 +145,7 @@ namespace RiftWard.Sim
             var st = Defs.Weapons[id].StatsAt(a.Loadout.Level(id, "damage"), a.Loadout.Level(id, "mag"), a.Loadout.Level(id, "reload"), a.Loadout.Level(id, "over"));
             float adminDamage = a.IsAdmin ? a.Admin.Damage : 1f;
             a.Damage = st.Damage * a.DamageMult * adminDamage * Defs.WeaponRarityMult[a.Loadout.RarityOf(id)];
-            a.FireInterval = Mathf.Max(0.045f, st.Interval * a.RateMult);
+            a.FireInterval = Mathf.Max(id == "minigun" ? 0.025f : 0.045f, st.Interval * a.RateMult);
             a.Mag = st.Mag + a.MagBonus;
             a.ReloadTime = Mathf.Max(0.35f, st.Reload * a.ReloadMult);
             a.Pellets = st.Pellets;
@@ -199,7 +201,7 @@ namespace RiftWard.Sim
 
         public static void MoveActor(Actor a, PlayerInput input, float dt, float speed, bool fly)
         {
-            a.FireCooldown = Mathf.Max(0, a.FireCooldown - dt);
+            a.FireCooldown = Mathf.Max(-dt, a.FireCooldown - dt);
             a.DashCooldown = Mathf.Max(0, a.DashCooldown - dt);
             if (!a.Alive) return;
             if (input.Block && !a.Melee) speed *= Defs.AimSpeed;   // aiming down sights: a steady walk
@@ -338,7 +340,7 @@ namespace RiftWard.Sim
                     a.Reload = 0; a.Ammo = a.Mag;
                     if (input.Fire && a.FireCooldown <= 0)
                     {
-                        a.FireCooldown = a.FireInterval / (a.PerkHaste > 0 ? 1.4f : 1f);
+                        a.FireCooldown = Mathf.Max(-dt, a.FireCooldown) + a.FireInterval / (a.PerkHaste > 0 ? 1.4f : 1f);
                         Swing(a);
                     }
                     continue;
@@ -355,7 +357,7 @@ namespace RiftWard.Sim
                     if (a.Ammo > 0)
                     {
                         // P-9 perk: faster fire for a moment after a kill. The minigun fires faster as it spins up.
-                        a.FireCooldown = a.FireInterval / (a.PerkHaste > 0 ? 1f + PerkStrength(a, 0.4f) : 1f) / (minigun ? a.Spin : 1f);
+                        a.FireCooldown = Mathf.Max(-dt, a.FireCooldown) + a.FireInterval / (a.PerkHaste > 0 ? 1f + PerkStrength(a, 0.4f) : 1f) / (minigun ? a.Spin : 1f);
                         a.Ammo--;
                         Vector3 aim = input.Aim == Vector3.zero ? a.Position + Vector3.up + LookDirection(a.Yaw, 0) * 30f : CheckedAim(a, input);
                         Fire(a.Id, aim);
@@ -425,10 +427,13 @@ namespace RiftWard.Sim
         {
             waveGraded = true;
             float seconds = Elapsed - waveStart;
-            float par = 12f + 1.2f * Wave;
+            bool boss = Wave % 10 == 0;
+            float par = (12f + 1.2f * Wave + Region * 1.5f) * (1f + Difficulty * 0.12f) + (boss ? 35f : 0f);
             float score = Mathf.Clamp(100f - waveDamage * 0.6f / Mathf.Max(1, Actors.Count) - Mathf.Max(0, seconds - par) * 1.5f, 0, 100);
+            score = Mathf.Max(0, score - Mathf.Max(0, Actors.Values.Sum(a => a.StatDowns) - waveDowns) * 12f / Mathf.Max(1, Actors.Count));
             string grade = Grade(score);
             waveScores.Add(score);
+            waveWeights.Add(boss ? 4f : 1f);
             WaveGrades.Add(grade);
             Announcements.Add($"第 {Wave} 波完成 · 評分 {grade}");
         }
@@ -451,7 +456,7 @@ namespace RiftWard.Sim
 
         public static string Grade(float score) => score >= 85 ? "S" : score >= 65 ? "A" : score >= 40 ? "B" : "C";
 
-        public string MissionGrade() => waveScores.Count == 0 ? "C" : Grade(waveScores.Average() - (State == MissionState.Defeat ? 25 : 0));
+        public string MissionGrade() => waveScores.Count == 0 ? "C" : Grade(waveScores.Select((score, i) => score * waveWeights[i]).Sum() / waveWeights.Sum() - (State == MissionState.Defeat ? 25 : 0));
 
         void UpdateAmmo(Actor a, PlayerInput input, float dt)
         {
@@ -498,7 +503,7 @@ namespace RiftWard.Sim
 
         // ------------------------------------------------------------ waves
 
-        public float LevelScale => 1f + 0.08f * (Level - 1);
+        public float LevelScale => 1f + 0.08f * ((Endless ? Mathf.Min(Level, Defs.EndlessXpLevelCap) : Level) - 1);
 
         /// Entry points on the arena edge: the middle of each side and the four corners.
         static readonly Vector3[] SpawnGates =
@@ -558,7 +563,7 @@ namespace RiftWard.Sim
             int elapsedWaves = Mathf.Max(0, Wave - 1);
             float region = Region;
             float partyScale = 1f + 0.6f * (players - 1);
-            float levelDamage = 1f + 0.05f * (Level - 1);
+            float levelDamage = 1f + 0.05f * ((Endless ? Mathf.Min(Level, Defs.EndlessXpLevelCap) : Level) - 1);
             var pool = new List<int>();
             if (Wave >= 2) pool.Add(Defs.KindCharger);
             if (Wave >= 3) pool.Add(Defs.KindBomber);
@@ -580,7 +585,7 @@ namespace RiftWard.Sim
                     hasBoss = true;
                     bool emperor = Wave % 20 == 0 && Region == Defs.Regions.Length - 1;
                     float baseHealth = Wave == 10 ? 3000f : emperor ? 9000f : 7000f;
-                    if (Wave > 20) baseHealth *= 1f + 0.4f * (Wave / 10 - 2);   // endless: every later boss is tougher
+                    if (Wave > 20) baseHealth *= 1f + 0.3f * (Wave / 10 - 2);   // endless: every later boss is tougher
                     e.Hp = baseHealth * (1f + 0.18f * region) * partyScale * LevelScale;
                     e.Damage = (20f + 3f * region) * (1f + 0.03f * elapsedWaves) * levelDamage;
                     e.Speed = 1.6f * (1f + 0.1f * region) * (1f + Mathf.Min(0.2f, 0.01f * elapsedWaves));
@@ -623,6 +628,7 @@ namespace RiftWard.Sim
             foreach (var a in Actors.Values)
                 if (a.Alive) a.Hp = Mathf.Min(a.MaxHp, a.Hp + a.Regen);
             waveStart = Elapsed;
+            waveDowns = Actors.Values.Sum(a => a.StatDowns);
             waveDamage = 0;
             waveGraded = false;
             bool finalBoss = hasBoss && Enemies.Values.Any(x => x.Kind == Defs.KindEmperor);
@@ -655,8 +661,8 @@ namespace RiftWard.Sim
             var tier = Defs.Difficulty(Difficulty);
             return new Enemy
             {
-                Id = nextEnemy++, Position = position, Hp = (55f + 10f * region) * LevelScale * tier.Hp, Speed = 2.1f + 0.3f * region,
-                Damage = (10f + 2f * region) * (1f + 0.05f * (Level - 1)) * tier.Damage, ShotCooldown = Rand(1.5f, 3f),
+                Id = nextEnemy++, Position = position, Hp = (55f + 10f * region) * LevelScale * tier.Hp * Defs.EndlessHp(Wave), Speed = 2.1f + 0.3f * region,
+                Damage = (10f + 2f * region) * (1f + 0.05f * ((Endless ? Mathf.Min(Level, Defs.EndlessXpLevelCap) : Level) - 1)) * tier.Damage * Defs.EndlessDamage(Wave), ShotCooldown = Rand(1.5f, 3f),
             };
         }
 
@@ -917,7 +923,7 @@ namespace RiftWard.Sim
 
         void UpdateGadgets(float dt)
         {
-            float scale = 1f + 0.25f * Region;
+            float scale = 1f + 0.15f * Region;
             foreach (var a in Actors.Values)
             {
                 if (!a.Alive) continue;
@@ -926,13 +932,13 @@ namespace RiftWard.Sim
                     a.DroneTimer = Defs.DroneInterval * a.DroneRateMult * (a.DroneEvolved ? 0.75f : 1f);
                     var targets = Enemies.Values.Where(e => e.Hp > 0 && (e.Position - a.Position).sqrMagnitude < Defs.DroneRange * Defs.DroneRange)
                         .OrderBy(e => (e.Position - a.Position).sqrMagnitude).Take(a.Drones).ToList();
-                    for (int i = 0; i < targets.Count; i++)
+                    for (int i = 0; i < a.Drones && targets.Count > 0; i++)
                     {
-                        var e = targets[i];
+                        var e = targets[i % targets.Count];
                         if (!Enemies.ContainsKey(e.Id)) continue;
                         Vector3 origin = a.Position + Defs.DroneOffset(i, a.Drones, Elapsed);
                         Vector3 end = e.Position + Vector3.up * 1.1f * e.Scale;
-                        float dealt = Defs.DroneDamage * scale * a.DroneDamageMult * a.DamageMult * (a.DroneEvolved ? 2f : 1f);
+                        float dealt = Defs.DroneDamage * scale * a.DroneDamageMult * a.DamageMult * (a.DroneEvolved ? 2f : 1f) * (i < targets.Count ? 1f : Defs.GadgetSupport);
                         Credit(a, e, dealt);
                         e.Hp -= dealt;
                         bool killed = e.Hp <= 0;
@@ -949,11 +955,12 @@ namespace RiftWard.Sim
                     float radius = Defs.PlasmaRadius * (a.PlasmaEvolved ? 1.5f : 1f);
                     var targets = inRange.OrderByDescending(e => inRange.Count(o => (o.Position - e.Position).sqrMagnitude < radius * radius)).Take(a.PlasmaEvolved ? 2 : 1).ToList();
                     a.PlasmaTimer = Defs.PlasmaInterval * a.PlasmaRateMult;
+                    var plasmaHits = new HashSet<int>();
                     foreach (var target in targets)
                     {
                         Vector3 at = target.Position + Vector3.up;
                         Shots.Add(new ShotEvent { Shooter = GadgetShooter(a.Id, GadgetPlasma), Origin = a.Position + new Vector3(0, 2.0f, 0), End = at, Hit = true });
-                        Explode(at, radius, Defs.PlasmaDamage * scale * a.PlasmaDamageMult * a.DamageMult, a.Id, new Color32(0x9b, 0x7b, 0xff, 255));
+                        Explode(at, radius, Defs.PlasmaDamage * scale * a.PlasmaDamageMult * a.DamageMult, a.Id, new Color32(0x9b, 0x7b, 0xff, 255), plasmaHits);
                     }
                 }
             }
@@ -961,7 +968,7 @@ namespace RiftWard.Sim
 
         void UpdateOrdnance(float dt)
         {
-            float scale = 1f + 0.25f * Region;
+            float scale = 1f + 0.15f * Region;
             foreach (var a in Actors.Values)
             {
                 if (!a.Alive) continue;
@@ -971,6 +978,7 @@ namespace RiftWard.Sim
                     a.OrbitTimer = 0.35f;
                     int n = Defs.BladeCount(a.OrbitLevel);
                     float damage = (10f + 6f * a.OrbitLevel) * scale * a.DamageMult;
+                    var bladeHits = new Dictionary<int, int>();
                     for (int i = 0; i < n; i++)
                     {
                         Vector3 blade = a.Position + Defs.BladeOffset(i, n, Elapsed);
@@ -978,8 +986,12 @@ namespace RiftWard.Sim
                         {
                             if (!Enemies.ContainsKey(e.Id)) continue;
                             if (new Vector2(e.Position.x - blade.x, e.Position.z - blade.z).magnitude > 0.8f + 0.4f * e.Scale) continue;
-                            Credit(a, e, damage);
-                            e.Hp -= damage;
+                            bladeHits.TryGetValue(e.Id, out int count);
+                            if (count >= 2) continue;
+                            bladeHits[e.Id] = count + 1;
+                            float dealt = damage * (count == 0 ? 1f : 0.25f);
+                            Credit(a, e, dealt);
+                            e.Hp -= dealt;
                             if (e.Hp <= 0) KillEnemy(e, a.Id);
                         }
                     }
@@ -1000,12 +1012,12 @@ namespace RiftWard.Sim
                 {
                     var targets = Enemies.Values.Where(e => (e.Position - a.Position).sqrMagnitude < 900f).OrderBy(e => (e.Position - a.Position).sqrMagnitude).Take(Mathf.Min(5, a.MissileLevel)).ToList();
                     a.MissileTimer = targets.Count == 0 ? 0.3f : 2.6f;
-                    for (int i = 0; i < targets.Count; i++)
+                    for (int i = 0; i < Mathf.Min(5, a.MissileLevel) && targets.Count > 0; i++)
                     {
-                        float side = (i - (targets.Count - 1) / 2f) * 2.5f;
-                        var missile = new Bullet { Id = nextBullet++, Kind = BulletKind.Missile, Owner = a.Id, Target = targets[i].Id, Life = 4f,
+                        float side = (i - (Mathf.Min(5, a.MissileLevel) - 1) / 2f) * 2.5f;
+                        var missile = new Bullet { Id = nextBullet++, Kind = BulletKind.Missile, Owner = a.Id, Target = targets[i % targets.Count].Id, Life = 4f,
                             Position = a.Position + Vector3.up * 2f, Velocity = new Vector3(Mathf.Cos(a.Yaw) * side, 7f, -Mathf.Sin(a.Yaw) * side),
-                            Damage = (30f + 8f * a.MissileLevel) * scale * a.DamageMult };
+                            Damage = (30f + 8f * a.MissileLevel) * scale * a.DamageMult * (i < targets.Count ? 1f : Defs.GadgetSupport) };
                         Bullets[missile.Id] = missile;
                     }
                 }
@@ -1101,15 +1113,17 @@ namespace RiftWard.Sim
             if (a != null && e.Hp > 0) a.StatDamage += Mathf.Min(amount, e.Hp);
         }
 
-        void Explode(Vector3 position, float radius, float damage, int owner, Color32 color)
+        void Explode(Vector3 position, float radius, float damage, int owner, Color32 color, HashSet<int> previousHits = null)
         {
             foreach (var e in Enemies.Values.ToList())
             {
                 if (e.Hp <= 0 || !Enemies.ContainsKey(e.Id)) continue;
                 float d = Vector3.Distance(e.Position + Vector3.up, position);
                 if (d >= radius) continue;
-                if (Actors.TryGetValue(owner, out var credited)) Credit(credited, e, damage * (1f - 0.5f * d / radius));
-                e.Hp -= damage * (1f - 0.5f * d / radius);
+                float dealt = damage * (1f - 0.5f * d / radius);
+                if (previousHits != null && !previousHits.Add(e.Id)) dealt *= 0.5f;
+                if (Actors.TryGetValue(owner, out var credited)) Credit(credited, e, dealt);
+                e.Hp -= dealt;
                 if (e.Hp <= 0) KillEnemy(e, owner);
             }
             Explosions.Add(new ExplosionEvent { Position = position, Radius = radius, Color = color });
@@ -1609,17 +1623,17 @@ namespace RiftWard.Sim
             int steps = Defs.BuffTier(code) == 2 ? 2 : 1;
             switch (index)
             {
-                // 無盡: past the normal cap each damage pick compounds, so it keeps pace with multiplicative enemy scaling.
+                // Endless overflow remains useful without exponential damage growth.
                 case 0:
-                    if (Endless && a.BuffStacks[0] > Defs.BuffMaxStacks[0]) a.DamageMult *= 1f + Defs.EndlessDamagePick * m;
+                    if (Endless && a.BuffStacks[0] > Defs.BuffMaxStacks[0]) a.DamageMult += Defs.EndlessDamagePick * m;
                     else a.DamageMult += 0.2f * m;
                     break;
                 case 1: a.RateMult = Mathf.Max(0.3f, a.RateMult * (1f - 0.15f * m)); break;
                 case 2: a.Speed = Mathf.Min(12f, a.Speed * (1f + 0.12f * m)); break;
                 case 3:
                     float bonus = Mathf.Round(30 * m * (1f + a.HpPct));   // the life talent grows every pick too
-                    // 無盡: past the normal cap a pick grows max life by a share, keeping pace with enemy damage.
-                    if (Endless && a.BuffStacks[3] > Defs.BuffMaxStacks[3]) bonus = Mathf.Round(a.MaxHp * Defs.EndlessLifePick * m);
+                    // Flat life avoids compounding both health and the lifesteal budget.
+                    if (Endless && a.BuffStacks[3] > Defs.BuffMaxStacks[3]) bonus = Mathf.Round(Defs.EndlessLifePick * m * (1f + a.HpPct));
                     a.MaxHp += bonus;
                     a.Hp = Mathf.Min(a.MaxHp, a.Hp + bonus);
                     break;

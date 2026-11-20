@@ -197,7 +197,7 @@ namespace RiftWard.Tests
         }
 
         [Test]
-        public void EndlessDamagePicksCompoundPastTheCapAndXpCurveFlattens()
+        public void EndlessDamageOverflowIsLinearAndXpGrowsGently()
         {
             var sim = NewMission();
             sim.Endless = true;
@@ -207,8 +207,8 @@ namespace RiftWard.Tests
             Assert.AreEqual(start + 0.2f * Defs.BuffMaxStacks[0], a.DamageMult, 0.001f, "normal stacks add 20%");
             float capped = a.DamageMult;
             sim.ApplyBuff(1, 0);
-            Assert.AreEqual(capped * (1f + Defs.EndlessDamagePick), a.DamageMult, 0.001f, "past the cap a pick multiplies");
-            Assert.AreEqual(Defs.XpForLevel(Defs.EndlessXpLevelCap), Defs.XpNeed(Defs.EndlessXpLevelCap + 10, true));
+            Assert.AreEqual(capped + Defs.EndlessDamagePick, a.DamageMult, 0.001f, "overflow adds a fixed step");
+            Assert.AreEqual(Mathf.RoundToInt(Defs.XpForLevel(Defs.EndlessXpLevelCap) * 1.25f), Defs.XpNeed(Defs.EndlessXpLevelCap + 10, true));
             Assert.AreEqual(Defs.XpForLevel(30), Defs.XpNeed(30, false), "regular missions keep the full curve");
         }
 
@@ -243,7 +243,7 @@ namespace RiftWard.Tests
         }
 
         [Test]
-        public void EndlessLifePicksCompoundPastTheCap()
+        public void EndlessLifeOverflowIsFlat()
         {
             var sim = NewMission();
             sim.Endless = true;
@@ -252,7 +252,7 @@ namespace RiftWard.Tests
             Assert.AreEqual(100f + 30f * Defs.BuffMaxStacks[3], a.MaxHp, 0.01f, "normal stacks add 30");
             float capped = a.MaxHp;
             sim.ApplyBuff(1, 3);
-            Assert.AreEqual(capped + Mathf.Round(capped * Defs.EndlessLifePick), a.MaxHp, 0.01f, "past the cap a pick grows by a share");
+            Assert.AreEqual(capped + Defs.EndlessLifePick, a.MaxHp, 0.01f, "overflow grants flat life");
         }
 
         [Test]
@@ -480,7 +480,7 @@ namespace RiftWard.Tests
             sim.Tick(0.05f);
             Assert.AreEqual(MissionState.Playing, sim.State);
             Assert.AreEqual(Defs.WavesPerMission + 1, sim.Wave);
-            Assert.Greater(Defs.EndlessHp(40), 2f);
+            Assert.GreaterOrEqual(Defs.EndlessHp(40), 2f);
             Assert.AreEqual(1f, Defs.EndlessHp(20), 1e-5f);
             Assert.AreEqual(0x103, Defs.PackTier(3, true));
             Assert.AreEqual(3, Defs.TierOf(0x103));
@@ -587,9 +587,9 @@ namespace RiftWard.Tests
             Assert.AreEqual(normal.Enemies.Count + Defs.Difficulties[2].ExtraEnemies, nightmare.Enemies.Count);
             var bossN = normal.Enemies.Values.Single(e => e.Boss);
             var bossX = nightmare.Enemies.Values.Single(e => e.Boss);
-            Assert.AreEqual(bossN.MaxHp * 2.4f, bossX.MaxHp, 0.5f);
+            Assert.AreEqual(bossN.MaxHp * 2.8f, bossX.MaxHp, 0.5f);
             Assert.AreEqual(bossN.Damage * Defs.Difficulties[2].Damage, bossX.Damage, 0.01f);
-            Assert.AreEqual(1.5f, Defs.Difficulties[2].Damage, 0.001f);
+            Assert.AreEqual(1.7f, Defs.Difficulties[2].Damage, 0.001f);
             normal.Kills = nightmare.Kills = 100;
             Assert.AreEqual(Mathf.RoundToInt(normal.MissionGold() * 2.4f), nightmare.MissionGold(), 1);
             // Tier unlocks: 普通 always, each tier after the one below is cleared in that region.
@@ -1022,6 +1022,146 @@ namespace RiftWard.Tests
             sim.Actors[1].Hp = 0;
             sim.Tick(0.01f);
             Assert.AreEqual(MissionState.Defeat, sim.State);
+        }
+
+        [Test]
+        public void DroneSupportImprovesSingleTargetWithoutFullFleetMultiplication()
+        {
+            float DamageFor(int drones)
+            {
+                var sim = NewMission(); sim.Enemies.Clear(); sim.WaveDelay = 999;
+                var e = PlaceEnemy(sim, new Vector3(0, 0, 8), 10000);
+                sim.Actors[1].Drones = drones;
+                sim.Tick(1f / 60);
+                return 10000 - e.Hp;
+            }
+            float single = DamageFor(1), fleet = DamageFor(4);
+            Assert.AreEqual(single * (1 + 3 * Defs.GadgetSupport), fleet, 0.01f);
+            Assert.Less(fleet, single * 3);
+        }
+
+        [Test]
+        public void MissilesSupportSingleTargetAtReducedDamage()
+        {
+            var sim = NewMission(); sim.Enemies.Clear(); sim.WaveDelay = 999;
+            var e = PlaceEnemy(sim, new Vector3(0, 0, 10), 10000);
+            sim.Actors[1].MissileLevel = 5;
+            sim.Tick(1f / 60);
+            var missiles = sim.Bullets.Values.Where(b => b.Kind == BulletKind.Missile).ToArray();
+            Assert.AreEqual(5, missiles.Length);
+            Assert.IsTrue(missiles.All(b => b.Target == e.Id));
+            Assert.AreEqual(70 * (1 + 4 * Defs.GadgetSupport), missiles.Sum(b => b.Damage), 0.01f);
+        }
+
+        [Test]
+        public void BladeOverlapOnLargeTargetIsCapped()
+        {
+            var sim = NewMission(); sim.Enemies.Clear(); sim.WaveDelay = 999;
+            var e = PlaceEnemy(sim, new Vector3(0, 0, 0.1f), 10000);
+            e.Scale = 10; e.Speed = 0;
+            sim.Actors[1].OrbitLevel = 5;
+            sim.Tick(1f / 60);
+            Assert.AreEqual(50, 10000 - e.Hp, 0.01f, "40 primary + 10 overlapping blade");
+        }
+
+        [Test]
+        public void EndlessOverflowDoesNotExponentiallyIncreaseLifeOrDamage()
+        {
+            var sim = NewMission(); sim.Endless = true;
+            var a = sim.Actors[1];
+            for (int i = 0; i < 6; i++) { sim.ApplyBuff(1, 0); sim.ApplyBuff(1, 3); }
+            float damage = a.DamageMult, hp = a.MaxHp;
+            for (int i = 0; i < 100; i++) { sim.ApplyBuff(1, 0); sim.ApplyBuff(1, 3); }
+            Assert.AreEqual(damage + 100 * Defs.EndlessDamagePick, a.DamageMult, 0.001f);
+            Assert.AreEqual(hp + 100 * Defs.EndlessLifePick, a.MaxHp, 0.01f);
+            sim.Level = 14; float scale = sim.LevelScale;
+            sim.Level = 100; Assert.AreEqual(scale, sim.LevelScale);
+        }
+
+        [Test]
+        public void MinigunRatePicksRemainUsefulAndShotgunRewardsCloseRange()
+        {
+            var lo = new Loadout { Owned = new List<string> { "minigun" }, Equipped = new List<string> { "minigun" } };
+            var sim = NewMission(lo);
+            float initial = sim.Actors[1].FireInterval;
+            sim.ApplyBuff(1, 201);
+            Assert.Less(sim.Actors[1].FireInterval, initial * 0.8f);
+            for (int i = 0; i < 4; i++) sim.ApplyBuff(1, 201);
+            Assert.AreEqual(0.025f, sim.Actors[1].FireInterval, 0.0001f);
+            var shotgun = Defs.Weapons["shotgun"];
+            Assert.AreEqual(112, shotgun.Damage * shotgun.Pellets);
+            Assert.Greater(shotgun.Damage * shotgun.Pellets / shotgun.Interval, Defs.Weapons["pistol"].Damage / Defs.Weapons["pistol"].Interval);
+        }
+
+        [Test]
+        public void BossWavesCannotBeHiddenByEasyWaveGrades()
+        {
+            var sim = NewMission();
+            for (int wave = 1; wave <= 20; wave++)
+            {
+                sim.Wave = wave; sim.SpawnWave();
+                float par = 12 + 1.2f * wave + (wave % 10 == 0 ? 35 : 0);
+                float score = wave % 10 == 0 ? 0 : 90;
+                sim.Elapsed += par + (100 - score) / 1.5f;
+                sim.Enemies.Clear(); sim.Bullets.Clear(); sim.Pickups.Clear(); sim.WaveDelay = 999;
+                sim.Tick(0.001f);
+            }
+            Assert.AreEqual("B", sim.MissionGrade());
+            Assert.AreEqual(20, sim.WaveGrades.Count);
+        }
+
+        [Test]
+        public void SixtyHzSimulationDeliversMinigunRateUpgrades()
+        {
+            var lo = new Loadout { Owned = new List<string> { "minigun" }, Equipped = new List<string> { "minigun" } };
+            var sim = NewMission(lo); var a = sim.Actors[1];
+            sim.WaveDelay = 999; sim.Enemies.Clear();
+            a.RateMult = 0.3f; a.MagBonus = 1000; sim.RefreshWeapon(a);
+            a.Ammo = a.Mag; a.Spin = 1;
+            sim.Inputs[1] = new PlayerInput { Fire = true };
+            int ammo = a.Ammo;
+            for (int i = 0; i < 60; i++) sim.Tick(1f / 60);
+            Assert.That(ammo - a.Ammo, Is.InRange(39, 41));
+        }
+
+        [Test]
+        public void PlasmaEvolutionOverlapHasDiminishingDamage()
+        {
+            var sim = NewMission(); sim.Enemies.Clear(); sim.WaveDelay = 999;
+            var first = PlaceEnemy(sim, new Vector3(0, 0, 8), 10000);
+            PlaceEnemy(sim, new Vector3(0.01f, 0, 8), 10000);
+            var a = sim.Actors[1]; a.Plasma = true; a.PlasmaEvolved = true; a.PlasmaTimer = 0;
+            sim.Tick(1f / 60);
+            Assert.That(10000 - first.Hp, Is.InRange(104f, 106f), "70 primary and about 35 overlap");
+        }
+
+        [Test]
+        public void AllRegionsAndPartySizesRetainDifficultyAndEndlessProgression()
+        {
+            foreach (int players in new[] { 1, 4 })
+                for (int region = 0; region < 6; region++)
+                {
+                    float normalBoss = 0;
+                    for (int tier = 0; tier < 4; tier++)
+                    {
+                        var sim = new GameSim(7) { EnemyVariety = false, Endless = true };
+                        for (int player = 1; player <= players; player++) sim.AddActor(player, new Loadout());
+                        sim.StartMission(region, tier); sim.Level = 14;
+                        float previous = 0;
+                        foreach (int wave in new[] { 20, 40, 60 })
+                        {
+                            sim.Enemies.Clear(); sim.Wave = wave; sim.SpawnWave();
+                            float hp = sim.Enemies.Values.Single(e => e.Boss).MaxHp;
+                            Assert.Greater(hp, previous); previous = hp;
+                            Assert.IsTrue(sim.Enemies.Values.All(e => e.Hp > 0 && e.Damage > 0));
+                            if (wave == 20)
+                            {
+                                if (tier == 0) normalBoss = hp;
+                                Assert.AreEqual(normalBoss * Defs.Difficulty(tier).Hp, hp, 0.1f);
+                            }
+                        }
+                    }
+                }
         }
     }
 }

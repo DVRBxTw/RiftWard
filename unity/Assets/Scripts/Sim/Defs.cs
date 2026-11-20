@@ -33,7 +33,7 @@ namespace RiftWard.Sim
         {
             new DifficultyDef("普通", "NORMAL", "標準的帝國部隊。", 1f, 1f, 0, 1f, 1f, new Color32(0x9b, 0xd3, 0x6a, 255)),
             new DifficultyDef("困難", "HARD", "敵人血量 ×1.6、傷害 ×1.3，每波多 2 名。金幣 ×1.6、經驗 ×1.25。", 1.6f, 1.3f, 2, 1.6f, 1.25f, new Color32(0xf0, 0xb2, 0x4a, 255)),
-            new DifficultyDef("噩夢", "NIGHTMARE", "敵人血量 ×2.4、傷害 ×1.5，每波多 4 名。金幣 ×2.4、經驗 ×1.5。建議中期裝備挑戰。", 2.4f, 1.5f, 4, 2.4f, 1.5f, new Color32(0xe5, 0x53, 0x4b, 255)),
+            new DifficultyDef("噩夢", "NIGHTMARE", "敵人血量 ×2.8、傷害 ×1.7，每波多 4 名。金幣 ×2.4、經驗 ×1.5。建議中後期裝備挑戰。", 2.8f, 1.7f, 4, 2.4f, 1.5f, new Color32(0xe5, 0x53, 0x4b, 255)),
             new DifficultyDef("地獄", "INFERNO", "敵人血量 ×5.5、傷害 ×2.4，每波多 6 名。金幣 ×3.5、經驗 ×1.75。給頂尖裝備的挑戰。", 5.5f, 2.4f, 6, 3.5f, 1.75f, new Color32(0xff, 0x3b, 0x9a, 255)),
         };
 
@@ -52,15 +52,15 @@ namespace RiftWard.Sim
         /// Endless opens in a region once it has been cleared on any difficulty.
         public static bool EndlessOpen(IReadOnlyList<int> cleared, int region) => region >= 0 && region < cleared.Count && cleared[region] >= 0;
         /// Endless scaling past the last regular wave: enemy health and damage keep climbing.
-        public static float EndlessHp(int wave) => 1f + 0.07f * Mathf.Max(0, wave - WavesPerMission);
-        public static float EndlessDamage(int wave) => 1f + 0.035f * Mathf.Max(0, wave - WavesPerMission);
+        public static float EndlessHp(int wave) => 1f + 0.05f * Mathf.Max(0, wave - WavesPerMission);
+        public static float EndlessDamage(int wave) => 1f + 0.03f * Mathf.Max(0, wave - WavesPerMission);
 
         public static bool DifficultyOpen(IReadOnlyList<int> cleared, int region, int tier) =>
             tier <= 0 || (cleared != null && region >= 0 && region < cleared.Count && cleared[region] >= tier - 1);
         /// XP needed to go from this account level to the next; mirrors level_for() in server/service.py.
         public static int AccountLevelNeed(int level) => 100 + 50 * level;
 
-        public const string Version = "0.7.33-unity.1";
+        public const string Version = "0.7.34-unity.1";
 
         // Player movement
         public const float EyeHeight = 1.65f;
@@ -125,13 +125,14 @@ namespace RiftWard.Sim
         public static float EffectiveLevel(int level) => Mathf.Min(level, SoftUpgradeLevel) + 0.5f * Mathf.Max(0, level - SoftUpgradeLevel);
 
         public static int XpForLevel(int level) => Mathf.RoundToInt(XpBase * Mathf.Pow(XpGrowth, level - 1));
-        /// 無盡 stops the XP curve climbing past this level (the exponential curve starved later waves of picks).
+        /// Beyond this level endless XP requirements grow gently and linearly.
         public const int EndlessXpLevelCap = 14;
-        public static int XpNeed(int level, bool endless) => XpForLevel(endless ? Mathf.Min(level, EndlessXpLevelCap) : level);
-        /// 無盡 damage picks beyond the normal cap multiply damage by 1 + this × rarity instead of adding 20%.
-        public const float EndlessDamagePick = 0.12f;
-        /// 無盡 life picks beyond the normal cap multiply max life by 1 + this × rarity instead of adding 30.
-        public const float EndlessLifePick = 0.10f;
+        public static int XpNeed(int level, bool endless) => !endless || level <= EndlessXpLevelCap ? XpForLevel(level) :
+            Mathf.RoundToInt(XpForLevel(EndlessXpLevelCap) * (1f + 0.025f * (level - EndlessXpLevelCap)));
+        /// Overflow damage adds a smaller fixed step instead of compounding forever.
+        public const float EndlessDamagePick = 0.12f; // additive damage multiplier per common overflow pick
+        /// Overflow life adds flat life; rarity and life talents still apply.
+        public const float EndlessLifePick = 40f; // flat life per common overflow pick, before life talents
 
         /// Cover walls: center x, center z, half x, half z, height. Block movement and enemy bullets.
         public static readonly float[][] Covers =
@@ -178,7 +179,7 @@ namespace RiftWard.Sim
         {
             ["pistol"] = new WeaponDef("pistol", "P-9 制式手槍", "手槍", "初始武器。彈匣小、換彈快，穩定可靠。", 28f, 0.24f, 12, 1.1f, 1, 0f, 2f, 0.85f, 0, 0.022f, 0.006f, 1.0f),
             ["rifle"] = new WeaponDef("rifle", "AR-27 突擊步槍", "步槍", "全自動高射速，適合壓制大群敵人。", 17f, 0.1f, 30, 1.8f, 1, 0.012f, 2f, 0.75f, 400, 0.019f, 0.007f, 1.3f),
-            ["shotgun"] = new WeaponDef("shotgun", "SG-8 霰彈槍", "霰彈", "一次射出 7 顆彈丸，近距離威力驚人。", 13f, 0.8f, 6, 2.2f, 7, 0.07f, 1.5f, 0.85f, 600, 0.065f, 0.015f, 1.4f),
+            ["shotgun"] = new WeaponDef("shotgun", "SG-8 霰彈槍", "霰彈", "一次射出 7 顆彈丸，近距離威力驚人。", 16f, 0.75f, 6, 2.0f, 7, 0.07f, 1.5f, 0.85f, 600, 0.065f, 0.015f, 1.4f),
             ["sniper"] = new WeaponDef("sniper", "LR-50 狙擊槍", "狙擊", "單發高傷害，爆頭 3 倍。右鍵開鏡。", 95f, 1.0f, 5, 2.4f, 1, 0f, 3f, 0.35f, 800, 0.09f, 0.01f, 1.6f),
             ["minigun"] = new WeaponDef("minigun", "M-7 熔爐機槍", "機槍", "六管轉輪：越轉越快、越熱越痛，過熱需冷卻 2 秒；開火時移動變慢。", 11f, 0.05f, 120, 3.4f, 1, 0.03f, 1.5f, 0.85f, 0, 0.006f, 0.008f, 1.5f),
             ["saber"] = new WeaponDef("saber", "EX-1 能量光劍", "光劍", "高能電漿刃。左鍵揮砍前方扇形，一次最多砍中 3 名敵人（最近的一名全額，其餘 60%）；右鍵格擋正面子彈。", 55f, 0.42f, 1, 0f, 1, 0f, 1f, 1f, 0, 0.006f, 0f, 1.5f, melee: true, range: 2.8f),
@@ -280,6 +281,7 @@ namespace RiftWard.Sim
 
         public static int BladeCount(int level) => level <= 0 ? 0 : Mathf.Min(5, 1 + level);
         public const int MaxDrones = 4;
+        public const float GadgetSupport = 0.35f;
         public const float DroneInterval = 1.1f, DroneDamage = 14f, DroneRange = 24f;
         public const float PlasmaInterval = 6f, PlasmaDamage = 70f, PlasmaRadius = 4.2f, PlasmaRange = 30f;
 
