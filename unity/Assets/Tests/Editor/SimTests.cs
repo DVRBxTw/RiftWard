@@ -364,6 +364,23 @@ namespace RiftWard.Tests
         }
 
         [Test]
+        public void ShieldPlateSoaksFrontalHitsThenShatters()
+        {
+            var e = new Enemy { Kind = Defs.KindShield, MaxHp = 100, Hp = 100, Yaw = 0 };   // facing +z
+            var front = new Vector3(0, 0, -1);   // a round travelling toward its face
+            Assert.AreEqual(0.25f, GameSim.DamageMultiplier(e, front, false), 1e-4);
+            Assert.AreEqual(1f, GameSim.DamageMultiplier(e, -front, false), 1e-4, "from behind: no plate");
+            GameSim.Chip(e, 40, -front, false);
+            Assert.IsTrue(e.ShieldHp < 0, "hits from behind never touch the plate");
+            GameSim.Chip(e, 40, front, false);
+            Assert.AreEqual(100 * Defs.ShieldPlateShare - 40, e.ShieldHp, 1e-3);
+            Assert.IsFalse(e.ShieldBroken);
+            GameSim.Chip(e, 40, front, false);
+            Assert.IsTrue(e.ShieldBroken);
+            Assert.AreEqual(1f, GameSim.DamageMultiplier(e, front, false), 1e-4, "a shattered plate blocks nothing");
+        }
+
+        [Test]
         public void ClearingTheFinalWaveWinsAndLeftoverRoundsVanish()
         {
             // A dead boss's last volley used to land during the victory delay and could turn a win into a defeat.

@@ -32,6 +32,9 @@ namespace RiftWard.Sim
         JoinAnswer = 21,
         /// [int member id]: the leader hands the room to another member.
         TransferLeader = 22,
+        /// [byte count, count × byte]: the player's own upgrade stacks this mission (sent when they change),
+        /// for the hold-Tab upgrade panel.
+        BuffStacks = 23,
         // server → client
         Welcome = 50, Error = 51, Lobby = 52, Deploy = 53, Snapshot = 54, Events = 55, BuffOffer = 56, Finish = 57, ProfileSync = 58, Notice = 59, BackHome = 60,
         /// [byte channel][int account id][string name][string title][string text][bool admin]
@@ -162,7 +165,7 @@ namespace RiftWard.Sim
             foreach (var e in sim.Enemies.Values)
             {
                 w.Write(e.Id); w.WriteQ(e.Position); w.Write(e.Hp); w.Write(e.MaxHp); w.WriteAngle(e.Yaw);
-                w.Write((byte)((e.Boss ? 1 : 0) | (e.Elite ? 2 : 0))); w.Write((byte)e.Kind); w.Write((byte)e.State);
+                w.Write((byte)((e.Boss ? 1 : 0) | (e.Elite ? 2 : 0) | (e.ShieldBroken ? 4 : 0))); w.Write((byte)e.Kind); w.Write((byte)e.State);
             }
             w.Write((ushort)sim.Bullets.Count);
             foreach (var b in sim.Bullets.Values) { w.Write(b.Id); w.WriteQ(b.Position); w.WriteQ(b.Velocity); w.Write((byte)b.Kind); }
@@ -220,7 +223,7 @@ namespace RiftWard.Sim
                 if (!sim.Enemies.TryGetValue(id, out var e)) sim.Enemies[id] = e = new Enemy { Id = id };
                 e.Position = r.ReadQ(); e.Hp = r.ReadSingle(); e.MaxHp = r.ReadSingle(); e.Yaw = r.ReadAngle();
                 int flags = r.ReadByte();
-                e.Boss = (flags & 1) != 0; e.Elite = (flags & 2) != 0; e.Kind = r.ReadByte(); e.State = r.ReadByte();
+                e.Boss = (flags & 1) != 0; e.Elite = (flags & 2) != 0; e.ShieldBroken = (flags & 4) != 0; e.Kind = r.ReadByte(); e.State = r.ReadByte();
                 e.Scale = Defs.Kinds[Mathf.Clamp(e.Kind, 0, Defs.Kinds.Length - 1)].Scale * (e.Elite ? 1.35f : 1f);
             }
             foreach (var id in sim.Enemies.Keys.Where(id => !seen.Contains(id)).ToList()) sim.Enemies.Remove(id);

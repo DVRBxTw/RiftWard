@@ -1,3 +1,4 @@
+using System.Linq;
 using System.Collections.Generic;
 using RiftWard.Sim;
 using UnityEngine;
@@ -512,8 +513,57 @@ namespace RiftWard.Client
             return true;
         }
 
+        // ---- hold Tab: this mission's upgrades
+        RectTransform upgradesRoot;
+        string upgradesShown;
+        /// Screenshot runs show the panel without a key held.
+        public bool ForceUpgrades;
+
+        void UpdateUpgrades(GameSim sim, Actor local)
+        {
+            bool show = local != null && sim != null && (Input.GetKey(KeyCode.Tab) || ForceUpgrades) && !ChatHud.Typing && !sim.BuffPending;
+            if (!show) { if (upgradesRoot != null) upgradesRoot.gameObject.SetActive(false); return; }
+            string sig = string.Join(",", local.BuffStacks) + (sim.Endless ? "e" : "");
+            if (upgradesRoot != null && sig == upgradesShown) { upgradesRoot.gameObject.SetActive(true); return; }
+            if (upgradesRoot != null) Object.Destroy(upgradesRoot.gameObject);
+            upgradesShown = sig;
+            var owned = new List<int>();
+            for (int i = 0; i < Defs.Buffs.Length && i < local.BuffStacks.Length; i++) if (local.BuffStacks[i] > 0) owned.Add(i);
+            int rows = Mathf.Max(1, (owned.Count + 1) / 2);
+            float height = 92 + rows * 46;
+            var box = Ui.Box(Canvas.transform, new Color(0.05f, 0.055f, 0.065f, 0.97f), "Upgrades");
+            box.raycastTarget = false;
+            upgradesRoot = box.rectTransform.Place(new Vector2(0.5f, 0.5f), new Vector2(0, 20), new Vector2(720, height));
+            Ui.Frame(upgradesRoot, Palette.Amber, 1, 0);
+            Ui.Label(upgradesRoot, "本場升級", 22, Palette.Bone, TextAnchor.UpperLeft, true).rectTransform.Place(new Vector2(0, 1), new Vector2(26, -18), new Vector2(300, 30), new Vector2(0, 1));
+            Ui.Label(upgradesRoot, $"Lv {sim.Level} · 已選 {local.BuffStacks.Sum()} 次 · 放開 Tab 關閉", 13, Palette.Muted, TextAnchor.UpperRight)
+                .rectTransform.Place(new Vector2(1, 1), new Vector2(-26, -26), new Vector2(360, 20), new Vector2(1, 1));
+            if (owned.Count == 0)
+                Ui.Label(upgradesRoot, "還沒有選擇任何升級，升級時會出現三選一。", 15, Palette.Muted).rectTransform.Place(new Vector2(0, 1), new Vector2(26, -70), new Vector2(600, 24), new Vector2(0, 1));
+            for (int k = 0; k < owned.Count; k++)
+            {
+                int index = owned[k], have = local.BuffStacks[index];
+                int limit = Defs.BuffStackLimit(index, sim.Endless);
+                var cell = Ui.Box(upgradesRoot, new Color(1, 1, 1, 0.045f), "Buff").rectTransform
+                    .Place(new Vector2(0, 1), new Vector2(26 + (k % 2) * 340, -64 - (k / 2) * 46), new Vector2(328, 40), new Vector2(0, 1));
+                bool maxed = limit < 99 && have >= limit;
+                Ui.Label(cell, Defs.Buffs[index].Name, 15, maxed ? Palette.Amber : Palette.Bone, TextAnchor.MiddleLeft, true).rectTransform.Place(new Vector2(0, 0.5f), new Vector2(12, 0), new Vector2(130, 30), new Vector2(0, 0.5f));
+                if (limit < 99)
+                {
+                    float pipW = Mathf.Min(14, 150f / limit - 3);
+                    for (int n = 0; n < limit; n++)
+                        Ui.Box(cell, n < have ? (maxed ? Palette.Amber : Palette.Bone) : new Color(1, 1, 1, 0.12f), "Pip").rectTransform
+                            .Place(new Vector2(0, 0.5f), new Vector2(146 + n * (pipW + 3), 0), new Vector2(pipW, 8), new Vector2(0, 0.5f));
+                }
+                Ui.Label(cell, maxed ? "MAX" : limit < 99 ? $"{have}/{limit}" : $"×{have}", 13, maxed ? Palette.Amber : Palette.Muted, TextAnchor.MiddleRight, maxed)
+                    .rectTransform.Place(new Vector2(1, 0.5f), new Vector2(-10, 0), new Vector2(60, 30), new Vector2(1, 0.5f));
+            }
+            foreach (var g in upgradesRoot.GetComponentsInChildren<Graphic>()) g.raycastTarget = false;
+        }
+
         public void Tick(float dt, GameSim sim, Actor local, Camera camera, bool thirdPerson, string toastText)
         {
+            UpdateUpgrades(sim, local);
             bannerTimer = Mathf.Max(0, bannerTimer - dt);
             hitTimer = Mathf.Max(0, hitTimer - dt);
             headTimer = Mathf.Max(0, headTimer - dt);

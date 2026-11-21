@@ -140,6 +140,8 @@ namespace RiftWard.Client
                 // Kill confirmation: a bright tap falling to a soft thud.
                 case "kill": return Events(name, new[] { (0f, 0.05f, 1320f, 0.05f, 0.35f), (0.045f, 0.11f, 520f, 0.15f, 0.45f) });
                 case "vent": return Hiss(name, 0.75f);
+                // Dash: a rushing gust of wind that sweeps up and away.
+                case "dash": return Gust(name, 0.42f);
                 // Blade connecting: a hot sizzle with a low thump.
                 case "saber_hit": return Events(name, new[] { (0f, 0.06f, 160f, 0.15f, 0.6f), (0.01f, 0.1f, 1200f, 0.35f, 0.3f) });
                 // Shouldering the gun: cloth shift and a soft stock tap; lowering it is the shift alone, quieter.
@@ -301,6 +303,31 @@ namespace RiftWard.Client
                 prev = low;
                 float env = Mathf.Min(1f, t / 0.04f) * Mathf.Exp(-t * 4.5f);
                 data[i] = (high * 1.6f + low * 0.25f) * env * 0.5f;
+            }
+            var clip = AudioClip.Create(name, count, 1, Rate, false);
+            clip.SetData(data, 0);
+            return clip;
+        }
+
+        /// Wind gust: noise through a resonant band-pass whose centre sweeps up then down, with a quick swell.
+        static AudioClip Gust(string name, float duration)
+        {
+            int count = (int)(Rate * duration);
+            var data = new float[count];
+            var rng = new System.Random(name.GetHashCode());
+            float lowState = 0, bandState = 0;
+            for (int i = 0; i < count; i++)
+            {
+                float t = (float)i / Rate, u = t / duration;
+                float centre = Mathf.Lerp(380f, 1700f, Mathf.Sin(Mathf.PI * Mathf.Min(1f, u * 1.3f)));
+                float f = 2f * Mathf.Sin(Mathf.PI * centre / Rate);
+                float n = (float)rng.NextDouble() * 2 - 1;
+                // State-variable filter, band-pass output.
+                lowState += f * bandState;
+                float high = n - lowState - 0.45f * bandState;
+                bandState += f * high;
+                float env = Mathf.Min(1f, t / 0.05f) * Mathf.Pow(1f - u, 1.6f);
+                data[i] = bandState * env * 0.55f;
             }
             var clip = AudioClip.Create(name, count, 1, Rate, false);
             clip.SetData(data, 0);

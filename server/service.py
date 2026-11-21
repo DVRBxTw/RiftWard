@@ -103,6 +103,20 @@ DAILY_TASKS = {
     "hard":      {"text": "在困難以上難度完成 {goal} 場任務", "goal": 1, "reward": {"weapon_keys": 1}},
 }
 DAILY_BONUS = {"keys": 2, "weapon_keys": 1}
+# ---- weekly missions: five bigger tasks a week (Monday 00:00 Taiwan time), same progress source as the dailies.
+WEEKLY_COUNT = 5
+WEEKLY_TASKS = {
+    "kills":     {"text": "擊殺 {goal} 名敵人",              "goal": 1000, "reward": {"gold": 1500}},
+    "headshots": {"text": "爆頭命中 {goal} 次",              "goal": 300,  "reward": {"gold": 1000, "keys": 3}},
+    "missions":  {"text": "出擊 {goal} 場任務",              "goal": 15,   "reward": {"keys": 5}},
+    "victories": {"text": "成功完成 {goal} 場任務",          "goal": 8,    "reward": {"weapon_keys": 2}},
+    "waves":     {"text": "累計推進 {goal} 波",              "goal": 250,  "reward": {"gold": 1500, "keys": 2}},
+    "bosses":    {"text": "擊敗 {goal} 隻 Boss",             "goal": 5,    "reward": {"weapon_keys": 2}},
+    "hard":      {"text": "在困難以上難度完成 {goal} 場任務", "goal": 4,    "reward": {"weapon_keys": 3}},
+    "s_grades":  {"text": "以 S 評分完成 {goal} 場任務",     "goal": 3,    "reward": {"weapon_keys": 2, "shards": 1}},
+}
+WEEKLY_BONUS = {"weapon_keys": 3, "shards": 3}
+GRADE_ORDER = ("S", "A", "B", "C")
 
 
 # ---- achievements: lifetime goals in three tiers (銅 / 銀 / 金). Progress is derived from the account's records,
@@ -139,6 +153,23 @@ def daily_day(now=None) -> str:
 def daily_resets_in(now=None) -> int:
     local = (time.time() if now is None else now) + DAILY_UTC_OFFSET
     return int(86400 - local % 86400)
+
+
+def weekly_week(now=None) -> str:
+    """The Monday (Taiwan time) that starts this week, as YYYY-MM-DD."""
+    local = (time.time() if now is None else now) + DAILY_UTC_OFFSET
+    monday = local - (time.gmtime(local).tm_wday * 86400) - local % 86400
+    return time.strftime("%Y-%m-%d", time.gmtime(monday))
+
+
+def weekly_resets_in(now=None) -> int:
+    local = (time.time() if now is None else now) + DAILY_UTC_OFFSET
+    return int((7 - time.gmtime(local).tm_wday) * 86400 - local % 86400)
+
+
+def roll_weekly(account_id, week, veteran):
+    pool = [k for k in WEEKLY_TASKS if k != "hard" or veteran]
+    return random.Random(f"w:{account_id}:{week}").sample(pool, WEEKLY_COUNT)
 
 
 def roll_daily(account_id, day, veteran):
@@ -182,7 +213,7 @@ def gear_defense(item) -> float:
 
 
 def gear_invested(item) -> int:
-    """Gold put into an item: enhancement levels plus 突破 tiers (salvage refunds half)."""
+    """Gold put into an item: enhancement levels plus 突破 tiers (salvage refunds 80%)."""
     return sum(gear_upgrade_cost(item["rarity"], n) for n in range(item.get("level", 0))) + sum(LIMIT_GOLD[:item.get("limit", 0)])
 
 
@@ -357,9 +388,14 @@ def add_copy(loadout, weapon, rarity):
 
 
 def copy_refund(weapon, rarity, levels):
-    """What salvaging a copy pays: its base value plus half of what was invested in it."""
+    """What salvaging a copy pays: its base value plus 80% of the gold and all the shards invested in it."""
     gold, shards = weapon_invested(weapon, rarity, levels)
-    return DUPLICATE_GOLD[rarity] + gold // 2, SALVAGE_SHARDS[rarity] + shards // 2
+    return DUPLICATE_GOLD[rarity] + refund_gold(gold), SALVAGE_SHARDS[rarity] + shards
+
+
+def refund_gold(invested: int) -> int:
+    """Salvage gives back 80% of the gold spent improving an item (shards come back in full)."""
+    return invested * 4 // 5
 
 
 def _locked(method):
@@ -454,7 +490,7 @@ class Store:
                 db.execute("ALTER TABLE progress ADD COLUMN stats TEXT NOT NULL DEFAULT '{}'")
             for column, ddl in (("xp", "INTEGER NOT NULL DEFAULT 0"), ("keys", "INTEGER NOT NULL DEFAULT 0"), ("weapon_keys", "INTEGER NOT NULL DEFAULT 0"),
                                 ("talents", "TEXT NOT NULL DEFAULT '{}'"), ("gear", "TEXT NOT NULL DEFAULT '{}'"), ("pity", "TEXT NOT NULL DEFAULT '{}'"),
-                                ("cleared", "TEXT NOT NULL DEFAULT '[]'"), ("daily", "TEXT NOT NULL DEFAULT '{}'"),
+                                ("cleared", "TEXT NOT NULL DEFAULT '[]'"), ("daily", "TEXT NOT NULL DEFAULT '{}'"), ("weekly", "TEXT NOT NULL DEFAULT '{}'"), ("grades", "TEXT NOT NULL DEFAULT '{}'"),
                                 ("achievements", "TEXT NOT NULL DEFAULT '{}'"), ("last_seen", "INTEGER NOT NULL DEFAULT 0"),
                                 ("shards", "INTEGER NOT NULL DEFAULT 0"), ("limited_guarantee", "INTEGER NOT NULL DEFAULT 0")):
                 if column not in columns:
@@ -565,6 +601,8 @@ class Store:
         if passed:
             result["unlocked"] = max(result["unlocked"], min(REGION_COUNT - 1, passed[-1] + 1))
         result["daily"] = self._daily_view(self._daily(account_id, cleared))
+        result["weekly"] = self._weekly_view(self._weekly(account_id, cleared))
+        result["grades"] = self.grades(account_id)
         state = self._achievement_state(account_id)
         progress = self._achievement_progress(result, gear)
         result["achievements"] = self._achievement_view(state, progress)
@@ -767,6 +805,78 @@ class Store:
                 data["progress"][t] += record[t]
             data["progress"][t] = min(DAILY_TASKS[t]["goal"], data["progress"][t])
         self._save_daily(account_id, data)
+
+    # ---- weekly missions
+
+    def _weekly(self, account_id, cleared):
+        """This week's state, rolled over (and saved) when the week has changed."""
+        with self.lock:
+            with self.connect() as db:
+                row = db.execute("SELECT weekly FROM progress WHERE account_id=?", (account_id,)).fetchone()
+            try:
+                data = json.loads(row[0]) if row else {}
+            except (TypeError, ValueError):
+                data = {}
+            data = data if isinstance(data, dict) else {}
+            week = weekly_week()
+            tasks = data.get("tasks")
+            if data.get("week") != week or not isinstance(tasks, list) or len(tasks) != WEEKLY_COUNT or not all(t in WEEKLY_TASKS for t in tasks):
+                data = {"week": week, "tasks": roll_weekly(account_id, week, max(cleared) >= 0), "progress": {}, "claimed": [], "bonus": False}
+                self._save_weekly(account_id, data)
+            progress = data.get("progress") if isinstance(data.get("progress"), dict) else {}
+            data["progress"] = {t: min(WEEKLY_TASKS[t]["goal"], progress[t]) if isinstance(progress.get(t), int) and progress[t] > 0 else 0 for t in data["tasks"]}
+            claimed = data.get("claimed") if isinstance(data.get("claimed"), list) else []
+            data["claimed"] = [t for t in data["tasks"] if t in claimed]
+            data["bonus"] = data.get("bonus") is True
+            return data
+
+    def _save_weekly(self, account_id, data):
+        with self.connect() as db:
+            db.execute("UPDATE progress SET weekly=? WHERE account_id=?", (json.dumps(data), account_id))
+
+    @staticmethod
+    def _weekly_view(data):
+        tasks = []
+        for t in data["tasks"]:
+            spec = WEEKLY_TASKS[t]
+            tasks.append({"id": t, "text": spec["text"].format(goal=spec["goal"]), "goal": spec["goal"], "progress": data["progress"][t],
+                          "reward": spec["reward"], "done": data["progress"][t] >= spec["goal"], "claimed": t in data["claimed"]})
+        return {"day": data["week"], "resets_in": weekly_resets_in(), "tasks": tasks,
+                "bonus": {"reward": WEEKLY_BONUS, "ready": len(data["claimed"]) == WEEKLY_COUNT, "claimed": data["bonus"]}}
+
+    def _advance_weekly(self, account_id, cleared, record):
+        data = self._weekly(account_id, cleared)
+        for t in data["tasks"]:
+            data["progress"][t] = min(WEEKLY_TASKS[t]["goal"], data["progress"][t] + record.get(t, 0))
+        self._save_weekly(account_id, data)
+
+    @_locked
+    def claim_weekly(self, account_id: int, task):
+        """Pays out one finished weekly task, or the all-tasks bonus (task == "bonus")."""
+        profile = self.profile(account_id)
+        if profile is None:
+            raise ValueError("找不到帳號")
+        data = self._weekly(account_id, profile["cleared"])
+        if task == "bonus":
+            if len(data["claimed"]) < WEEKLY_COUNT:
+                raise ValueError("請先領取本週全部任務的獎勵")
+            if data["bonus"]:
+                raise ValueError("本週的額外獎勵已領取")
+            reward, data["bonus"] = WEEKLY_BONUS, True
+        else:
+            if task not in data["tasks"]:
+                raise ValueError("找不到此任務，可能已換週")
+            if task in data["claimed"]:
+                raise ValueError("此任務獎勵已領取")
+            if data["progress"][task] < WEEKLY_TASKS[task]["goal"]:
+                raise ValueError("任務尚未完成")
+            reward = WEEKLY_TASKS[task]["reward"]
+            data["claimed"].append(task)
+        self._save_weekly(account_id, data)
+        with self.connect() as db:
+            db.execute("UPDATE progress SET gold=gold+?, keys=keys+?, weapon_keys=weapon_keys+?, shards=shards+? WHERE account_id=?",
+                       (reward.get("gold", 0), reward.get("keys", 0), reward.get("weapon_keys", 0), reward.get("shards", 0), account_id))
+        return reward, self.profile(account_id)
 
     @_locked
     def claim_daily(self, account_id: int, task):
@@ -1206,7 +1316,7 @@ class Store:
         self._save_gear(account_id, gear)
         with self.connect() as db:
             db.execute("UPDATE progress SET gold=gold+?, shards=shards+? WHERE account_id=?",
-                       (GEAR_SALVAGE_GOLD[item["rarity"]] + gear_invested(item) // 2, SALVAGE_SHARDS[item["rarity"]] + gear_invested_shards(item) // 2, account_id))
+                       (GEAR_SALVAGE_GOLD[item["rarity"]] + refund_gold(gear_invested(item)), SALVAGE_SHARDS[item["rarity"]] + gear_invested_shards(item), account_id))
         return self.profile(account_id)
 
     @_locked
@@ -1233,8 +1343,8 @@ class Store:
             for item in gear["inventory"]:
                 if item["rarity"] in chosen and item["id"] not in worn and (slot is None or item["slot"] == slot):
                     count += 1
-                    gold += GEAR_SALVAGE_GOLD[item["rarity"]] + gear_invested(item) // 2
-                    shards += SALVAGE_SHARDS[item["rarity"]] + gear_invested_shards(item) // 2
+                    gold += GEAR_SALVAGE_GOLD[item["rarity"]] + refund_gold(gear_invested(item))
+                    shards += SALVAGE_SHARDS[item["rarity"]] + gear_invested_shards(item)
                 else:
                     kept.append(item)
             gear["inventory"] = kept
@@ -1280,6 +1390,15 @@ class Store:
         return {k: int(data.get(k, 0)) if isinstance(data.get(k, 0), int) else 0 for k in cls.STAT_KEYS}
 
     @_locked
+    def grades(self, account_id: int):
+        with self.connect() as db:
+            row = db.execute("SELECT grades FROM progress WHERE account_id=?", (account_id,)).fetchone()
+        try:
+            data = json.loads(row[0]) if row else {}
+        except (TypeError, ValueError):
+            data = {}
+        return {k: v for k, v in data.items() if v in GRADE_ORDER} if isinstance(data, dict) else {}
+
     def record_stats(self, account_id: int, stats):
         """Adds one mission's combat record (reported by the game server) to lifetime stats."""
         if not isinstance(stats, dict):
@@ -1327,9 +1446,21 @@ class Store:
         total["hard_victories"] += 1 if victory and tier >= 1 else 0
         with self.connect() as db:
             db.execute("UPDATE progress SET stats=? WHERE account_id=?", (json.dumps(total), account_id))
+        # Best grade per stage and difficulty ("region:tier"), shown on the deploy screen.
+        region = stats.get("region")
+        if victory and grade and isinstance(region, int) and not isinstance(region, bool) and 0 <= region < REGION_COUNT:
+            grades = self.grades(account_id)
+            slot = f"{region}:{tier}"
+            if GRADE_ORDER.index(grade) < GRADE_ORDER.index(grades.get(slot, "C")) or slot not in grades:
+                grades[slot] = grade
+                with self.connect() as db:
+                    db.execute("UPDATE progress SET grades=? WHERE account_id=?", (json.dumps(grades), account_id))
         self._advance_daily(account_id, profile["cleared"], {
             "kills": values["kills"], "headshots": values["headshots"], "missions": 1, "waves": values["wave"], "wave": values["wave"],
             "victories": 1 if victory else 0, "hard": 1 if victory and tier >= 1 else 0})
+        self._advance_weekly(account_id, profile["cleared"], {
+            "kills": values["kills"], "headshots": values["headshots"], "missions": 1, "waves": values["wave"], "victories": 1 if victory else 0,
+            "bosses": values["boss_kills"], "hard": 1 if victory and tier >= 1 else 0, "s_grades": 1 if victory and grade == "S" else 0})
 
     def endless_leaderboard(self, account_id=None, limit=20):
         """Best endless wave per player, highest first; banned accounts are left out."""
@@ -2446,6 +2577,13 @@ class Handler(BaseHTTPRequestHandler):
         elif self.path == "/api/daily/claim":
             try:
                 reward, result = store.claim_daily(profile["id"], data.get("task"))
+            except ValueError as exc:
+                self._json(400, {"ok": False, "error": str(exc)})
+                return
+            self._json(200, {"ok": True, "reward": reward, "profile": result})
+        elif self.path == "/api/weekly/claim":
+            try:
+                reward, result = store.claim_weekly(profile["id"], data.get("task"))
             except ValueError as exc:
                 self._json(400, {"ok": False, "error": str(exc)})
                 return

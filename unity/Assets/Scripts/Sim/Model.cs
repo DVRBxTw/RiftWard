@@ -170,6 +170,10 @@ namespace RiftWard.Sim
 
         /// Direction the enemy faces (towards its target).
         public Vector3 Facing => new Vector3(Mathf.Sin(Yaw), 0f, Mathf.Cos(Yaw));
+        /// 盾兵: what the front plate can still soak (-1 = not set yet, filled from MaxHp on the first blocked hit);
+        /// once it reaches 0 the plate shatters and frontal hits do full damage.
+        public float ShieldHp = -1f;
+        public bool ShieldBroken;
     }
 
     public enum BulletKind { Enemy = 0, Sniper = 1, Grenade = 2, Mine = 3, Missile = 4, Slam = 5 }

@@ -277,14 +277,19 @@ namespace RiftWard.Client
                     break;
                 }
                 case Defs.KindShield:
-                    var plate = Build.Cube(elbowL, new Vector3(0.1f, -0.1f, 0.4f), new Vector3(1.05f, 1.35f, 0.1f), color, 0.6f);
+                {
+                    // Everything on the plate hangs off ShieldPlate, so a shattered shield can be hidden in one go.
+                    var plateRoot = new GameObject("ShieldPlate").transform;
+                    plateRoot.SetParent(elbowL, false);
+                    var plate = Build.Cube(plateRoot, new Vector3(0.1f, -0.1f, 0.4f), new Vector3(1.05f, 1.35f, 0.1f), color, 0.6f);
                     plate.GetComponent<MeshRenderer>().sharedMaterial = Build.Mat(color, 0.6f, 0.55f);
                     // Frame around the energy plate and a heavy helmet.
                     foreach (var (at, size) in new[] { (new Vector3(0.1f, 0.58f, 0.4f), new Vector3(1.1f, 0.07f, 0.13f)), (new Vector3(0.1f, -0.78f, 0.4f), new Vector3(1.1f, 0.07f, 0.13f)),
                                                        (new Vector3(-0.43f, -0.1f, 0.4f), new Vector3(0.07f, 1.42f, 0.13f)), (new Vector3(0.63f, -0.1f, 0.4f), new Vector3(0.07f, 1.42f, 0.13f)) })
-                        Build.Cube(elbowL, at, size, Palette.Hex("2a3a55"), 0f, false);
+                        Build.Cube(plateRoot, at, size, Palette.Hex("2a3a55"), 0f, false);
                     Build.Cube(head, new Vector3(0, 0.33f, 0.12f), new Vector3(0.62f, 0.12f, 0.56f), Palette.Hex("2a3a55"), 0f, false);
                     break;
+                }
                 case Defs.KindGuard:
                 {
                     // Imperial Guard: gold pauldrons, a crested helm, a halberd and a hexagonal energy shield. The

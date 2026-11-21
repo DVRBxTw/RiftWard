@@ -257,6 +257,8 @@ namespace RiftWard.Sim
             new BuffDef("複合裝甲", "受到的傷害 -{0}%", 8),
         };
 
+        /// 盾兵 front plate: soaks this share of the soldier's max life before it shatters; it blocks 75% of a frontal hit.
+        public const float ShieldPlateShare = 0.6f;
         public const int BuffDrone = 10, BuffDroneDamage = 11, BuffDroneRate = 12, BuffPlasma = 13, BuffPlasmaRate = 14;
         /// Weapon rarity (劣質, 普通, 稀世, 傳奇, 神話) scales its damage.
         public static readonly float[] WeaponRarityMult = { 0.9f, 1f, 1.15f, 1.35f, 1.6f };

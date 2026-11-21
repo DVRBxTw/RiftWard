@@ -111,11 +111,12 @@ class ServiceTests(unittest.TestCase):
         code, r = self.call("/api/weapon/select", {"weapon": gun, "index": 1}, auth)
         self.assertEqual((code, r["profile"]["loadout"]["active"][gun], r["profile"]["loadout"]["rarity"][gun]), (200, 1, lo["copies"][gun][1]))
         self.assertEqual(self.call("/api/weapon/salvage", {"weapon": gun, "index": 1}, auth)[0], 400)
-        gold = r["profile"]["gold"]
+        gold, shards = r["profile"]["gold"], r["profile"]["shards"]
         code, r = self.call("/api/weapon/salvage", {"weapon": gun, "index": 0}, auth)
         lo2 = r["profile"]["loadout"]
         self.assertEqual((code, len(lo2["copies"][gun]), lo2["active"][gun]), (200, len(lo["copies"][gun]) - 1, 0))
-        self.assertGreater(r["profile"]["gold"], gold)
+        # Low rarities pay gold, 傳奇+ pay shards.
+        self.assertGreater(r["profile"]["gold"] + r["profile"]["shards"], gold + shards)
         # A stale rarity (the list changed since the client drew it) is refused instead of hitting another copy.
         wrong = (lo2["copies"][gun][0] + 1) % 5
         self.assertEqual(self.call("/api/weapon/salvage", {"weapon": gun, "index": 0, "rarity": wrong}, auth)[0], 400)
@@ -396,8 +397,8 @@ class ServiceTests(unittest.TestCase):
         gold = self.store.profile(aid)["gold"]
         code, out = self.call("/api/weapon/salvage", {"weapon": "rifle", "index": 1, "rarity": 4}, auth)
         self.assertEqual(code, 200)
-        self.assertEqual(out["profile"]["shards"], 4 + shards_spent // 2)
-        self.assertEqual(out["profile"]["gold"], gold + gold_spent // 2)
+        self.assertEqual(out["profile"]["shards"], 4 + shards_spent)
+        self.assertEqual(out["profile"]["gold"], gold + gold_spent * 4 // 5)
         self.assertEqual(out["profile"]["loadout"]["copy_levels"]["rifle"], [{"damage": 5, "mag": 3}])
 
     def test_gear_crafting_reforge_limit_ascend_sets(self):
@@ -457,7 +458,7 @@ class ServiceTests(unittest.TestCase):
         shards = r["profile"]["shards"]
         self.assertEqual(shards, 100 - sum(service.LIMIT_SHARDS))
         code, r = self.call("/api/gear/salvage", {"item": "c"}, auth)
-        self.assertEqual(r["profile"]["shards"], shards + sum(service.LIMIT_SHARDS) // 2)
+        self.assertEqual(r["profile"]["shards"], shards + sum(service.LIMIT_SHARDS))   # shards come back in full
 
         # 升階: same slot and rarity, unequipped fodder; rarity +1, primary at the new value, level kept.
         put([item("d", level=3), item("e"), item("f", slot="boots"), item("g", rarity=3)], {"module": "e"})
@@ -694,7 +695,7 @@ class ServiceTests(unittest.TestCase):
         self.assertGreater(service.gear_upgrade_cost(4, 0), service.gear_upgrade_cost(0, 0))
         gold = up["profile"]["gold"]
         code, r = self.call("/api/gear/salvage", {"item": other["id"]}, auth)
-        self.assertEqual(r["profile"]["gold"], gold + service.GEAR_SALVAGE_GOLD[other["rarity"]] + paid // 2)
+        self.assertEqual(r["profile"]["gold"], gold + service.GEAR_SALVAGE_GOLD[other["rarity"]] + paid * 4 // 5)   # 80% of the gold
         other = r["profile"]["inventory"][1]
         gold = r["profile"]["gold"]
         code, r = self.call("/api/gear/salvage", {"item": other["id"]}, auth)
@@ -869,6 +870,46 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(self.call("/api/daily/claim",{"task":"bonus"},auth)[0],400)
         # A bad difficulty in a combat record is rejected.
         self.assertEqual(self.call("/api/server/reward",{"account_id":aid,"gold":0,"stats":{**record,"difficulty":5}},key)[0],400)
+
+    def test_best_grade_per_stage(self):
+        account = self.register()
+        aid = account["profile"]["id"]
+        base = {"kills": 100, "headshots": 10, "shots": 500, "hits": 200, "wave": 20, "region": 1, "difficulty": 0}
+        self.store.record_stats(aid, dict(base, victory=True, grade="B"))
+        self.store.record_stats(aid, dict(base, victory=True, grade="A"))
+        self.store.record_stats(aid, dict(base, victory=True, grade="C"))      # a worse run never lowers it
+        self.store.record_stats(aid, dict(base, victory=False, grade="S"))     # a loss never counts
+        self.store.record_stats(aid, dict(base, victory=True, grade="S", difficulty=1))
+        self.assertEqual(self.store.profile(aid)["grades"], {"1:0": "A", "1:1": "S"})
+
+    def test_weekly_missions(self):
+        # 1970-01-12 was a Monday: 16:00 UTC on the Sunday before is Monday 00:00 in Taiwan.
+        self.assertEqual(service.weekly_week(10*86400 + 16*3600), "1970-01-12")
+        self.assertEqual(service.weekly_week(10*86400 + 16*3600 - 1), "1970-01-05")
+        self.assertEqual(service.weekly_resets_in(10*86400 + 16*3600), 7*86400)
+        account = self.register()
+        auth = {"Authorization": "Bearer " + account["token"]}
+        key = {"X-Server-Key": self.store.server_key}
+        aid = account["profile"]["id"]
+        weekly = account["profile"]["weekly"]
+        ids = [t["id"] for t in weekly["tasks"]]
+        self.assertEqual((len(ids), len(set(ids))), (5, 5))
+        self.assertNotIn("hard", ids)
+        self.assertEqual(self.call("/api/weekly/claim", {"task": ids[0]}, auth)[1]["error"], "任務尚未完成")
+        record = {"kills": 400, "headshots": 120, "shots": 3000, "hits": 900, "wave": 20, "victory": True, "boss_kills": 1}
+        for _ in range(15):
+            self.call("/api/server/reward", {"account_id": aid, "gold": 0, "stats": record}, key)
+        weekly = self.call("/api/me", {}, auth)[1]["profile"]["weekly"]
+        done = [t for t in weekly["tasks"] if t["done"]]
+        self.assertTrue(all(t["progress"] <= t["goal"] for t in weekly["tasks"]))
+        for t in done:
+            self.assertEqual(self.call("/api/weekly/claim", {"task": t["id"]}, auth)[0], 200)
+        self.assertEqual(self.call("/api/weekly/claim", {"task": done[0]["id"]}, auth)[1]["error"], "此任務獎勵已領取")
+        if len(done) == 5:
+            before = self.call("/api/me", {}, auth)[1]["profile"]["weapon_keys"]
+            self.assertEqual(self.call("/api/weekly/claim", {"task": "bonus"}, auth)[1]["profile"]["weapon_keys"] - before, 3)
+        else:
+            self.assertEqual(self.call("/api/weekly/claim", {"task": "bonus"}, auth)[0], 400)
 
     def test_daily_rollover_and_hard_task(self):
         self.assertEqual(service.daily_day(0),"1970-01-01")

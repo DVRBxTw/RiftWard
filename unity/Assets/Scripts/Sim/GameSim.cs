@@ -808,6 +808,7 @@ namespace RiftWard.Sim
                 if (head) a.StatHeadshots++;
                 float headMult = head ? a.HeadMultiplier * (a.WeaponId == "sniper" ? 1f + PerkStrength(a, 0.4f) : 1f) : 1f;
                 dealt = damage * headMult * DamageMultiplier(best, dir, head);
+                Chip(best, damage * headMult, dir, head);
                 Credit(a, best, dealt);
                 best.Hp -= dealt;
                 if (head && a.WeaponId == "rifle" && PerkStrength(a, 1f) > 0) a.PerkCrits = Mathf.RoundToInt(PerkStrength(a, 1f));
@@ -862,7 +863,9 @@ namespace RiftWard.Sim
                 hits++;
                 var chest = e.Position + Vector3.up * e.Scale;
                 // The nearest takes the full blow; the others in the arc take MeleeCleaveFalloff of it.
-                float dealt = damage * DamageMultiplier(e, (chest - eye).normalized, false) * (hits == 1 ? 1f : Defs.MeleeCleaveFalloff);
+                float raw = damage * (hits == 1 ? 1f : Defs.MeleeCleaveFalloff);
+                float dealt = raw * DamageMultiplier(e, (chest - eye).normalized, false);
+                Chip(e, raw, (chest - eye).normalized, false);
                 Credit(a, e, dealt);
                 e.Hp -= dealt;
                 bool killed = false;
@@ -874,9 +877,23 @@ namespace RiftWard.Sim
             else Shots.Add(new ShotEvent { Shooter = a.Id, Origin = eye, End = eye + forward * a.Range, Hit = false });
         }
 
+        static bool PlateFacing(Enemy e, Vector3 dir, bool head) =>
+            e.Kind == Defs.KindShield && !e.ShieldBroken && !head && Vector3.Dot(dir, e.Facing) < -0.3f;
+
+        /// A hit the 盾兵's plate blocked wears it down by the full raw damage; at zero it shatters.
+        public static void Chip(Enemy e, float raw, Vector3 dir, bool head)
+        {
+            if (!PlateFacing(e, dir, head)) return;
+            if (e.ShieldHp < 0) e.ShieldHp = e.MaxHp * Defs.ShieldPlateShare;
+            e.ShieldHp -= raw;
+            if (e.ShieldHp > 0) return;
+            e.ShieldHp = 0;
+            e.ShieldBroken = true;
+        }
+
         public static float DamageMultiplier(Enemy e, Vector3 dir, bool head)
         {
-            if (e.Kind == Defs.KindShield && !head && Vector3.Dot(dir, e.Facing) < -0.3f) return 0.25f;
+            if (PlateFacing(e, dir, head)) return 0.25f;
             if (e.Kind == Defs.KindGuard && !head && Vector3.Dot(dir, e.Facing) < -0.3f) return 0.4f;   // energy shield in front
             return 1f;
         }

@@ -20,6 +20,8 @@ namespace RiftWard.Client
             public Profile Profile;
             public bool Pending;
             public int[] OfferSent;
+            /// Upgrade stacks last sent to this player (BuffStacks message), to send only on change.
+            public string StacksSent = "";
             public float LastInput, LastPing = -9f, PingWindow, LastFriendNotice = -9f;
             public int PingCount;
             public bool ReceivedMissionInput;
@@ -206,6 +208,15 @@ namespace RiftWard.Client
                     var mine = sim.Actors.TryGetValue(kv.Key, out var pa) ? pa : null;
                     foreach (var c in offer) { int bi = Defs.BuffIndex(c); w.Write((byte)(mine != null && bi >= 0 && bi < mine.BuffStacks.Length ? Mathf.Min(255, mine.BuffStacks[bi]) : 0)); }
                 }));
+            }
+            foreach (var kv in MembersOf(room))
+            {
+                if (!sim.Actors.TryGetValue(kv.Key, out var who)) continue;
+                string sig = string.Join(",", who.BuffStacks);
+                if (sig == kv.Value.StacksSent) continue;
+                kv.Value.StacksSent = sig;
+                var stacks = who.BuffStacks;
+                kv.Value.Conn.Send(Protocol.Frame(Msg.BuffStacks, w => { w.Write((byte)stacks.Length); foreach (int n in stacks) w.Write((byte)Mathf.Min(255, n)); }));
             }
             room.SnapshotTimer += Time.fixedDeltaTime;
             if (room.SnapshotTimer >= 0.05f)

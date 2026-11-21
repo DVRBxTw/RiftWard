@@ -41,6 +41,17 @@ namespace RiftWard.Client
         /// Highest difficulty cleared per region (-1 = never).
         public List<int> Cleared = Enumerable.Repeat(-1, Defs.Regions.Length).ToList();
         public DailyMissions Daily = new DailyMissions();
+        public DailyMissions Weekly = new DailyMissions();
+        /// Best grade per "region:difficulty" (S/A/B/C).
+        public Dictionary<string, string> Grades = new Dictionary<string, string>();
+        public string BestGrade(int region, int tier) => Grades.TryGetValue($"{region}:{tier}", out var g) ? g : "";
+        public string BestGrade(int region)
+        {
+            string best = "";
+            foreach (var kv in Grades)
+                if (kv.Key.StartsWith(region + ":") && "SABC".IndexOf(kv.Value) >= 0 && (best == "" || "SABC".IndexOf(kv.Value) < "SABC".IndexOf(best))) best = kv.Value;
+            return best;
+        }
         public readonly List<Achievement> Achievements = new List<Achievement>();
         /// Worn title: achievement id and its text (both empty when none).
         public string TitleId = "", Title = "";
@@ -132,6 +143,9 @@ namespace RiftWard.Client
             if (cleared != null)
                 for (int i = 0; i < p.Cleared.Count && i < cleared.Count; i++) p.Cleared[i] = cleared[i] is double c ? (int)c : -1;
             p.Daily = DailyMissions.From(d.Obj("daily"));
+            p.Weekly = DailyMissions.From(d.Obj("weekly"));
+            var grades = d.Obj("grades");
+            if (grades != null) foreach (var kv in grades) p.Grades[kv.Key] = kv.Value?.ToString() ?? "";
             foreach (var o in d.Arr("achievements") ?? new List<object>()) if (o is Dictionary<string, object> a) p.Achievements.Add(Achievement.From(a));
             var mail = d.Obj("mail");
             if (mail != null) { p.MailUnread = mail.Int("unread"); p.MailClaimable = mail.Int("claimable"); }

@@ -475,6 +475,21 @@ namespace RiftWard.Client
             if (!Paused) Sim.Tick(Time.fixedDeltaTime);   // offline: the pause menu freezes the mission
         }
 
+        readonly Dictionary<int, float> lastDash = new Dictionary<int, float>();
+
+        /// A dash starts when an actor's dash cooldown jumps back up: a gust of wind, yours in 2D, others where they are.
+        void DashSounds()
+        {
+            foreach (var a in Sim.Actors.Values)
+            {
+                float before = lastDash.TryGetValue(a.Id, out var b) ? b : a.DashCooldown;
+                lastDash[a.Id] = a.DashCooldown;
+                if (!a.Alive || a.DashCooldown < before + Defs.DashCooldown * 0.5f) continue;
+                if (a.Id == LocalId) Sfx.Play("dash", 0.6f);
+                else Sfx.PlayAt("dash", a.Position + Vector3.up, 0.5f);
+            }
+        }
+
         void DrainEvents()
         {
             // A shotgun blast arrives as one event per pellet: sound and muzzle flash play once per shooter,
@@ -487,6 +502,7 @@ namespace RiftWard.Client
             if (localKill) Sfx.Play("kill", 0.5f);
             foreach (var ex in Sim.Explosions) ExplosionEffect(ex);
             foreach (var text in Sim.Announcements) Hud.Announce(text);
+            DashSounds();
             Sim.Shots.Clear();
             Sim.Explosions.Clear();
             Sim.Announcements.Clear();
@@ -985,6 +1001,20 @@ namespace RiftWard.Client
                 var (laser, enemyRig, chargeGlow) = enemyParts[e.Id];
                 // Imperial Guard wind-up (1) and rush (3): red warning glow so the charge can be dodged.
                 if (chargeGlow != null) chargeGlow.gameObject.SetActive(e.State == 1 || e.State == 3);
+                // 盾兵: the plate shatters into blue shards once broken.
+                if (e.Kind == Defs.KindShield && e.ShieldBroken)
+                {
+                    var plateRoot = CharacterRig.Find(view.transform, "ShieldPlate");
+                    if (plateRoot != null && plateRoot.gameObject.activeSelf)
+                    {
+                        Vector3 at = plateRoot.position;
+                        plateRoot.gameObject.SetActive(false);
+                        var shardColor = Palette.Hex("6fb8ff");
+                        Burst.Sphere(at, shardColor, 0.7f, 2.5f, 0.3f, 1.6f, 0.3f);
+                        Burst.Ring(at, shardColor, 1.8f, 0.35f);
+                        Sfx.PlayAt("explosion", at, 0.35f);
+                    }
+                }
                 view.transform.position = Vector3.Lerp(view.transform.position, e.Position, 1f - Mathf.Exp(-14f * dt));
                 view.transform.rotation = Quaternion.Euler(0, e.Yaw * Mathf.Rad2Deg, 0);
                 if (enemyHp.TryGetValue(e.Id, out var lastHp) && e.Hp < lastHp - 0.5f)

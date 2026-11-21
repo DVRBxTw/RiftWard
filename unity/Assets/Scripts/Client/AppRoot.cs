@@ -264,6 +264,13 @@ namespace RiftWard.Client
                     break;
                 case Msg.Snapshot: Client.ApplySnapshot(r); break;
                 case Msg.Events: Client.ApplyEvents(r); break;
+                case Msg.BuffStacks:
+                    int stackCount = r.ReadByte();
+                    var stackValues = new int[stackCount];
+                    for (int i = 0; i < stackCount; i++) stackValues[i] = r.ReadByte();
+                    if (Client.Sim != null && Client.Sim.Actors.TryGetValue(Client.LocalId, out var stackOwner))
+                        for (int i = 0; i < stackCount && i < stackOwner.BuffStacks.Length; i++) stackOwner.BuffStacks[i] = stackValues[i];
+                    break;
                 case Msg.BuffOffer:
                     int level = r.ReadInt32();
                     int superPick = r.ReadByte();
@@ -743,6 +750,8 @@ namespace RiftWard.Client
             lo.Levels["sniper"] = new Dictionary<string, int> { ["damage"] = 2, ["mag"] = 1 };
             lo.Levels["pistol"] = new Dictionary<string, int> { ["damage"] = 3 };
             UpdateProfile(new Profile { Id = 1, Username = "DVRBXTW", Unlocked = 1, Gold = 1240, TutorialComplete = true, Admin = true, Loadout = lo });
+            Profile.Cleared[0] = 1; Profile.Cleared[1] = 0;
+            Profile.Grades["0:0"] = "S"; Profile.Grades["0:1"] = "A"; Profile.Grades["1:0"] = "B";
             ShowHome();
             yield return Settle(0.8f);
             yield return Shot(folder, "unity-home");
@@ -947,6 +956,18 @@ namespace RiftWard.Client
             Screens.ShowDaily();
             yield return Settle(0.4f);
             yield return Shot(folder, "unity-daily");
+            var realWeekly = Profile.Weekly;
+            Profile.Weekly = DailyMissions.From(new Dictionary<string, object> { ["resets_in"] = 280000.0, ["tasks"] = new List<object> {
+                new Dictionary<string, object> { ["id"] = "kills", ["text"] = "擊殺 1000 名敵人", ["goal"] = 1000.0, ["progress"] = 1000.0, ["done"] = true, ["claimed"] = true, ["reward"] = new Dictionary<string, object> { ["gold"] = 1500.0 } },
+                new Dictionary<string, object> { ["id"] = "victories", ["text"] = "成功完成 8 場任務", ["goal"] = 8.0, ["progress"] = 8.0, ["done"] = true, ["claimed"] = false, ["reward"] = new Dictionary<string, object> { ["weapon_keys"] = 2.0 } },
+                new Dictionary<string, object> { ["id"] = "bosses", ["text"] = "擊敗 5 隻 Boss", ["goal"] = 5.0, ["progress"] = 3.0, ["done"] = false, ["claimed"] = false, ["reward"] = new Dictionary<string, object> { ["weapon_keys"] = 2.0 } },
+                new Dictionary<string, object> { ["id"] = "headshots", ["text"] = "爆頭命中 300 次", ["goal"] = 300.0, ["progress"] = 187.0, ["done"] = false, ["claimed"] = false, ["reward"] = new Dictionary<string, object> { ["gold"] = 1000.0, ["keys"] = 3.0 } },
+                new Dictionary<string, object> { ["id"] = "s_grades", ["text"] = "以 S 評分完成 3 場任務", ["goal"] = 3.0, ["progress"] = 1.0, ["done"] = false, ["claimed"] = false, ["reward"] = new Dictionary<string, object> { ["weapon_keys"] = 2.0, ["shards"] = 1.0 } } },
+                ["bonus"] = new Dictionary<string, object> { ["reward"] = new Dictionary<string, object> { ["weapon_keys"] = 3.0, ["shards"] = 3.0 }, ["ready"] = false, ["claimed"] = false } });
+            Screens.ShowWeekly();
+            yield return Settle(0.4f);
+            yield return Shot(folder, "unity-weekly");
+            Profile.Weekly = realWeekly;
             Screens.ShowAchievements();
             yield return Settle(0.4f);
             yield return Shot(folder, "unity-achievements");
@@ -1323,6 +1344,12 @@ namespace RiftWard.Client
                 if (sim.BuffOffers.TryGetValue(Client.LocalId, out var pickOffer)) sim.ChooseBuff(Client.LocalId, pickOffer[0]);
                 Client.Menus.HideBuffs();
                 yield return Settle(0.3f);
+                // Hold-Tab upgrade panel.
+                me.BuffStacks[15] = 2; me.BuffStacks[20] = 5;
+                Client.Hud.ForceUpgrades = true;
+                yield return Settle(0.3f);
+                yield return Shot(folder, "unity-upgrades-tab");
+                Client.Hud.ForceUpgrades = false;
             }
             yield return Settle(0.3f);
             Client.Menus.OpenPause();

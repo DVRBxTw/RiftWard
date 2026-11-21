@@ -80,7 +80,7 @@ namespace RiftWard.Client
                     b.GetComponentInChildren<Text>().fontStyle = FontStyle.Bold;
                     Ui.Box(b.transform, Palette.Amber, "Underline").rectTransform.Place(new Vector2(0.5f, 0), new Vector2(0, 1), new Vector2(40, 3), new Vector2(0.5f, 0));
                 }
-                if (ids[i] == "gear" && p.TalentPoints > 0 || ids[i] == "daily" && (p.Daily.Claimable + p.AchievementsClaimable > 0 || p.Login != null && p.Login.CanClaim)
+                if (ids[i] == "gear" && p.TalentPoints > 0 || ids[i] == "daily" && (p.Daily.Claimable + p.Weekly.Claimable + p.AchievementsClaimable > 0 || p.Login != null && p.Login.CanClaim)
                     || ids[i] == "social" && p.FriendRequests + p.MailUnread + p.MailClaimable + (app.PendingInvite != null ? 1 : 0) > 0)
                     Ui.Box(b.transform, Palette.Amber, "Badge").rectTransform.Place(new Vector2(0.5f, 0.5f), new Vector2(30, 12), new Vector2(7, 7));
             }
@@ -272,13 +272,13 @@ namespace RiftWard.Client
         {
             var p = app.Profile;
             bool login = p.Login != null;
-            SubTabs(pad, login ? new[] { "每日任務", "成就", "登入獎勵" } : new[] { "每日任務", "成就" },
-                login ? new Action[] { ShowDaily, ShowAchievements, ShowLogin } : new Action[] { ShowDaily, ShowAchievements }, active);
-            int[] waiting = { p.Daily.Claimable, p.AchievementsClaimable, login && p.Login.CanClaim ? 1 : 0 };
-            for (int i = 0; i < (login ? 3 : 2); i++)
+            SubTabs(pad, login ? new[] { "每日任務", "每週任務", "成就", "登入獎勵" } : new[] { "每日任務", "每週任務", "成就" },
+                login ? new Action[] { ShowDaily, ShowWeekly, ShowAchievements, ShowLogin } : new Action[] { ShowDaily, ShowWeekly, ShowAchievements }, active);
+            int[] waiting = { p.Daily.Claimable, p.Weekly.Claimable, p.AchievementsClaimable, login && p.Login.CanClaim ? 1 : 0 };
+            for (int i = 0; i < (login ? 4 : 3); i++)
                 if (waiting[i] > 0 && i != active)
                     Ui.Box(pad, Palette.Amber, "Badge").rectTransform.Place(new Vector2(0, 1), new Vector2(i * 156 + 134, -8), new Vector2(7, 7), new Vector2(0, 1));
-            return (login ? 3 : 2) * 156 + 24;
+            return (login ? 4 : 3) * 156 + 16;
         }
 
         // ---- 登入獎勵 (player)
@@ -293,7 +293,7 @@ namespace RiftWard.Client
             var r = Begin("login");
             var pad = Page(r, "daily");
             pad.offsetMin = new Vector2(48, 36); pad.offsetMax = new Vector2(-48, -NavHeight - 28);
-            float x = MissionTabs(pad, 2);
+            float x = MissionTabs(pad, 3);
             long left = System.Math.Max(0, ev.EndsAt - System.DateTimeOffset.UtcNow.ToUnixTimeSeconds());
             Ui.Label(pad, $"活動剩 {left / 86400} 天 {left % 86400 / 3600} 小時 · 每天 00:00（台灣時間）可領下一天", 13, Palette.Muted, TextAnchor.MiddleLeft)
                 .rectTransform.Place(new Vector2(0, 1), new Vector2(x, 0), new Vector2(520, 40), new Vector2(0, 1));
@@ -385,6 +385,8 @@ namespace RiftWard.Client
                 b.GetComponent<RectTransform>().Place(new Vector2(0, 1), new Vector2(i * 156, 0), new Vector2(148, 40), new Vector2(0, 1));
             }
         }
+
+        static Color GradeColor(string grade) => grade == "S" ? Palette.Amber : grade == "A" ? (Color)Gear.RarityColors[3] : grade == "B" ? (Color)Gear.RarityColors[2] : Palette.Muted;
 
         static Text Caps(Transform parent, string text, Color? color = null) => Ui.Label(parent, text, 13, color ?? Palette.Muted);
 
@@ -634,6 +636,10 @@ namespace RiftWard.Client
                     Ui.Label(b.transform, "已通關 " + mark.Name, 12, mark.Accent, TextAnchor.UpperRight, true).rectTransform
                         .Place(new Vector2(1, 1), new Vector2(-16, -15), new Vector2(120, 18), new Vector2(1, 1));
                 }
+                string bestGrade = locked ? "" : p.BestGrade(i);
+                if (bestGrade != "")
+                    Ui.Label(b.transform, $"最佳評分 <b><color=#{ColorUtility.ToHtmlStringRGB(GradeColor(bestGrade))}>{bestGrade}</color></b>", 12, Palette.Muted, TextAnchor.UpperRight).rectTransform
+                        .Place(new Vector2(1, 1), new Vector2(-16, -35), new Vector2(120, 18), new Vector2(1, 1)).GetComponent<Text>().supportRichText = true;
                 if (current) Ui.Box(b.transform, Palette.Amber, "Mark").rectTransform.Place(new Vector2(0, 0.5f), Vector2.zero, new Vector2(3, 58), new Vector2(0, 0.5f));
             }
             Ui.Rect(stack, "Gap").Sized(14);
@@ -651,8 +657,11 @@ namespace RiftWard.Client
                 tb.GetComponentInChildren<Text>().text = "";
                 Ui.Label(tb.transform, def.Name, 18, open ? (on ? accent : Palette.Bone) : Palette.Hex("6a6d71"), TextAnchor.UpperCenter, on).rectTransform
                     .Place(new Vector2(0.5f, 1), new Vector2(0, -7), new Vector2(120, 24), new Vector2(0.5f, 1));
-                Ui.Label(tb.transform, open ? def.Code : "未解鎖", 12, open ? (on ? accent : Palette.Muted) : Palette.Muted, TextAnchor.UpperCenter).rectTransform
-                    .Place(new Vector2(0.5f, 1), new Vector2(0, -32), new Vector2(120, 14), new Vector2(0.5f, 1));
+                string tierGrade = open ? p.BestGrade(selected, t) : "";
+                var code = Ui.Label(tb.transform, !open ? "未解鎖" : tierGrade != "" ? $"最佳 <b><color=#{ColorUtility.ToHtmlStringRGB(GradeColor(tierGrade))}>{tierGrade}</color></b>" : def.Code,
+                    12, open ? (on ? accent : Palette.Muted) : Palette.Muted, TextAnchor.UpperCenter);
+                code.supportRichText = true;
+                code.rectTransform.Place(new Vector2(0.5f, 1), new Vector2(0, -32), new Vector2(120, 14), new Vector2(0.5f, 1));
             }
             string tierNote = tier.Summary;
             int nextTier = tierIndex + 1;
@@ -1350,7 +1359,7 @@ namespace RiftWard.Client
             var gold = weapons ? Gear.WeaponSalvageGold : Gear.GearSalvageGold;
             int tiers = Gear.RarityNames.Length;
             var counts = new int[tiers];
-            var refunds = new int[tiers];   // half of the enhancement gold comes back on salvage
+            var refunds = new int[tiers];   // 80% of the enhancement gold and every shard come back on salvage
             var shardRefunds = new int[tiers];
             if (weapons)
             {
@@ -1364,7 +1373,7 @@ namespace RiftWard.Client
                         int rr = Mathf.Clamp(list[i], 0, tiers - 1);
                         counts[rr]++;
                         var (ig, ish) = Gear.WeaponInvested(w, rr, p.Loadout.CopyLevel(w, i));
-                        refunds[rr] += ig / 2; shardRefunds[rr] += ish / 2;
+                        refunds[rr] += ig * 4 / 5; shardRefunds[rr] += ish;
                     }
                 }
             }
@@ -1378,7 +1387,8 @@ namespace RiftWard.Client
                     counts[item.Rarity]++;
                     int invested = 0;
                     for (int n = 0; n < item.Level; n++) invested += Gear.UpgradeCost(item.Rarity, n);
-                    refunds[item.Rarity] += invested / 2;
+                    for (int n = 0; n < item.Limit; n++) { invested += Gear.LimitGold[n]; shardRefunds[item.Rarity] += Gear.LimitShards[n]; }
+                    refunds[item.Rarity] += invested * 4 / 5;
                 }
             }
             var chosen = new bool[tiers];
@@ -1475,17 +1485,24 @@ namespace RiftWard.Client
 
         Text dailyStatus;
 
-        public void ShowDaily()
+        bool weeklyView;
+
+        public void ShowWeekly() => ShowDaily(true);
+        public void ShowDaily() => ShowDaily(false);
+
+        public void ShowDaily(bool weekly)
         {
+            weeklyView = weekly;
             var r = Begin("daily");
             var p = app.Profile;
-            var daily = p.Daily;
+            var daily = weekly ? p.Weekly : p.Daily;
             var pad = Page(r, "daily");
             pad.offsetMin = new Vector2(48, 36); pad.offsetMax = new Vector2(-48, -NavHeight - 28);
-            float tabsEnd = MissionTabs(pad, 0);
+            float tabsEnd = MissionTabs(pad, weekly ? 1 : 0);
             int left = Mathf.Max(0, daily.ResetsIn - (int)(Time.realtimeSinceStartup - daily.FetchedAt));
-            Ui.Label(pad, $"每天 00:00（台灣時間）更換 · 距離更新 {left / 3600} 小時 {left % 3600 / 60} 分 · 進度在連線任務結算時計入", 13, Palette.Muted, TextAnchor.MiddleLeft)
-                .rectTransform.Place(new Vector2(0, 1), new Vector2(tabsEnd, 0), new Vector2(560, 40), new Vector2(0, 1));
+            string when = weekly ? $"每週一 00:00 更換 · 剩 {left / 86400} 天 {left % 86400 / 3600} 小時" : $"每天 00:00 更換 · 剩 {left / 3600} 小時 {left % 3600 / 60} 分";
+            Ui.Label(pad, when + "（台灣時間）· 進度在連線任務結算時計入", 13, Palette.Muted, TextAnchor.MiddleLeft)
+                .rectTransform.Place(new Vector2(0, 1), new Vector2(tabsEnd, 0), new Vector2(520, 40), new Vector2(0, 1));
             dailyStatus = Ui.Label(pad, "", 14, Palette.Amber, TextAnchor.UpperRight);
             dailyStatus.rectTransform.Place(new Vector2(1, 1), new Vector2(0, -10), new Vector2(420, 20), new Vector2(1, 1));
 
@@ -1493,12 +1510,13 @@ namespace RiftWard.Client
             var list = Ui.VStack(pad, 12);
             list.anchorMin = new Vector2(0, 0); list.anchorMax = new Vector2(0.64f, 1);
             list.offsetMin = Vector2.zero; list.offsetMax = new Vector2(-12, -60);
-            if (daily.Tasks.Count == 0) Ui.Label(list, "目前無法取得每日任務，請確認已連線到帳號伺服器。", 16, Palette.Muted).Sized(40);
+            if (daily.Tasks.Count == 0) Ui.Label(list, $"目前無法取得{(weekly ? "每週" : "每日")}任務，請確認已連線到帳號伺服器。", 16, Palette.Muted).Sized(40);
             else
             {
-                for (int i = 0; i < daily.Tasks.Count; i++) TaskCard(list, daily.Tasks[i], i);
-                Ui.Rect(list, "Gap").Sized(4);
-                BonusCard(list, daily);
+                if (weekly) list.GetComponent<VerticalLayoutGroup>().spacing = 8;
+                for (int i = 0; i < daily.Tasks.Count; i++) TaskCard(list, daily.Tasks[i], i, weekly);
+                Ui.Rect(list, "Gap").Sized(weekly ? 0 : 4);
+                BonusCard(list, daily, weekly);
             }
 
             var guide = Ui.Box(pad, Palette.Sheet, "Guide").rectTransform;
@@ -1532,24 +1550,25 @@ namespace RiftWard.Client
             }
         }
 
-        void TaskCard(Transform parent, DailyTask task, int index)
+        void TaskCard(Transform parent, DailyTask task, int index, bool compact = false)
         {
             bool ready = task.Done && !task.Claimed;
-            var card = Ui.Box(parent, ready ? new Color(0.115f, 0.105f, 0.085f, 1f) : Palette.Sheet, "Task").Sized(104);
+            float lift = compact ? 10 : 0;   // the weekly list fits five shorter cards
+            var card = Ui.Box(parent, ready ? new Color(0.115f, 0.105f, 0.085f, 1f) : Palette.Sheet, "Task").Sized(compact ? 84 : 104);
             if (ready) Ui.Frame(card.rectTransform, Palette.Amber, 1f, 3f);
             else card.gameObject.AddComponent<Outline>().effectColor = Palette.Line;
             var c = card.rectTransform;
-            Ui.Label(c, $"0{index + 1}", 14, task.Done ? Palette.Amber : Palette.Muted).rectTransform.Place(new Vector2(0, 1), new Vector2(22, -20), new Vector2(30, 20), new Vector2(0, 1));
-            Ui.Label(c, task.Text, 20, task.Claimed ? Palette.Muted : Palette.Bone, TextAnchor.UpperLeft, true)
-                .rectTransform.Place(new Vector2(0, 1), new Vector2(60, -16), new Vector2(460, 28), new Vector2(0, 1));
+            Ui.Label(c, $"0{index + 1}", 14, task.Done ? Palette.Amber : Palette.Muted).rectTransform.Place(new Vector2(0, 1), new Vector2(22, -20 + lift), new Vector2(30, 20), new Vector2(0, 1));
+            Ui.Label(c, task.Text, compact ? 18 : 20, task.Claimed ? Palette.Muted : Palette.Bone, TextAnchor.UpperLeft, true)
+                .rectTransform.Place(new Vector2(0, 1), new Vector2(60, -16 + lift * 0.6f), new Vector2(460, 28), new Vector2(0, 1));
             // Progress bar with the count beside it.
             var track = Ui.Box(c, new Color(1, 1, 1, 0.08f), "Track").rectTransform;
-            track.Place(new Vector2(0, 1), new Vector2(60, -56), new Vector2(330, 6), new Vector2(0, 1));
+            track.Place(new Vector2(0, 1), new Vector2(60, -56 + lift * 1.2f), new Vector2(330, 6), new Vector2(0, 1));
             var fill = Ui.Box(track, task.Done ? Palette.Amber : Palette.Bone, "Fill").rectTransform;
             fill.anchorMin = Vector2.zero; fill.anchorMax = new Vector2(Mathf.Clamp01((float)task.Progress / task.Goal), 1); fill.offsetMin = fill.offsetMax = Vector2.zero;
             Ui.Label(c, $"{task.Progress} / {task.Goal}", 14, task.Done ? Palette.Amber : Palette.Muted, TextAnchor.MiddleLeft, task.Done)
-                .rectTransform.Place(new Vector2(0, 1), new Vector2(402, -49), new Vector2(110, 20), new Vector2(0, 1));
-            RewardRow(c, task.Reward, new Vector2(60, -72), task.Claimed);
+                .rectTransform.Place(new Vector2(0, 1), new Vector2(402, -49 + lift * 1.2f), new Vector2(110, 20), new Vector2(0, 1));
+            RewardRow(c, task.Reward, new Vector2(60, -72 + lift * 1.6f), task.Claimed);
             if (!ready)
             {
                 Ui.Label(c, task.Claimed ? "已領取" : "進行中", 16, task.Claimed ? Palette.Muted : Palette.Hex("b9b5ab"), TextAnchor.MiddleRight).rectTransform
@@ -1560,16 +1579,16 @@ namespace RiftWard.Client
             button.GetComponent<RectTransform>().Place(new Vector2(1, 0.5f), new Vector2(-22, 0), new Vector2(124, 48), new Vector2(1, 0.5f));
         }
 
-        void BonusCard(Transform parent, DailyMissions daily)
+        void BonusCard(Transform parent, DailyMissions daily, bool weekly = false)
         {
             bool ready = daily.BonusReady && !daily.BonusClaimed;
             var accent = Gear.RarityColors[3];
-            var card = Ui.Box(parent, ready ? new Color(0.115f, 0.105f, 0.085f, 1f) : Palette.Sheet, "Bonus").Sized(96);
+            var card = Ui.Box(parent, ready ? new Color(0.115f, 0.105f, 0.085f, 1f) : Palette.Sheet, "Bonus").Sized(weekly ? 90 : 96);
             if (ready) Ui.Frame(card.rectTransform, accent, 1f, 3f);
             else card.gameObject.AddComponent<Outline>().effectColor = Palette.Line;
             var c = card.rectTransform;
             Ui.Box(c, accent, "Mark").rectTransform.Place(new Vector2(0, 0.5f), Vector2.zero, new Vector2(3, 96), new Vector2(0, 0.5f));
-            Caps(c, "DAILY BONUS", accent).rectTransform.Place(new Vector2(0, 1), new Vector2(22, -14), new Vector2(200, 16), new Vector2(0, 1));
+            Caps(c, weekly ? "WEEKLY BONUS" : "DAILY BONUS", accent).rectTransform.Place(new Vector2(0, 1), new Vector2(22, -14), new Vector2(200, 16), new Vector2(0, 1));
             Ui.Label(c, $"全部完成獎勵  ·  已領 {daily.ClaimedCount} / {daily.Tasks.Count}", 19, daily.BonusClaimed ? Palette.Muted : Palette.Bone, TextAnchor.UpperLeft, true)
                 .rectTransform.Place(new Vector2(0, 1), new Vector2(22, -32), new Vector2(460, 26), new Vector2(0, 1));
             RewardRow(c, daily.Bonus, new Vector2(22, -66), daily.BonusClaimed);
@@ -1610,17 +1629,19 @@ namespace RiftWard.Client
         void Claim(string task)
         {
             if (dailyStatus != null) { dailyStatus.color = Palette.Amber; dailyStatus.text = "領取中…"; }
-            app.Api.Post("/api/daily/claim", new Dictionary<string, object> { ["task"] = task }, result =>
+            bool weekly = weeklyView;
+            app.Api.Post(weekly ? "/api/weekly/claim" : "/api/daily/claim", new Dictionary<string, object> { ["task"] = task }, result =>
             {
-                if (Mode != "daily") return;
+                if (Mode != "daily" || weeklyView != weekly) return;
                 if (!result.Bool("ok")) { dailyStatus.color = Palette.Danger; dailyStatus.text = result.Str("error", "領取失敗"); return; }
                 app.UpdateProfile(Profile.From(result.Obj("profile")));
                 var got = DailyReward.From(result.Obj("reward"));
-                ShowDaily();
+                ShowDaily(weekly);
                 var parts = new List<string>();
                 if (got.Gold > 0) parts.Add($"金幣 +{got.Gold}");
                 if (got.Keys > 0) parts.Add($"裝備鑰匙 +{got.Keys}");
                 if (got.WeaponKeys > 0) parts.Add($"武器鑰匙 +{got.WeaponKeys}");
+                if (got.Shards > 0) parts.Add($"碎片 +{got.Shards}");
                 dailyStatus.text = "已領取  " + string.Join("、", parts);
             });
         }
@@ -2469,7 +2490,7 @@ namespace RiftWard.Client
             var p = app.Profile;
             var pad = Page(r, "daily");
             pad.offsetMin = new Vector2(48, 36); pad.offsetMax = new Vector2(-48, -NavHeight - 28);
-            float tabsEnd = MissionTabs(pad, 1);
+            float tabsEnd = MissionTabs(pad, 2);
             int done = p.Achievements.Sum(a => a.Claimed), total = p.Achievements.Count * 3;
             Ui.Label(pad, $"已完成 {done} / {total} 階 · 每階都有獎勵，部分成就的金階附贈稱號", 13, Palette.Muted, TextAnchor.MiddleLeft)
                 .rectTransform.Place(new Vector2(0, 1), new Vector2(tabsEnd, 0), new Vector2(420, 40), new Vector2(0, 1));
