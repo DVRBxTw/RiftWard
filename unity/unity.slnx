@@ -1,6 +1,6 @@
 ﻿<Solution>
   <Project Path="RiftWard.Client.csproj" />
+  <Project Path="Assembly-CSharp-Editor.csproj" />
   <Project Path="RiftWard.Tests.csproj" />
   <Project Path="RiftWard.Sim.csproj" />
-  <Project Path="Assembly-CSharp-Editor.csproj" />
 </Solution>

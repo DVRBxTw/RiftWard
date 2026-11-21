@@ -997,6 +997,30 @@ class ServiceTests(unittest.TestCase):
         self.assertFalse(any(t["claimed"] or t["progress"] for t in daily["tasks"]))
         self.assertFalse(daily["bonus"]["claimed"])
 
+    def test_claim_all_achievements(self):
+        account = self.register()
+        auth = {"Authorization":"Bearer "+account["token"]}
+        key = {"X-Server-Key":self.store.server_key}
+        aid = account["profile"]["id"]
+        self.assertEqual(self.call("/api/achievement/claim_all",{},auth)[1]["error"],"目前沒有可領取的成就獎勵")
+        record = {"kills":4000,"headshots":1500,"shots":9000,"hits":5000,"wave":20,"victory":True,"difficulty":1,
+                  "downs":0,"revives":3,"boss_kills":2,"elite_kills":6,"grade":"S"}
+        for _ in range(5):
+            self.call("/api/server/reward",{"account_id":aid,"gold":0,"stats":record},key)
+        before = self.call("/api/me",{},auth)[1]["profile"]
+        ready = sum(a["reached"]-a["claimed"] for a in before["achievements"])
+        self.assertGreater(ready,3)
+        code, response = self.call("/api/achievement/claim_all",{},auth)
+        self.assertEqual(code,200)
+        claim = response["claim"]
+        self.assertEqual(claim["count"],ready)
+        self.assertIn("殲滅者",claim["titles"])
+        profile = response["profile"]
+        self.assertEqual(profile["gold"],before["gold"]+claim["reward"].get("gold",0))
+        self.assertEqual(profile["keys"],before["keys"]+claim["reward"].get("keys",0))
+        self.assertTrue(all(a["reached"]==a["claimed"] for a in profile["achievements"]))
+        self.assertEqual(self.call("/api/achievement/claim_all",{},auth)[0],400)
+
     def test_achievements_and_titles(self):
         account = self.register()
         auth = {"Authorization":"Bearer "+account["token"]}

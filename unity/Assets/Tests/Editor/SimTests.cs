@@ -28,6 +28,28 @@ namespace RiftWard.Tests
         }
 
         [Test]
+        public void HeavyHitsAreCappedSoNobodyIsOneShot()
+        {
+            var sim = NewMission();
+            var a = sim.Actors[1];
+            PlaceEnemy(sim, new Vector3(0, 0, 30f));   // keeps the wave from ending
+            Vector3 chest = a.Position + Vector3.up * 1.2f;
+            // A hit worth ten times max life lands as at most HitCap of it.
+            sim.SpawnBullet(chest, Vector3.zero, a.MaxHp * 10f, BulletKind.Enemy);
+            sim.Tick(0.02f);
+            Assert.IsTrue(a.Alive);
+            Assert.AreEqual(a.MaxHp * (1f - Defs.HitCap), a.Hp, 0.5f);
+            // A second one right after only fills the burst bucket up to BurstCap.
+            sim.SpawnBullet(chest, Vector3.zero, a.MaxHp * 10f, BulletKind.Enemy);
+            sim.Tick(0.02f);
+            Assert.AreEqual(a.MaxHp * (1f - Defs.BurstCap), a.Hp, 1f);
+            // Over one full second from full life no more than BurstCap + BurstDrain is lost.
+            for (int i = 0; i < 50; i++) { sim.SpawnBullet(chest, Vector3.zero, a.MaxHp * 10f, BulletKind.Enemy); sim.Tick(0.02f); }
+            Assert.IsTrue(a.Alive);
+            Assert.GreaterOrEqual(a.Hp, a.MaxHp * (1f - Defs.BurstCap - Defs.BurstDrain) - 1f);
+        }
+
+        [Test]
         public void PartyWaveCountsScaleWithPlayersAcrossChaptersAndTiers()
         {
             for (int region = 0; region < Defs.Regions.Length; region++)
@@ -99,7 +121,7 @@ namespace RiftWard.Tests
             Assert.AreEqual(0.5f, Defs.MaxCritical, 0.001f);
             // 地獄: the fourth tier, opened by clearing 噩夢 in that region.
             Assert.AreEqual(4, Defs.Difficulties.Length);
-            Assert.AreEqual(5.5f, Defs.Difficulty(3).Hp, 0.001f);
+            Assert.AreEqual(6f, Defs.Difficulty(3).Hp, 0.001f);
             Assert.IsFalse(Defs.DifficultyOpen(new[] { 1 }, 0, 3));
             Assert.IsTrue(Defs.DifficultyOpen(new[] { 2 }, 0, 3));
             var normal = new GameSim(7) { EnemyVariety = false }; normal.AddActor(1, new Loadout(), false); normal.StartMission(0, 0);
@@ -108,8 +130,8 @@ namespace RiftWard.Tests
             float n = float.MaxValue, i = float.MaxValue;   // the weakest one: an elite (×4) may be promoted
             foreach (var e in normal.Enemies.Values) n = Mathf.Min(n, e.MaxHp);
             foreach (var e in inferno.Enemies.Values) i = Mathf.Min(i, e.MaxHp);
-            Assert.AreEqual(n * 5.5f, i, 0.01f);
-            Assert.AreEqual(normal.Enemies.Count + 6, inferno.Enemies.Count);
+            Assert.AreEqual(n * Defs.Difficulty(3).Hp, i, 0.01f);
+            Assert.AreEqual(normal.Enemies.Count + Defs.Difficulty(3).ExtraEnemies, inferno.Enemies.Count);
         }
 
         [Test]
@@ -199,10 +221,10 @@ namespace RiftWard.Tests
             sim.ApplyBuff(1, Defs.BuffArmor + 200);
             Assert.AreEqual(0.2f, a.Armor, 0.001f);
             float hp = a.Hp;
-            sim.Bullets[1] = new Bullet { Id = 1, Position = a.Position + Vector3.up * 0.9f, Velocity = Vector3.zero, Damage = 50f, Kind = BulletKind.Enemy };
+            sim.Bullets[1] = new Bullet { Id = 1, Position = a.Position + Vector3.up * 0.9f, Velocity = Vector3.zero, Damage = 30f, Kind = BulletKind.Enemy };   // under the per-hit cap
             sim.Enemies[999] = new Enemy { Id = 999, Position = a.Position + new Vector3(15, 0, 15), Hp = 9999, MaxHp = 9999, Shoots = false, MeleeCooldown = 99f };
             sim.Tick(0.01f);
-            Assert.AreEqual(hp - 40f, a.Hp, 0.01f);
+            Assert.AreEqual(hp - 24f, a.Hp, 0.01f);
             for (int i = 0; i < 10; i++) sim.ApplyBuff(1, Defs.BuffArmor + 200);
             Assert.AreEqual(Defs.MaxArmor, a.Armor, 0.001f);
         }
@@ -710,9 +732,9 @@ namespace RiftWard.Tests
             Assert.AreEqual(normal.Enemies.Count + Defs.Difficulties[2].ExtraEnemies, nightmare.Enemies.Count);
             var bossN = normal.Enemies.Values.Single(e => e.Boss);
             var bossX = nightmare.Enemies.Values.Single(e => e.Boss);
-            Assert.AreEqual(bossN.MaxHp * 2.8f, bossX.MaxHp, 0.5f);
+            Assert.AreEqual(bossN.MaxHp * Defs.Difficulties[2].Hp, bossX.MaxHp, 0.5f);
             Assert.AreEqual(bossN.Damage * Defs.Difficulties[2].Damage, bossX.Damage, 0.01f);
-            Assert.AreEqual(1.7f, Defs.Difficulties[2].Damage, 0.001f);
+            Assert.AreEqual(2.2f, Defs.Difficulties[2].Damage, 0.001f);
             normal.Kills = nightmare.Kills = 100;
             Assert.AreEqual(Mathf.RoundToInt(normal.MissionGold() * 2.4f), nightmare.MissionGold(), 1);
             // Tier unlocks: 普通 always, each tier after the one below is cleared in that region.

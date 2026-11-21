@@ -33,8 +33,8 @@ namespace RiftWard.Sim
         {
             new DifficultyDef("普通", "NORMAL", "標準的帝國部隊。", 1f, 1f, 0, 1f, 1f, new Color32(0x9b, 0xd3, 0x6a, 255)),
             new DifficultyDef("困難", "HARD", "敵人血量 ×1.6、傷害 ×1.3，每波多 2 名。金幣 ×1.6、經驗 ×1.25。", 1.6f, 1.3f, 2, 1.6f, 1.25f, new Color32(0xf0, 0xb2, 0x4a, 255)),
-            new DifficultyDef("噩夢", "NIGHTMARE", "敵人血量 ×2.8、傷害 ×1.7，每波多 4 名。金幣 ×2.4、經驗 ×1.5。建議中後期裝備挑戰。", 2.8f, 1.7f, 4, 2.4f, 1.5f, new Color32(0xe5, 0x53, 0x4b, 255)),
-            new DifficultyDef("地獄", "INFERNO", "敵人血量 ×5.5、傷害 ×2.4，每波多 6 名。金幣 ×3.5、經驗 ×1.75。給頂尖裝備的挑戰。", 5.5f, 2.4f, 6, 3.5f, 1.75f, new Color32(0xff, 0x3b, 0x9a, 255)),
+            new DifficultyDef("噩夢", "NIGHTMARE", "敵人血量 ×4、傷害 ×2.2，每波多 2 名。金幣 ×2.4、經驗 ×1.5。建議中後期裝備挑戰。", 4f, 2.2f, 2, 2.4f, 1.5f, new Color32(0xe5, 0x53, 0x4b, 255)),
+            new DifficultyDef("地獄", "INFERNO", "敵人血量 ×6、傷害 ×3，每波多 2 名。金幣 ×3.5、經驗 ×1.75。給頂尖裝備的挑戰。", 6f, 3f, 2, 3.5f, 1.75f, new Color32(0xff, 0x3b, 0x9a, 255)),
         };
 
         /// Gear keys and weapon keys (each) for the first clear of a region on a tier: 困難 5, 噩夢 10, 地獄 15.
@@ -60,7 +60,7 @@ namespace RiftWard.Sim
         /// XP needed to go from this account level to the next; mirrors level_for() in server/service.py.
         public static int AccountLevelNeed(int level) => 100 + 50 * level;
 
-        public const string Version = "0.7.37-unity.1";
+        public const string Version = "0.7.38-unity.1";
 
         // Player movement
         public const float EyeHeight = 1.65f;
@@ -261,6 +261,11 @@ namespace RiftWard.Sim
         public const float ShieldPlateShare = 0.6f;
         /// A teammate idle this long (no movement, aim, fire or keys) is played by the computer until they return.
         public const float AfkTakeover = 60f;
+        /// Anti-burst: no single tick of damage takes more than HitCap of max life, and recent damage (a bucket that
+        /// drains BurstDrain of max life per second) never exceeds BurstCap. From full life a player therefore loses
+        /// at most BurstCap + BurstDrain (70%) in any one second and is never killed in an instant; a long swarm
+        /// still wears them down at BurstDrain per second.
+        public const float HitCap = 0.35f, BurstCap = 0.45f, BurstDrain = 0.25f;
         /// 命之座 (mirrors CONST_* in server/service.py): +4% damage per level, C3 +15% magazine, C6 +10% fire rate.
         public const int ConstellationMax = 6;
         public const float ConstellationDamage = 0.04f, ConstellationMag = 0.15f, ConstellationRate = 0.1f;

@@ -121,6 +121,7 @@ namespace RiftWard.Client
         int clearedAtDeploy = -1;
         bool inNetMission, netTest;
         NetStatus netStatus;
+        UpdateWatcher updates;
         /// Automatic reconnect after an unexpected drop: a few spaced attempts, then a dialog.
         static readonly float[] ReconnectDelays = { 1f, 2f, 3f, 5f, 8f, 10f };
         Coroutine reconnect;
@@ -179,6 +180,8 @@ namespace RiftWard.Client
             if (bench != null) { StartCoroutine(Bench(bench)); return; }
             var capture = Arg("-capture");
             if (capture != null) { StartCoroutine(Capture(string.IsNullOrEmpty(capture) ? "." : capture)); return; }
+            // Checks for a newer published build while the game runs; the offer waits until no mission is on.
+            updates = new UpdateWatcher(this, Api, () => inNetMission || Client.Sim != null);
             var token = SessionStore.Load(Api.Host);
             if (token != null) { Screens.ShowBusy("正在恢復登入，請稍候…"); OnAuthenticated(token); }
             else Screens.ShowAccount();
@@ -753,6 +756,7 @@ namespace RiftWard.Client
             UpdateMusic();
             Net.Poll();
             netStatus.Update(Net, Client.Sim != null);
+            updates?.Update();
             if (Bindings.Pressed(Bindings.Action.NetStats) && !ChatHud.Typing && !Bindings.Capturing) { bool on = !(GameSettings.ShowPing || GameSettings.ShowFps); GameSettings.ShowPing = GameSettings.ShowFps = on; GameSettings.Save(); }
             Overlay.Update();
             PressDefaultOnEnter();

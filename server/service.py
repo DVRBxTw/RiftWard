@@ -697,6 +697,28 @@ class Store:
         return items
 
     @_locked
+    def claim_all_achievements(self, account_id: int):
+        """一鍵領取: pays out every reached, unclaimed tier of every achievement; returns the summed reward, the
+        titles earned and how many tiers were claimed."""
+        total, titles, count = {}, [], 0
+        profile = self.profile(account_id)
+        if profile is None:
+            raise ValueError("找不到帳號")
+        state = self._achievement_state(account_id)
+        progress = self._achievement_progress(profile, self._raw_gear(account_id))
+        for spec in ACHIEVEMENTS:
+            for _ in range(max(0, min(3, self._reached(spec, progress)) - state["claimed"].get(spec[0], 0))):
+                outcome, _profile = self.claim_achievement(account_id, spec[0])
+                count += 1
+                for k, v in outcome["reward"].items():
+                    total[k] = total.get(k, 0) + v
+                if outcome["title"]:
+                    titles.append(outcome["title"])
+        if count == 0:
+            raise ValueError("目前沒有可領取的成就獎勵")
+        return {"count": count, "reward": total, "titles": titles}, self.profile(account_id)
+
+    @_locked
     def claim_achievement(self, account_id: int, achievement):
         """Pays out the next reached, unclaimed tier of one achievement."""
         if achievement not in ACHIEVEMENT_IDS:
@@ -2666,9 +2688,12 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(200, {"ok": True, **store.gacha_history(profile["id"], data.get("pool"), data.get("limit", 200))})
             except ValueError as exc:
                 self._json(400, {"ok": False, "error": str(exc)})
-        elif self.path in ("/api/achievement/claim", "/api/achievement/title"):
+        elif self.path in ("/api/achievement/claim", "/api/achievement/claim_all", "/api/achievement/title"):
             try:
-                if self.path.endswith("claim"):
+                if self.path.endswith("claim_all"):
+                    outcome, result = store.claim_all_achievements(profile["id"])
+                    extra = {"claim": outcome}
+                elif self.path.endswith("claim"):
                     outcome, result = store.claim_achievement(profile["id"], data.get("achievement"))
                     extra = {"claim": outcome}
                 else:

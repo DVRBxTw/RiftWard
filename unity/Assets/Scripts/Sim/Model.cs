@@ -69,6 +69,8 @@ namespace RiftWard.Sim
 
     public sealed class Actor
     {
+        /// Recent damage as a share of max life, draining at Defs.BurstDrain per second (see Defs.BurstCap).
+        public float Burst;
         public int Id;
         public Vector3 Position;
         public float Hp = 100f, MaxHp = 100f;

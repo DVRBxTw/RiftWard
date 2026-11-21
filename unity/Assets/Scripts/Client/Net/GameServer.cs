@@ -503,8 +503,13 @@ namespace RiftWard.Client
                         var input = r.ReadInput();
                         if (sim != null && mode == "playing" && sim.Actors.ContainsKey(id) && (!sim.Inputs.TryGetValue(id, out var prev) || input.Seq >= prev.Seq))
                         {
+                            // While the computer plays, the idle client's view still kicks with the recoil of the bot's own
+                            // shots and its weapon slot follows the bot's switches, so only a real flick of the mouse
+                            // (or any key) counts as the player coming back; small view drift and slot changes do not.
+                            float yawStep = p.Bot ? 15f : 1f, pitchStep = p.Bot ? 0.25f : 0.02f;
                             bool acted = input.Move.sqrMagnitude > 0.01f || input.Fire || input.Dash || input.Jump || input.Reload || input.Skill || input.Interact || input.Block
-                                || Mathf.Abs(Mathf.DeltaAngle(input.Yaw * Mathf.Rad2Deg, p.LastYaw * Mathf.Rad2Deg)) > 1f || Mathf.Abs(input.Pitch - p.LastPitch) > 0.02f || input.Slot != p.LastSlot;
+                                || Mathf.Abs(Mathf.DeltaAngle(input.Yaw * Mathf.Rad2Deg, p.LastYaw * Mathf.Rad2Deg)) > yawStep || Mathf.Abs(input.Pitch - p.LastPitch) > pitchStep
+                                || (!p.Bot && input.Slot != p.LastSlot);
                             p.LastYaw = input.Yaw; p.LastPitch = input.Pitch; p.LastSlot = input.Slot;
                             if (acted)
                             {

@@ -569,6 +569,10 @@ namespace RiftWard.Client
             Ui.Label(stack, "登入後即可進入基地；進度、金幣與武器都存在你的帳號中。", 15, Palette.Muted).Sized(44);
             Caps(stack, "使用者名稱").Sized(18);
             var user = Widgets.Input(stack, "3–24 個英文字母、數字或底線", false, 24).Sized(48);
+            // The last account signed in on this machine is filled in, so after a logout only the password is needed.
+            string lastUser = "";
+            try { lastUser = PlayerPrefs.GetString(LastUserKey, ""); } catch { }
+            user.text = lastUser;
             Caps(stack, "密碼").Sized(18);
             var pass = Widgets.Input(stack, "8–72 個字元", true, 72).Sized(48);
             var confirmLabel = Caps(stack, "確認密碼").Sized(18);
@@ -599,13 +603,17 @@ namespace RiftWard.Client
                     submit.interactable = true;
                     if (!result.Bool("ok")) { status.color = Palette.Danger; status.text = result.Str("error", "登入或註冊失敗"); return; }
                     pass.text = confirm.text = "";
+                    try { PlayerPrefs.SetString(LastUserKey, name); PlayerPrefs.Save(); } catch { }
                     app.OnAuthenticated(result.Str("token"));
                 });
             }).Sized(52);
             toggle = Ui.Button(stack, "", () => { registering = !registering; status.text = ""; Paint(); }, 15).Sized(44);
             Caps(stack, "帳號伺服器  " + app.Api.BaseUrl).Sized(18);
             Paint();
+            if (lastUser != "") pass.ActivateInputField();
         }
+
+        const string LastUserKey = "rw.lastuser";
 
         public void ShowBusy(string message)
         {
@@ -2692,6 +2700,11 @@ namespace RiftWard.Client
                 .GetComponent<RectTransform>().Place(new Vector2(1, 0.5f), Vector2.zero, new Vector2(110, 36), new Vector2(1, 0.5f));
             achievementStatus = Ui.Label(pad, "", 14, Palette.Amber, TextAnchor.MiddleRight);
             achievementStatus.rectTransform.Place(new Vector2(1, 1), new Vector2(-346, 0), new Vector2(360, 40), new Vector2(1, 1));
+            // 一鍵領取: every reached tier at once, shown only while something is waiting.
+            int ready = p.Achievements.Count(a => a.CanClaim);
+            if (ready > 0)
+                PrimaryButton(pad, $"一鍵領取（{ready}）", ClaimAllAchievements, 14).GetComponent<RectTransform>()
+                    .Place(new Vector2(0, 1), new Vector2(tabsEnd + 430, -2), new Vector2(130, 36), new Vector2(0, 1));
 
             if (p.Achievements.Count == 0)
             {
@@ -2774,6 +2787,26 @@ namespace RiftWard.Client
                 ShowAchievements();
                 string title = claim?.Str("title") ?? "";
                 achievementStatus.text = title != "" ? $"獲得稱號〔{title}〕！" : "已領取" + AchievementTier(claim?.Int("tier") ?? 0) + "階獎勵";
+            });
+        }
+
+        void ClaimAllAchievements()
+        {
+            if (achievementStatus != null) { achievementStatus.color = Palette.Amber; achievementStatus.text = "領取中…"; }
+            app.Api.Post("/api/achievement/claim_all", null, result =>
+            {
+                if (Mode != "achievements") return;
+                if (!result.Bool("ok")) { achievementStatus.color = Palette.Danger; achievementStatus.text = result.Str("error", "領取失敗"); return; }
+                app.UpdateProfile(Profile.From(result.Obj("profile")));
+                var claim = result.Obj("claim");
+                ShowAchievements();
+                var parts = new List<string>();
+                var reward = claim?.Obj("reward");
+                if (reward != null)
+                    foreach (var (k, name) in new[] { ("gold", "金幣"), ("keys", "鑰匙"), ("weapon_keys", "武器鑰匙"), ("shards", "碎片") })
+                        if (reward.Int(k) > 0) parts.Add($"{name} +{reward.Int(k)}");
+                var titles = (claim?.Arr("titles") ?? new List<object>()).Select(t => $"〔{t}〕").ToList();
+                achievementStatus.text = $"已領取 {claim?.Int("count") ?? 0} 階：{string.Join("、", parts)}" + (titles.Count > 0 ? $"，稱號 {string.Join("", titles)}" : "");
             });
         }
 

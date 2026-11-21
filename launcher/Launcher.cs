@@ -606,7 +606,11 @@ namespace RiftWard.Launcher
             if (!File.Exists(exe)) { Fail("遊戲執行檔遺失，請重試。"); return; }
             SetStatus("驗證完成，正在啟動…", "版本 " + m.Version);
             CleanOldUpdates(folder, zip);
-            Process.Start(new ProcessStartInfo(exe) { WorkingDirectory = folder, UseShellExecute = false });
+            // The game finds its way back here to update itself: the path as an argument, and in a note in the
+            // update cache for copies started some other way.
+            string self = Application.ExecutablePath;
+            try { File.WriteAllText(Path.Combine(updateDir, "launcher.txt"), self); } catch (Exception) { }
+            Process.Start(new ProcessStartInfo(exe, "--launcher \"" + self + "\"") { WorkingDirectory = folder, UseShellExecute = false });
             Ui(delegate { Close(); });
         }
 
