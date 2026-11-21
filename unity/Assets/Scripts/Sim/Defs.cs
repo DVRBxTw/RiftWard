@@ -259,6 +259,12 @@ namespace RiftWard.Sim
 
         /// 盾兵 front plate: soaks this share of the soldier's max life before it shatters; it blocks 75% of a frontal hit.
         public const float ShieldPlateShare = 0.6f;
+        /// A teammate idle this long (no movement, aim, fire or keys) is played by the computer until they return.
+        public const float AfkTakeover = 60f;
+        /// 命之座 (mirrors CONST_* in server/service.py): +4% damage per level, C3 +15% magazine, C6 +10% fire rate.
+        public const int ConstellationMax = 6;
+        public const float ConstellationDamage = 0.04f, ConstellationMag = 0.15f, ConstellationRate = 0.1f;
+        public static readonly int[] ConstellationGold = { 1000, 2000, 4000, 6000, 9000, 12000 };
         public const int BuffDrone = 10, BuffDroneDamage = 11, BuffDroneRate = 12, BuffPlasma = 13, BuffPlasmaRate = 14;
         /// Weapon rarity (劣質, 普通, 稀世, 傳奇, 神話) scales its damage.
         public static readonly float[] WeaponRarityMult = { 0.9f, 1f, 1.15f, 1.35f, 1.6f };

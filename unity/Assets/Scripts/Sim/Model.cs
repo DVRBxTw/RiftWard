@@ -27,6 +27,9 @@ namespace RiftWard.Sim
         /// Every copy drawn per weapon (rarities) and which copy is in use.
         public Dictionary<string, List<int>> Copies = new Dictionary<string, List<int>>();
         public Dictionary<string, int> Active = new Dictionary<string, int>();
+        /// 命之座 level per weapon (0–6).
+        public Dictionary<string, int> Constellation = new Dictionary<string, int>();
+        public int ConstellationOf(string weapon) => Constellation.TryGetValue(weapon, out var c) ? Mathf.Clamp(c, 0, Defs.ConstellationMax) : 0;
         /// Enhancement of every copy (same order as Copies); Levels holds the active copy's.
         public Dictionary<string, List<Dictionary<string, int>>> CopyLevels = new Dictionary<string, List<Dictionary<string, int>>>();
 
@@ -107,6 +110,10 @@ namespace RiftWard.Sim
 
         // Mission buffs
         public float Speed = Defs.BaseSpeed, DamageMult = 1f, RateMult = 1f, ReloadMult = 1f, SkillMult = 1f;
+        /// 技能天賦: grenade damage and blast radius multipliers (cooldown goes into SkillMult).
+        public float SkillDamageMult = 1f, SkillRadiusMult = 1f, SkillCdFactor = 1f;
+        /// Account skill-talent bonus in percent: damage, cooldown, radius (re-applied at mission start).
+        public float[] SkillBonus;
         public int MagBonus;
         public float Regen, Critical, Lifesteal, Explode;
         /// Healing still available from kills and hits (refills over time, see Defs.HealPerSecond).

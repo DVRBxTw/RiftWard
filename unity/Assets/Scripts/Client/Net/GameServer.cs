@@ -25,6 +25,11 @@ namespace RiftWard.Client
             public float LastInput, LastPing = -9f, PingWindow, LastFriendNotice = -9f;
             public int PingCount;
             public bool ReceivedMissionInput;
+            /// Last real action (movement, aim, fire, keys) and whether the computer is playing for them now.
+            public float LastActive;
+            public float LastYaw, LastPitch;
+            public int LastSlot, ClientSeq;
+            public bool Bot;
             public AdminSettings Admin = new AdminSettings();
             public Room Room;
             /// Region and difficulty picked while playing alone (no room).
@@ -183,6 +188,27 @@ namespace RiftWard.Client
             foreach (var kv in MembersOf(room))
                 if (sim.Actors.TryGetValue(kv.Key, out var actor) && clock - kv.Value.LastInput > 0.25f)
                     sim.Inputs[kv.Key] = new PlayerInput { Seq = sim.Inputs.TryGetValue(kv.Key, out var old) ? old.Seq : 0, Yaw = actor.Yaw, Slot = actor.Slot };
+            // 掛機代打: idle for Defs.AfkTakeover seconds in a team mission, the computer plays for them; its level-up
+            // picks are random.
+            if (room.Members.Count > 1)
+            {
+                var idle = new HashSet<int>(MembersOf(room).Where(kv => kv.Value.Bot).Select(kv => kv.Key));
+                foreach (var kv in MembersOf(room))
+                {
+                    var m = kv.Value;
+                    if (!sim.Actors.TryGetValue(kv.Key, out var body)) continue;
+                    if (!m.Bot && m.ReceivedMissionInput && clock - m.LastActive > Defs.AfkTakeover && sim.State == MissionState.Playing)
+                    {
+                        m.Bot = true;
+                        idle.Add(kv.Key);
+                        RoomNotice(room, $"{m.ChatName} 已閒置超過 1 分鐘，由電腦代打");
+                    }
+                    if (!m.Bot) continue;
+                    sim.Inputs[kv.Key] = sim.BotInput(body, m.ClientSeq, idle);
+                    if (sim.BuffPending && sim.BuffOffers.TryGetValue(kv.Key, out var choices) && choices.Length > 0)
+                        sim.ChooseBuff(kv.Key, choices[UnityEngine.Random.Range(0, choices.Length)]);
+                }
+            }
             if (testFast && sim.Wave != room.FastWave && sim.Enemies.Count > 0 && !sim.BuffPending)
             {
                 room.FastWave = sim.Wave;
@@ -393,6 +419,16 @@ namespace RiftWard.Client
                         var input = r.ReadInput();
                         if (sim != null && mode == "playing" && sim.Actors.ContainsKey(id) && (!sim.Inputs.TryGetValue(id, out var prev) || input.Seq >= prev.Seq))
                         {
+                            bool acted = input.Move.sqrMagnitude > 0.01f || input.Fire || input.Dash || input.Jump || input.Reload || input.Skill || input.Interact || input.Block
+                                || Mathf.Abs(Mathf.DeltaAngle(input.Yaw * Mathf.Rad2Deg, p.LastYaw * Mathf.Rad2Deg)) > 1f || Mathf.Abs(input.Pitch - p.LastPitch) > 0.02f || input.Slot != p.LastSlot;
+                            p.LastYaw = input.Yaw; p.LastPitch = input.Pitch; p.LastSlot = input.Slot;
+                            if (acted)
+                            {
+                                p.LastActive = clock;
+                                if (p.Bot && room != null) { p.Bot = false; RoomNotice(room, $"{p.ChatName} 回來了，結束電腦代打"); }
+                            }
+                            p.ClientSeq = input.Seq;
+                            if (p.Bot) { p.LastInput = clock; break; }   // the computer keeps playing until they act
                             sim.Inputs[id] = input;
                             p.LastInput = clock;
                             p.ReceivedMissionInput = true;
@@ -795,11 +831,15 @@ namespace RiftWard.Client
             var lo = new Loadout { Owned = new List<string>(p.Profile.Loadout.Owned), Equipped = new List<string>(p.Profile.Loadout.Equipped) };
             foreach (var kv in p.Profile.Loadout.Levels) lo.Levels[kv.Key] = new Dictionary<string, int>(kv.Value);
             lo.Rarity = new Dictionary<string, int>(p.Profile.Loadout.Rarity);
+            lo.Constellation = new Dictionary<string, int>(p.Profile.Loadout.Constellation);
             sim.AddActor(id, lo, p.Profile.Admin).Name = string.IsNullOrEmpty(p.Profile.Title) ? p.Profile.Username : $"〔{p.Profile.Title}〕{p.Profile.Username}";
             var b = p.Profile;
             sim.ApplyProfileBonus(id, b.BonusOf("hp"), b.BonusOf("damage"), b.BonusOf("speed"), b.BonusOf("reload"), b.BonusOf("crit"), b.BonusOf("hp_pct"), b.BonusOf("def"));
+            sim.ApplySkillBonus(id, b.BonusOf("skill_dmg"), b.BonusOf("skill_cd"), b.BonusOf("skill_radius"));
             p.OfferSent = null;
             p.LastInput = clock;
+            p.LastActive = clock;
+            p.Bot = false;
             p.ReceivedMissionInput = false;
         }
 

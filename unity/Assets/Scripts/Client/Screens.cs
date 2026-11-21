@@ -149,6 +149,8 @@ namespace RiftWard.Client
         }
 
         bool equippingBest;
+        int talentPage;
+        public void ShowCharacterTalentPage(int page) { talentPage = page; ShowCharacter(); }
 
         // ---- 圖鑑: every weapon and gear slot at every rarity, lit once ever held.
         Dictionary<string, object> codexData;
@@ -1199,6 +1201,29 @@ namespace RiftWard.Client
                         buy.interactable = !has && p.Shards >= Defs.PierceShards && p.Gold >= Defs.PierceGold;
                     }
                 }
+                // 命之座: feed a spare 稀世+ copy of this weapon to raise it.
+                {
+                    int c = p.Loadout.ConstellationOf(armoryPick);
+                    Color cc = Palette.Hex("8fd8ff");
+                    var copiesHere = p.Loadout.Copies.TryGetValue(armoryPick, out var cl) ? cl : new List<int>();
+                    int activeIdx = p.Loadout.Active.TryGetValue(armoryPick, out var ai) ? ai : 0;
+                    int spares = copiesHere.Where((r, i) => i != activeIdx && r >= 2).Count();
+                    var row = Ui.Rect(ds, "Constellation").Sized(34);
+                    Ui.Label(row, "命之座", 16, cc, TextAnchor.MiddleLeft, true).rectTransform.Place(new Vector2(0, 0.5f), Vector2.zero, new Vector2(80, 24), new Vector2(0, 0.5f));
+                    string next = c >= Defs.ConstellationMax ? "已達 C6：傷害 +24%、彈匣 +15%、射速 +10%"
+                        : c + 1 == 3 ? "下一級：傷害 +4%、彈匣 +15%" : c + 1 == 6 ? "下一級：傷害 +4%、射速 +10%" : "下一級：傷害 +4%";
+                    Ui.Label(row, next, 12, Palette.Muted, TextAnchor.MiddleLeft).rectTransform.Place(new Vector2(0, 0.5f), new Vector2(80, 0), new Vector2(170, 20), new Vector2(0, 0.5f));
+                    for (int k = 0; k < Defs.ConstellationMax; k++)
+                        Ui.Box(row, k < c ? cc : Palette.Line, "Star").rectTransform.Place(new Vector2(0, 0.5f), new Vector2(256 + k * 28, 0), new Vector2(10, 10), new Vector2(0, 0.5f)).localRotation = Quaternion.Euler(0, 0, 45);
+                    Ui.Label(row, $"C{c}", 13, c > 0 ? cc : Palette.Muted, TextAnchor.MiddleLeft, c > 0).rectTransform
+                        .Place(new Vector2(0, 0.5f), new Vector2(246 + Defs.MaxUpgradeLevel * 20, 0), new Vector2(50, 20), new Vector2(0, 0.5f));
+                    bool full = c >= Defs.ConstellationMax;
+                    int price = full ? 0 : Defs.ConstellationGold[c];
+                    var raise = Ui.Button(row, full ? "命之座已滿" : spares == 0 ? "需要稀世以上複本" : $"升命座  {price / 1000}K G",
+                        () => ArmoryRequest("/api/weapon/constellation", new Dictionary<string, object> { ["weapon"] = armoryPick }), 14, cc, new Color(0, 0, 0, 0), cc);
+                    raise.GetComponent<RectTransform>().Place(new Vector2(1, 0.5f), Vector2.zero, new Vector2(160, 32), new Vector2(1, 0.5f));
+                    raise.interactable = !full && spares > 0 && p.Gold >= price;
+                }
                 var equip = Ui.HStack(ds, 12).Sized(48);
                 for (int s = 0; s < 2; s++)
                 {
@@ -1290,7 +1315,17 @@ namespace RiftWard.Client
             var fill = Ui.Box(bar.transform, Palette.Amber, "Fill").rectTransform;
             fill.anchorMin = Vector2.zero; fill.anchorMax = new Vector2(Mathf.Clamp01((float)p.LevelXp / p.LevelNeed), 1); fill.offsetMin = fill.offsetMax = Vector2.zero;
             Ui.Label(t, p.TalentPoints > 0 ? $"可用天賦點數  {p.TalentPoints}" : "完成任務獲得經驗，每升一級得到 1 點天賦", 14, p.TalentPoints > 0 ? Palette.Amber : Palette.Muted).Sized(26);
-            foreach (var key in Gear.Talents)
+            // 基礎天賦 / 技能天賦 share the same points.
+            var talentTabs = Ui.HStack(t, 6).Sized(30);
+            foreach (var (label, page) in new[] { ("基礎天賦", 0), ("技能天賦", 1) })
+            {
+                bool on = talentPage == page;
+                int pick = page;
+                Ui.Button(talentTabs, label, () => { talentPage = pick; ShowCharacter(); }, 14, on ? Palette.Amber : Palette.Muted,
+                    on ? new Color(Palette.Amber.r, Palette.Amber.g, Palette.Amber.b, 0.1f) : new Color(0, 0, 0, 0), on ? Palette.Amber : Palette.Line);
+            }
+            if (talentPage == 1) Ui.Label(t, "強化 Q 手榴彈，和基礎天賦共用點數。", 12, Palette.Muted).Sized(18);
+            foreach (var key in talentPage == 1 ? Gear.SkillTalents : Gear.Talents)
             {
                 var (name, per) = Gear.TalentInfo[key];
                 int lv = p.Talents.TryGetValue(key, out var v) ? v : 0;

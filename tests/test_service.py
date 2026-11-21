@@ -904,6 +904,33 @@ class ServiceTests(unittest.TestCase):
         self.assertIn(4, self.call("/api/codex", {}, auth)[1]["codex"]["weapons"]["sniper"])
         self.assertGreater(found["found"], codex["found"])
 
+    def test_constellation_consumes_a_spare_copy(self):
+        account = self.register()
+        auth = {"Authorization": "Bearer " + account["token"]}
+        aid = account["profile"]["id"]
+        with self.store.connect() as db:
+            db.execute("UPDATE progress SET gold=100000 WHERE account_id=?", (aid,))
+        code, r = self.call("/api/weapon/constellation", {"weapon": "rifle"}, auth)
+        self.assertEqual(code, 400)   # only the copy in use
+        self.store.admin_grant("Beta_Test", 0, "rifle", rarity=1)   # 普通: too low to feed
+        self.assertEqual(self.call("/api/weapon/constellation", {"weapon": "rifle"}, auth)[0], 400)
+        self.store.admin_grant("Beta_Test", 0, "rifle", rarity=3)
+        self.store.admin_grant("Beta_Test", 0, "rifle", rarity=2)
+        code, r = self.call("/api/weapon/constellation", {"weapon": "rifle"}, auth)
+        lo = r["profile"]["loadout"]
+        self.assertEqual((code, lo["const"]["rifle"], sorted(lo["copies"]["rifle"])), (200, 1, [0, 1, 3]))   # the 稀世 went first
+        self.assertEqual(r["profile"]["gold"], 100000 - service.CONST_GOLD[0])
+        self.assertEqual(self.call("/api/me", {}, auth)[1]["profile"]["loadout"]["const"], {"rifle": 1})
+
+    def test_skill_talents_use_talent_points(self):
+        account = self.register()
+        auth = {"Authorization": "Bearer " + account["token"]}
+        with self.store.connect() as db:
+            db.execute("UPDATE progress SET xp=5000 WHERE account_id=?", (account["profile"]["id"],))
+        code, r = self.call("/api/talent/assign", {"talent": "skill_dmg", "points": 2}, auth)
+        self.assertEqual((code, r["profile"]["talents"]["skill_dmg"]), (200, 2))
+        self.assertEqual(r["profile"]["bonus"]["skill_dmg"], 12)
+
     def test_best_grade_per_stage(self):
         account = self.register()
         aid = account["profile"]["id"]

@@ -99,6 +99,8 @@ namespace RiftWard.Client
                     if (kv.Value is List<object> items) foreach (var o in items) list.Add(o is double cv ? (int)cv : 1);
                     p.Loadout.Copies[kv.Key] = list;
                 }
+            var constellation = lo?.Obj("const");
+            if (constellation != null) foreach (var kv in constellation) p.Loadout.Constellation[kv.Key] = kv.Value is double cn ? (int)cn : 0;
             var copyLevels = lo?.Obj("copy_levels");
             if (copyLevels != null)
                 foreach (var kv in copyLevels)

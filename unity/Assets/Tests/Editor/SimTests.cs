@@ -364,6 +364,52 @@ namespace RiftWard.Tests
         }
 
         [Test]
+        public void BotFightsTheNearestEnemyAndFollowsTeammatesWhenClear()
+        {
+            var sim = new GameSim(7);
+            var bot = sim.AddActor(1, new Loadout(), false);
+            var mate = sim.AddActor(2, new Loadout(), false);
+            sim.StartMission(0);
+            sim.Enemies.Clear();
+            bot.Position = Vector3.zero;
+            mate.Position = new Vector3(20, 0, 0);
+            var follow = sim.BotInput(bot, 5);
+            Assert.AreEqual(5, follow.Seq, "keeps the player's own input sequence");
+            Assert.IsFalse(follow.Fire);
+            Assert.Greater(follow.Move.y, 0, "walks toward the teammate");
+            Assert.AreEqual(Mathf.PI / 2, follow.Yaw, 0.01f);
+            var e = new Enemy { Id = 900, Position = new Vector3(0, 0, 12), Hp = 50, MaxHp = 50, Scale = 1 };
+            sim.Enemies[e.Id] = e;
+            var fight = sim.BotInput(bot, 6);
+            Assert.IsTrue(fight.Fire);
+            Assert.AreEqual(0f, fight.Yaw, 0.01f, "faces the enemy");
+            Assert.AreEqual(e.Position + Vector3.up, fight.Aim);
+        }
+
+        [Test]
+        public void ConstellationAndSkillTalentsChangeCombatNumbers()
+        {
+            var lo = new Loadout { Owned = new List<string> { "rifle" }, Equipped = new List<string> { "rifle" } };
+            var sim = new GameSim(3) { EnemyVariety = false };
+            var a = sim.AddActor(1, lo, false);
+            sim.StartMission(0);
+            float baseDamage = a.Damage, baseInterval = a.FireInterval; int baseMag = a.Mag;
+            lo.Constellation["rifle"] = 6;
+            sim.RefreshWeapon(a);
+            Assert.AreEqual(baseDamage * 1.24f, a.Damage, 0.01f);
+            Assert.AreEqual(Mathf.RoundToInt(Defs.Weapons["rifle"].Mag * 1.15f), a.Mag);
+            Assert.Greater(a.Mag, baseMag);
+            Assert.AreEqual(baseInterval * 0.9f, a.FireInterval, 0.0001f);
+            sim.ApplySkillBonus(1, 30, 15, 20);
+            sim.ApplySkillBonus(1, 30, 15, 20);   // applying twice must not stack the cooldown cut
+            Assert.AreEqual(1.3f, a.SkillDamageMult, 1e-4);
+            Assert.AreEqual(0.85f, a.SkillMult, 1e-4);
+            Assert.AreEqual(1.2f, a.SkillRadiusMult, 1e-4);
+            sim.StartMission(0);   // a fresh mission keeps the account bonus
+            Assert.AreEqual(0.85f, a.SkillMult, 1e-4);
+        }
+
+        [Test]
         public void ShieldPlateSoaksFrontalHitsThenShatters()
         {
             var e = new Enemy { Kind = Defs.KindShield, MaxHp = 100, Hp = 100, Yaw = 0 };   // facing +z

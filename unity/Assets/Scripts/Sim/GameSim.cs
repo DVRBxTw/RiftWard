@@ -83,7 +83,7 @@ namespace RiftWard.Sim
             a.Position = new Vector3(index * 2 - 3, 0, -10);
             a.Hp = a.MaxHp = 100f;
             a.Yaw = 0; a.VerticalVelocity = 0; a.FireCooldown = 0; a.DashCooldown = 0; a.DashLeft = 0;
-            a.Speed = Defs.BaseSpeed; a.DamageMult = 1; a.RateMult = 1; a.ReloadMult = 1; a.SkillMult = 1;
+            a.Speed = Defs.BaseSpeed; a.DamageMult = 1; a.RateMult = 1; a.ReloadMult = 1; a.SkillMult = 1; a.SkillCdFactor = 1;
             a.Spin = 0; a.Heat = 0; a.Overheat = 0;
             a.MagBonus = 0; a.Regen = 0; a.Armor = 0; a.GearDefense = 0; a.Critical = 0; a.Lifesteal = 0; a.Explode = 0; a.HealBudget = 0; System.Array.Clear(a.BuffStacks, 0, a.BuffStacks.Length);
             a.SkillCooldown = 0; a.Revive = 0; a.Slot = 0; a.Reload = 0;
@@ -123,9 +123,30 @@ namespace RiftWard.Sim
             ApplyBonusStats(a);
         }
 
+        /// 技能天賦 from the account (percent): grenade damage, cooldown reduction and blast radius.
+        public void ApplySkillBonus(int id, float damagePct, float cooldownPct, float radiusPct)
+        {
+            if (!Actors.TryGetValue(id, out var a)) return;
+            a.SkillBonus = new[] { Mathf.Clamp(damagePct, 0, 100), Mathf.Clamp(cooldownPct, 0, 40), Mathf.Clamp(radiusPct, 0, 60) };
+            ApplySkillStats(a);
+        }
+
+        static void ApplySkillStats(Actor a)
+        {
+            // Idempotent: undo the cooldown factor applied last time before applying it again.
+            a.SkillMult /= a.SkillCdFactor; a.SkillCdFactor = 1f;
+            a.SkillDamageMult = 1f; a.SkillRadiusMult = 1f;
+            if (a.SkillBonus == null) return;
+            a.SkillDamageMult = 1f + a.SkillBonus[0] / 100f;
+            a.SkillCdFactor = 1f - a.SkillBonus[1] / 100f;
+            a.SkillMult *= a.SkillCdFactor;
+            a.SkillRadiusMult = 1f + a.SkillBonus[2] / 100f;
+        }
+
         /// Adds the stored account bonus on top of the actor's current (freshly reset) stats.
         void ApplyBonusStats(Actor a)
         {
+            ApplySkillStats(a);
             if (a.ProfileBonus == null) return;
             float hp = a.ProfileBonus[0], damagePct = a.ProfileBonus[1], speedPct = a.ProfileBonus[2], reloadPct = a.ProfileBonus[3], critPct = a.ProfileBonus[4];
             a.HpPct = a.ProfileBonus.Length > 5 ? a.ProfileBonus[5] / 100f : 0f;
@@ -145,9 +166,10 @@ namespace RiftWard.Sim
             string id = a.WeaponId;
             var st = Defs.Weapons[id].StatsAt(a.Loadout.Level(id, "damage"), a.Loadout.Level(id, "mag"), a.Loadout.Level(id, "reload"), a.Loadout.Level(id, "over"));
             float adminDamage = a.IsAdmin ? a.Admin.Damage : 1f;
-            a.Damage = st.Damage * a.DamageMult * adminDamage * Defs.WeaponRarityMult[a.Loadout.RarityOf(id)];
-            a.FireInterval = Mathf.Max(id == "minigun" ? 0.025f : 0.045f, st.Interval * a.RateMult);
-            a.Mag = st.Mag + a.MagBonus;
+            int c = a.Loadout.ConstellationOf(id);
+            a.Damage = st.Damage * a.DamageMult * adminDamage * Defs.WeaponRarityMult[a.Loadout.RarityOf(id)] * (1f + Defs.ConstellationDamage * c);
+            a.FireInterval = Mathf.Max(id == "minigun" ? 0.025f : 0.045f, st.Interval * a.RateMult * (c >= 6 ? 1f - Defs.ConstellationRate : 1f));
+            a.Mag = Mathf.RoundToInt(st.Mag * (c >= 3 ? 1f + Defs.ConstellationMag : 1f)) + a.MagBonus;
             a.ReloadTime = Mathf.Max(0.35f, st.Reload * a.ReloadMult);
             a.Pellets = st.Pellets;
             a.Pierce = !Defs.Weapons[id].Melee && a.Loadout.RarityOf(id) >= Defs.PierceMinRarity && a.Loadout.Level(id, "pierce") > 0 ? Defs.PierceExtra(id) : 0;
@@ -194,6 +216,52 @@ namespace RiftWard.Sim
         bool Flying(Actor a) => a.IsAdmin && a.Admin.Fly;
 
         // ------------------------------------------------------------ movement (shared with client prediction)
+
+        /// 掛機代打: what the computer does for an idle player. Fights the nearest enemy (guns keep 7–18 m and
+        /// strafe, the blade closes in), otherwise stays near the nearest teammate who is still playing.
+        public PlayerInput BotInput(Actor a, int seq, ICollection<int> idle = null)
+        {
+            var input = new PlayerInput { Seq = seq, Yaw = a.Yaw, Pitch = 0, Slot = a.Slot };
+            if (!a.Alive) return input;
+            Enemy target = null;
+            float best = 45f;
+            foreach (var e in Enemies.Values)
+            {
+                float d = Vector3.Distance(e.Position, a.Position);
+                if (d < best) { best = d; target = e; }
+            }
+            Vector3 eye = a.Position + Vector3.up * Defs.EyeHeight;
+            if (target != null)
+            {
+                Vector3 point = target.Position + Vector3.up * target.Scale;
+                Vector3 to = point - eye;
+                input.Yaw = Mathf.Atan2(to.x, to.z);
+                input.Pitch = Mathf.Asin(Mathf.Clamp(to.y / Mathf.Max(0.01f, to.magnitude), -1f, 1f));
+                input.Aim = point;
+                float near = a.Melee ? 0f : 7f, far = a.Melee ? 1.8f : 18f;
+                float strafe = Mathf.Sin(Elapsed * 0.9f + a.Id) > 0 ? 1f : -1f;
+                input.Move = best < near ? new Vector2(strafe * 0.5f, -1f) : best > far ? new Vector2(0, 1f) : new Vector2(strafe, 0);
+                input.Fire = a.Melee ? best < 3f : best < 40f;
+                input.Reload = !a.Melee && a.Ammo <= 0;
+                return input;
+            }
+            Actor friend = null;
+            float fd = float.MaxValue;
+            foreach (var o in Actors.Values)
+            {
+                if (o.Id == a.Id || !o.Alive || idle != null && idle.Contains(o.Id)) continue;
+                float d = Vector3.Distance(o.Position, a.Position);
+                if (d < fd) { fd = d; friend = o; }
+            }
+            if (friend != null && fd > 6f)
+            {
+                Vector3 to = friend.Position - a.Position;
+                input.Yaw = Mathf.Atan2(to.x, to.z);
+                input.Move = new Vector2(0, 1f);
+            }
+            input.Reload = !a.Melee && a.Ammo < a.Mag;
+            return input;
+        }
 
         public static Vector3 LookDirection(float yaw, float pitch) =>
             new Vector3(Mathf.Sin(yaw) * Mathf.Cos(pitch), Mathf.Sin(pitch), Mathf.Cos(yaw) * Mathf.Cos(pitch));
@@ -1247,8 +1315,10 @@ namespace RiftWard.Sim
                 if (b.Position.y <= 0.15f || b.Life <= 0 || InCover(b.Position) || Mathf.Abs(b.Position.x) > 22.5f || Mathf.Abs(b.Position.z) > 22.5f)
                 {
                     Bullets.Remove(b.Id);
-                    float mult = Actors.TryGetValue(b.Owner, out var owner) ? owner.DamageMult : 1f;
-                    Explode(b.Position + Vector3.up * 0.5f, Defs.GrenadeRadius, Defs.GrenadeDamage * (1f + 0.15f * Region) * mult, b.Owner, new Color32(0xff, 0xb3, 0x47, 255));
+                    bool known = Actors.TryGetValue(b.Owner, out var owner);
+                    float mult = known ? owner.DamageMult * owner.SkillDamageMult : 1f;
+                    float radius = Defs.GrenadeRadius * (known ? owner.SkillRadiusMult : 1f);
+                    Explode(b.Position + Vector3.up * 0.5f, radius, Defs.GrenadeDamage * (1f + 0.15f * Region) * mult, b.Owner, new Color32(0xff, 0xb3, 0x47, 255));
                 }
             }
         }

@@ -106,10 +106,13 @@ namespace RiftWard.Client
             ["armor"] = "護甲", ["module"] = "槍械模組", ["boots"] = "戰術靴", ["chip"] = "戰術晶片",
         };
         public static readonly string[] Talents = { "hp", "damage", "speed", "reload", "crit" };
+        /// 技能天賦: the Q grenade (mirrors TALENTS in server/service.py).
+        public static readonly string[] SkillTalents = { "skill_dmg", "skill_cd", "skill_radius" };
         public static readonly Dictionary<string, (string name, string per)> TalentInfo = new Dictionary<string, (string, string)>
         {
             ["hp"] = ("強韌體魄", "生命上限 +3%"), ["damage"] = ("火力專精", "傷害 +2%"), ["speed"] = ("機動訓練", "移動速度 +1.5%"),
             ["reload"] = ("快速裝填", "換彈速度 +3%"), ["crit"] = ("致命直覺", "爆擊率 +1%"),
+            ["skill_dmg"] = ("爆破專精", "手榴彈傷害 +6%"), ["skill_cd"] = ("迅捷投擲", "手榴彈冷卻 -3%"), ["skill_radius"] = ("震波擴散", "爆炸範圍 +4%"),
         };
         public const int TalentMax = 10;
 
@@ -140,6 +143,9 @@ namespace RiftWard.Client
             "reload" => $"換彈 +{value:0.#}%",
             "crit" => $"爆擊 +{value:0.#}%",
             "def" => $"防禦 +{value:0.#}%",
+            "skill_dmg" => $"手榴彈傷害 +{value:0.#}%",
+            "skill_cd" => $"手榴彈冷卻 -{value:0.#}%",
+            "skill_radius" => $"爆炸範圍 +{value:0.#}%",
             _ => $"{key} +{value}",
         };
     }

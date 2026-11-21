@@ -556,6 +556,7 @@ namespace RiftWard.Client
             Client.StartOffline(offlineRegion, Profile.Loadout, Profile.Admin, AdminSettings, OpenTier(offlineRegion, SelectedDifficulty));
             if (Client.Sim != null) Client.Sim.Endless = SelectedEndless && EndlessOpen(offlineRegion);
             Client.Sim?.ApplyProfileBonus(Client.LocalId, Profile.BonusOf("hp"), Profile.BonusOf("damage"), Profile.BonusOf("speed"), Profile.BonusOf("reload"), Profile.BonusOf("crit"), Profile.BonusOf("hp_pct"), Profile.BonusOf("def"));
+            Client.Sim?.ApplySkillBonus(Client.LocalId, Profile.BonusOf("skill_dmg"), Profile.BonusOf("skill_cd"), Profile.BonusOf("skill_radius"));
         }
 
         void ReturnHome()
@@ -799,6 +800,7 @@ namespace RiftWard.Client
             yield return Shot(folder, "unity-patch-notes");
             foreach (Transform t in Overlay.Root) if (t.name == "PatchNotes") Destroy(t.gameObject);
             Screens.PreviewRoom = false;
+            Profile.Loadout.Constellation["sniper"] = 2;
             Screens.ShowArmory();
             yield return Settle(0.4f);
             yield return Shot(folder, "unity-armory");
@@ -889,6 +891,10 @@ namespace RiftWard.Client
             Screens.ShowCharacter();
             yield return Settle(0.4f);
             yield return Shot(folder, "unity-character");
+            Screens.ShowCharacterTalentPage(1);
+            yield return Settle(0.4f);
+            yield return Shot(folder, "unity-character-skills");
+            Screens.ShowCharacterTalentPage(0);
             Screens.SetGearFilter("armor");
             yield return Settle(0.3f);
             yield return Shot(folder, "unity-character-armor");

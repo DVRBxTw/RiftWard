@@ -280,7 +280,9 @@ def set_bonus(items) -> dict:
 
 
 # ---- account level, talents, gear and supply draws
-TALENTS = {"hp": 3, "damage": 2, "speed": 1.5, "reload": 3, "crit": 1}   # bonus per point (hp: % of max shield)
+TALENTS = {"hp": 3, "damage": 2, "speed": 1.5, "reload": 3, "crit": 1,   # bonus per point (hp: % of max shield)
+           # 技能天賦 (the Q grenade): damage %, cooldown -%, blast radius %
+           "skill_dmg": 6, "skill_cd": 3, "skill_radius": 4}
 # The shield talent multiplies max shield (start and in-mission upgrades alike), so it is reported as "hp_pct",
 # apart from the flat shield gear gives under "hp".
 TALENT_BONUS_KEY = {"hp": "hp_pct"}
@@ -385,6 +387,11 @@ def default_loadout():
 
 
 WEAPON_COPY_LIMIT = 50
+# 命之座: feed a spare 稀世+ copy of the same weapon (and gold) to raise it, up to C6. Per level +4% damage;
+# C3 adds 15% magazine, C6 10% fire rate (mirrors Defs.Constellation* in the game).
+CONST_MAX = 6
+CONST_GOLD = [1000, 2000, 4000, 6000, 9000, 12000]
+CONST_MIN_RARITY = 2
 
 
 def sync_rarity(loadout):
@@ -1252,6 +1259,34 @@ class Store:
         return self._save_loadout(account_id, loadout, gold, shards)
 
     @_locked
+    def raise_constellation(self, account_id: int, weapon):
+        """命之座 +1: consumes the lowest-rarity spare (not in use) 稀世+ copy of the weapon, plus gold."""
+        profile = self.profile(account_id)
+        loadout = profile["loadout"]
+        if weapon not in loadout["owned"]:
+            raise ValueError("尚未持有此武器")
+        level = loadout["const"].get(weapon, 0)
+        if level >= CONST_MAX:
+            raise ValueError("命之座已達上限")
+        spares = [i for i, r in enumerate(loadout["copies"][weapon]) if i != loadout["active"][weapon] and r >= CONST_MIN_RARITY]
+        if not spares:
+            raise ValueError("需要一把未使用的稀世以上同款武器作為素材")
+        index = min(spares, key=lambda i: (loadout["copies"][weapon][i], sum(loadout["copy_levels"][weapon][i].values())))
+        cost = CONST_GOLD[level]
+        with self.connect() as db:
+            if not db.execute("UPDATE progress SET gold=gold-? WHERE account_id=? AND gold>=?", (cost, account_id, cost)).rowcount:
+                raise ValueError("金幣不足")
+        loadout["copies"][weapon].pop(index)
+        loadout["copy_levels"][weapon].pop(index)
+        if loadout["active"][weapon] > index:
+            loadout["active"][weapon] -= 1
+        loadout["const"][weapon] = level + 1
+        sync_rarity(loadout)
+        with self.connect() as db:
+            db.execute("UPDATE progress SET loadout=? WHERE account_id=?", (json.dumps(loadout), account_id))
+        return self.profile(account_id)
+
+    @_locked
     def upgrade_gear(self, account_id: int, item_id):
         """Enhances one gear item by a level; the price depends on its rarity and current level."""
         gear = self._raw_gear(account_id)
@@ -2113,6 +2148,9 @@ class Store:
             equipped = data.get("equipped")
             if isinstance(equipped, list):
                 loadout["equipped"] = [w for w in dict.fromkeys(equipped) if w in loadout["owned"]][:2]
+        stored_const = data.get("const") if isinstance(data, dict) and isinstance(data.get("const"), dict) else {}
+        loadout["const"] = {w: min(CONST_MAX, n) for w, n in stored_const.items()
+                            if w in loadout["owned"] and isinstance(n, int) and not isinstance(n, bool) and n > 0}
         if not loadout["equipped"]:
             # Default kit: pistol plus the first other weapon owned.
             loadout["equipped"] = loadout["owned"][:2]
@@ -2729,7 +2767,7 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(200, {"ok": True, "username": name})
             else:
                 self._json(404, {"ok": False, "error": "找不到此服務"})
-        elif self.path in ("/api/talent/assign", "/api/talent/reset", "/api/gacha/draw", "/api/gacha/weapon", "/api/gacha/limited", "/api/gear/equip", "/api/gear/salvage", "/api/gear/upgrade", "/api/gear/reforge", "/api/gear/limit", "/api/gear/ascend", "/api/weapon/select", "/api/weapon/salvage", "/api/salvage/bulk"):
+        elif self.path in ("/api/talent/assign", "/api/talent/reset", "/api/gacha/draw", "/api/gacha/weapon", "/api/gacha/limited", "/api/gear/equip", "/api/gear/salvage", "/api/gear/upgrade", "/api/gear/reforge", "/api/gear/limit", "/api/gear/ascend", "/api/weapon/select", "/api/weapon/salvage", "/api/salvage/bulk", "/api/weapon/constellation"):
             try:
                 extra = {}
                 if self.path == "/api/talent/assign":
@@ -2754,6 +2792,8 @@ class Handler(BaseHTTPRequestHandler):
                     result = store.salvage_weapon_copy(profile["id"], data.get("weapon"), data.get("index"), data.get("rarity"))
                 elif self.path == "/api/gear/equip":
                     result = store.equip_gear(profile["id"], data.get("item"))
+                elif self.path == "/api/weapon/constellation":
+                    result = store.raise_constellation(profile["id"], data.get("weapon"))
                 elif self.path == "/api/gear/upgrade":
                     result = store.upgrade_gear(profile["id"], data.get("item"))
                 elif self.path == "/api/gear/reforge":
