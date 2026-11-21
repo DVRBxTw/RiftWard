@@ -1203,11 +1203,16 @@ class Store:
         return self.profile(account_id)
 
     @_locked
-    def salvage_bulk(self, account_id: int, kind, rarities, confirm=False):
-        """Salvages every unequipped item (gear) or every inactive copy (weapons) of the chosen rarities.
-        Anything 傳奇 or above needs confirm=True, so a stray request can never wipe the best loot."""
+    def salvage_bulk(self, account_id: int, kind, rarities, confirm=False, slot=None):
+        """Salvages every unequipped item (gear) or every inactive copy (weapons) of the chosen rarities; for gear,
+        optionally only one slot (the tab the bag is on). Anything 傳奇 or above needs confirm=True, so a stray
+        request can never wipe the best loot."""
         if kind not in ("gear", "weapon"):
             raise ValueError("分解類型不正確")
+        if slot in ("", None):
+            slot = None
+        elif kind != "gear" or slot not in GEAR_SLOTS:
+            raise ValueError("裝備部位不正確")
         if not isinstance(rarities, list) or not rarities or not all(isinstance(r, int) and not isinstance(r, bool) and 0 <= r < len(RARITIES) for r in rarities):
             raise ValueError("請選擇要分解的稀有度")
         chosen = set(rarities)
@@ -1219,7 +1224,7 @@ class Store:
             worn = set(gear["equipped"].values())
             kept = []
             for item in gear["inventory"]:
-                if item["rarity"] in chosen and item["id"] not in worn:
+                if item["rarity"] in chosen and item["id"] not in worn and (slot is None or item["slot"] == slot):
                     count += 1
                     gold += GEAR_SALVAGE_GOLD[item["rarity"]] + gear_invested(item) // 2
                     shards += SALVAGE_SHARDS[item["rarity"]] + gear_invested_shards(item) // 2
@@ -2409,7 +2414,7 @@ class Handler(BaseHTTPRequestHandler):
                 elif self.path == "/api/weapon/select":
                     result = store.select_weapon_copy(profile["id"], data.get("weapon"), data.get("index"), data.get("rarity"))
                 elif self.path == "/api/salvage/bulk":
-                    count, gold, shards, result = store.salvage_bulk(profile["id"], data.get("kind"), data.get("rarities"), data.get("confirm", False))
+                    count, gold, shards, result = store.salvage_bulk(profile["id"], data.get("kind"), data.get("rarities"), data.get("confirm", False), data.get("slot"))
                     extra.update(count=count, gold=gold, shards=shards)
                 elif self.path == "/api/weapon/salvage":
                     result = store.salvage_weapon_copy(profile["id"], data.get("weapon"), data.get("index"), data.get("rarity"))

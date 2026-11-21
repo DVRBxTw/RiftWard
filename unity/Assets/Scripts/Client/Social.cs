@@ -22,6 +22,9 @@ namespace RiftWard.Client
         public static readonly List<Line> Lines = new List<Line>();
         public static event Action<Line> Added;
 
+        /// Forget every line: a new session starts with an empty chat (logout, disconnect).
+        public static void Reset() { Lines.Clear(); LastWhisperFrom = ""; }
+
         public static void Add(Line line)
         {
             line.Time = UnityEngine.Time.realtimeSinceStartup;

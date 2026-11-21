@@ -160,6 +160,52 @@ namespace RiftWard.Client
             return hit / Mathf.Max(0.05f, cycle);
         }
 
+        /// What one point of each stat is worth when comparing gear (percent stats against flat life and defense).
+        static readonly Dictionary<string, float> GearStatValue = new Dictionary<string, float>
+        {
+            ["damage"] = 4f, ["crit"] = 3f, ["speed"] = 1.5f, ["reload"] = 1.5f, ["hp"] = 0.25f, ["hp_pct"] = 2f, ["def"] = 4f,
+        };
+        static float StatValue(string stat, float amount) => (GearStatValue.TryGetValue(stat, out var v) ? v : 1f) * amount;
+        static float GearValue(GearItem i) => i.Stats.Sum(kv => StatValue(kv.Key, kv.Value)) + StatValue("def", i.Defense);
+
+        /// 一鍵裝備 for gear: per slot, the best piece overall and the best piece of each set; every mix of those is
+        /// scored with the 2- and 4-piece set bonuses, and the best mix wins (so a set can beat four loose pieces).
+        static List<GearItem> BestGearSet(Profile p)
+        {
+            var slots = Gear.Slots.Where(slot => p.Inventory.Any(i => i.Slot == slot)).ToList();
+            var options = slots.Select(slot =>
+            {
+                var pieces = p.Inventory.Where(i => i.Slot == slot).ToList();
+                var picks = new List<GearItem> { pieces.OrderByDescending(GearValue).First() };
+                foreach (var set in Gear.Sets.Keys)
+                {
+                    var best = pieces.Where(i => i.Set == set).OrderByDescending(GearValue).FirstOrDefault();
+                    if (best != null && !picks.Contains(best)) picks.Add(best);
+                }
+                return picks;
+            }).ToList();
+            List<GearItem> bestMix = null;
+            float bestScore = float.MinValue;
+            void Walk(int depth, List<GearItem> mix)
+            {
+                if (depth == options.Count)
+                {
+                    float score = mix.Sum(GearValue);
+                    foreach (var g in mix.Where(i => i.Set != "").GroupBy(i => i.Set))
+                    {
+                        var def = Gear.Sets[g.Key];
+                        if (g.Count() >= 2) score += StatValue(def.two.stat, def.two.value);
+                        if (g.Count() >= 4) score += StatValue(def.four.stat, def.four.value);
+                    }
+                    if (score > bestScore) { bestScore = score; bestMix = new List<GearItem>(mix); }
+                    return;
+                }
+                foreach (var pick in options[depth]) { mix.Add(pick); Walk(depth + 1, mix); mix.RemoveAt(mix.Count - 1); }
+            }
+            Walk(0, new List<GearItem>());
+            return bestMix ?? new List<GearItem>();
+        }
+
         /// 一鍵裝備: the strongest copy of each owned weapon, the two strongest weapons equipped, and the best item
         /// (rarity, then enhancement, then total stats) in every gear slot. Sends only the changes, one after another.
         void EquipBest()
@@ -189,13 +235,9 @@ namespace RiftWard.Client
             steps.RemoveAll(s => !kit.Contains((string)s.data["weapon"]));
             if (kit.Count > 0 && !(kit.Count == lo.Equipped.Count && kit.All(lo.Equipped.Contains)))
                 steps.Add(("/api/shop/equip", new Dictionary<string, object> { ["weapons"] = kit.Cast<object>().ToList() }));
-            foreach (var slot in p.Inventory.Select(i => i.Slot).Distinct().ToList())
-            {
-                var top = p.Inventory.Where(i => i.Slot == slot)
-                    .OrderByDescending(i => i.Rarity).ThenByDescending(i => i.Level).ThenByDescending(i => i.Stats.Values.Sum()).First();
-                if (!(p.Equipment.TryGetValue(slot, out var worn) && worn == top.Id))
+            foreach (var top in BestGearSet(p))
+                if (!(p.Equipment.TryGetValue(top.Slot, out var worn) && worn == top.Id))
                     steps.Add(("/api/gear/equip", new Dictionary<string, object> { ["item"] = top.Id }));
-            }
             if (steps.Count == 0) { app.Overlay.Toast("已經是最強配置"); return; }
             equippingBest = true;
             string mode = Mode;
@@ -674,6 +716,8 @@ namespace RiftWard.Client
             // Weapon list
             var list = Ui.VStack(pad, 0);
             list.Place(new Vector2(0, 1), new Vector2(0, -64), new Vector2(400, 330), new Vector2(0, 1));
+            // Rows shrink with the number of weapons so the list always ends above the copies panel.
+            float rowHeight = Mathf.Min(58f, (330f - 28f) / Defs.WeaponOrder.Length);
             Widgets.Section(list, "武器").Sized(28);
             for (int i = 0; i < Defs.WeaponOrder.Length; i++)
             {
@@ -681,7 +725,7 @@ namespace RiftWard.Client
                 var w = Defs.Weapons[id];
                 bool owned = p.Loadout.Owned.Contains(id), current = id == armoryPick;
                 int slot = p.Loadout.Equipped.IndexOf(id);
-                var row = Ui.Button(list, "", () => { armoryPick = id; ShowArmory(); }, 15, null, current ? new Color(Palette.Amber.r, Palette.Amber.g, Palette.Amber.b, 0.08f) : new Color(0, 0, 0, 0), current ? Palette.Amber : new Color(0, 0, 0, 0)).Sized(58);   // five weapons fit above the copies list
+                var row = Ui.Button(list, "", () => { armoryPick = id; ShowArmory(); }, 15, null, current ? new Color(Palette.Amber.r, Palette.Amber.g, Palette.Amber.b, 0.08f) : new Color(0, 0, 0, 0), current ? Palette.Amber : new Color(0, 0, 0, 0)).Sized(rowHeight);
                 row.GetComponentInChildren<Text>().text = "";
                 Ui.Label(row.transform, $"0{i + 1}", 13, current ? Palette.Amber : Palette.Muted).rectTransform.Place(new Vector2(0, 0.5f), new Vector2(18, 0), new Vector2(30, 20), new Vector2(0, 0.5f));
                 Ui.Label(row.transform, owned ? $"{w.Name}  ·  {Gear.RarityNames[p.Loadout.RarityOf(id)]}" : w.Name, 18, owned ? Gear.RarityColors[p.Loadout.RarityOf(id)] : Palette.Hex("a9abae"), TextAnchor.UpperLeft, owned).rectTransform.Place(new Vector2(0, 1), new Vector2(60, -8), new Vector2(300, 24), new Vector2(0, 1));
@@ -693,16 +737,16 @@ namespace RiftWard.Client
                     int sum = Defs.UpgradeKeys.Sum(k => p.Loadout.Level(id, k)), over = p.Loadout.Level(id, "over");
                     detail = string.Join(" · ", new[] { sum > 0 ? $"強化 {sum}" : null, over > 0 ? $"超載 {over}" : null, "穿透" }.Where(x => x != null));
                 }
-                Ui.Label(row.transform, detail == "" ? "已擁有" : detail, 12, Palette.Muted).rectTransform.Place(new Vector2(0, 1), new Vector2(60, -33), new Vector2(260, 18), new Vector2(0, 1));
+                Ui.Label(row.transform, detail == "" ? "已擁有" : detail, 12, Palette.Muted).rectTransform.Place(new Vector2(0, 1), new Vector2(60, rowHeight < 54f ? -29 : -33), new Vector2(260, 18), new Vector2(0, 1));
                 var tag = Ui.Label(row.transform, owned ? (slot >= 0 ? $"{slot + 1} 號" : "") : Defs.LimitedWeapons.Contains(id) ? "限定補給" : "武器補給", 13, owned ? Palette.Bone : Palette.Muted, TextAnchor.MiddleRight);
                 tag.rectTransform.Place(new Vector2(1, 0.5f), new Vector2(-16, 0), new Vector2(80, 20), new Vector2(1, 0.5f));
-                if (current) Ui.Box(row.transform, Palette.Amber, "Mark").rectTransform.Place(new Vector2(0, 0.5f), Vector2.zero, new Vector2(3, 58), new Vector2(0, 0.5f));
+                if (current) Ui.Box(row.transform, Palette.Amber, "Mark").rectTransform.Place(new Vector2(0, 0.5f), Vector2.zero, new Vector2(3, rowHeight), new Vector2(0, 0.5f));
             }
             // Copies of the selected weapon: choose which one to use, salvage the rest by hand.
             if (p.Loadout.Owned.Contains(armoryPick) && p.Loadout.Copies.TryGetValue(armoryPick, out var copies))
             {
                 int activeCopy = p.Loadout.Active.TryGetValue(armoryPick, out var ac) ? ac : 0;
-                var copyBox = Ui.Rect(pad, "Copies").Place(new Vector2(0, 1), new Vector2(0, -400), new Vector2(400, 170), new Vector2(0, 1));
+                var copyBox = Ui.Rect(pad, "Copies").Place(new Vector2(0, 1), new Vector2(0, -64 - 28 - rowHeight * Defs.WeaponOrder.Length - 8), new Vector2(400, 170), new Vector2(0, 1));
                 Widgets.Section(copyBox, $"武器庫  ·  {copies.Count} 把").Place(new Vector2(0, 1), Vector2.zero, new Vector2(290, 26), new Vector2(0, 1));
                 Ui.Button(copyBox, "一鍵分解", () => BulkSalvage("weapon"), 12, Palette.Amber).GetComponent<RectTransform>().Place(new Vector2(1, 1), new Vector2(0, 1), new Vector2(100, 26), new Vector2(1, 1));
                 var host = Ui.Rect(copyBox, "Host");
@@ -798,7 +842,12 @@ namespace RiftWard.Client
                 Ui.Label(ds, active ? $"專屬屬性【{perk.Value.name}】 {perk.Value.text}" : $"傳奇以上解鎖【{perk.Value.name}】 {perk.Value.text}",
                     13, active ? Gear.RarityColors[shownRarity] : Palette.Muted, TextAnchor.UpperLeft, active).Sized(20);
             }
-            Ui.Label(ds, wd.Description, 15, Palette.Hex("c9c5bb")).Sized(22);
+            // Kept clear of the turning model in the corner (long descriptions used to run under it).
+            var descRow = Ui.Rect(ds, "Desc").Sized(22);
+            var descText = Ui.Label(descRow, wd.Description, 15, Palette.Hex("c9c5bb"));
+            descText.rectTransform.Fill(); descText.rectTransform.offsetMax = new Vector2(-230, 0);
+            descText.verticalOverflow = VerticalWrapMode.Truncate;   // best fit only shrinks text that would overflow its box
+            descText.resizeTextForBestFit = true; descText.resizeTextMinSize = 10; descText.resizeTextMaxSize = 15;
             var st = wd.StatsAt(p.Loadout.Level(armoryPick, "damage"), p.Loadout.Level(armoryPick, "mag"), p.Loadout.Level(armoryPick, "reload"), p.Loadout.Level(armoryPick, "over"));
             st.Damage *= Defs.WeaponRarityMult[own ? p.Loadout.RarityOf(armoryPick) : 1];
             float dps = st.Damage * st.Pellets / st.Interval;
@@ -1229,6 +1278,7 @@ namespace RiftWard.Client
                 foreach (var item in p.Inventory)
                 {
                     if (worn.Contains(item.Id)) continue;
+                    if (gearFilter != "" && item.Slot != gearFilter) continue;   // only the tab the bag is on
                     counts[item.Rarity]++;
                     int invested = 0;
                     for (int n = 0; n < item.Level; n++) invested += Gear.UpgradeCost(item.Rarity, n);
@@ -1245,7 +1295,8 @@ namespace RiftWard.Client
             var s = Ui.VStack(sheet, 8);
             s.Fill();
             s.GetComponent<VerticalLayoutGroup>().padding = new RectOffset(28, 28, 22, 22);
-            Ui.Label(s, weapons ? "一鍵分解武器" : "一鍵分解裝備", 26, Palette.Bone, TextAnchor.UpperLeft, true).Sized(36);
+            string salvageSlot = weapons ? "" : gearFilter;
+            Ui.Label(s, weapons ? "一鍵分解武器" : salvageSlot != "" ? $"一鍵分解{Gear.SlotNames[salvageSlot]}" : "一鍵分解裝備", 26, Palette.Bone, TextAnchor.UpperLeft, true).Sized(36);
             Ui.Label(s, weapons ? "勾選要分解的稀有度（所有武器）。使用中的版本不會被分解。" : "勾選要分解的稀有度。已裝備的不會被分解。", 13, Palette.Muted).Sized(22);
 
             Text summary = null, warning = null;
@@ -1290,7 +1341,7 @@ namespace RiftWard.Client
                 go.interactable = false;
                 go.SetCaption("處理中…");
                 string mode = Mode;
-                app.Api.Post("/api/salvage/bulk", new Dictionary<string, object> { ["kind"] = kind, ["rarities"] = picked, ["confirm"] = high }, result =>
+                app.Api.Post("/api/salvage/bulk", new Dictionary<string, object> { ["kind"] = kind, ["rarities"] = picked, ["confirm"] = high, ["slot"] = salvageSlot }, result =>
                 {
                     if (Mode != mode) return;
                     if (!result.Bool("ok")) { go.interactable = true; go.SetCaption("分解"); warning.text = result.Str("error", "操作失敗"); return; }
@@ -1522,8 +1573,13 @@ namespace RiftWard.Client
             return t;
         }
 
-        static float TextHeight(string text, int size, float width) =>
-            Mathf.Max(1, Mathf.CeilToInt(text.Length * size * 1.02f / Mathf.Max(1f, width))) * size * 1.5f + 4;
+        /// Height the label really needs at this width, from the text layout itself (line breaks the writer typed
+        /// included); the old character-count estimate cut long, multi-line feedback short.
+        static float TextHeight(Text label, float width)
+        {
+            var settings = label.GetGenerationSettings(new Vector2(width, 0));
+            return Mathf.Ceil(label.cachedTextGeneratorForLayout.GetPreferredHeight(label.text, settings) / Mathf.Max(0.01f, label.pixelsPerUnit)) + 6;
+        }
 
         public void ShowFeedback(bool fetch = true)
         {
@@ -1616,7 +1672,8 @@ namespace RiftWard.Client
         {
             bool done = f.Str("status") == "done";
             string text = f.Str("body"), reply = f.Str("reply");
-            const float width = 560f;
+            // Text width inside the card (a little under the real one, so the measured height errs on the tall side).
+            float width = admin ? 1060f : 520f;
             var card = Ui.Box(list, new Color(1, 1, 1, done ? 0.02f : 0.05f), "Feedback").rectTransform;
             var st = Ui.VStack(card, 4);
             st.Fill();
@@ -1626,13 +1683,15 @@ namespace RiftWard.Client
             Ui.Label(head, $"{who}{FeedbackKindName(f.Str("category"))}  ·  {FriendPresence.Ago((long)(f.TryGetValue("created", out var c) && c is double cd ? cd : 0))}", 12,
                 f.Str("category") == "bug" ? Palette.Danger : Palette.Amber).rectTransform.Fill();
             Ui.Label(head, done ? "已處理" : "未處理", 12, done ? Palette.Hex("5dd39e") : Palette.Muted, TextAnchor.MiddleRight).rectTransform.Fill();
-            float h = TextHeight(text, 14, width);
-            Plain(st, text, 14, Palette.Bone).Sized(h);
+            var bodyLabel = Plain(st, text, 14, Palette.Bone);
+            float h = TextHeight(bodyLabel, width);
+            bodyLabel.Sized(h);
             float total = 10 + 20 + 4 + h + 10;
             if (reply != "")
             {
-                float rh = TextHeight("管理員回覆：" + reply, 13, width);
-                Plain(st, "管理員回覆：" + reply, 13, Palette.Hex("82aaff")).Sized(rh);
+                var replyLabel = Plain(st, "管理員回覆：" + reply, 13, Palette.Hex("82aaff"));
+                float rh = TextHeight(replyLabel, width);
+                replyLabel.Sized(rh);
                 total += 4 + rh;
             }
             if (admin)

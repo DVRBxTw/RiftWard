@@ -375,6 +375,7 @@ namespace RiftWard.Client
         void OnNetDisconnected(string reason)
         {
             FriendPresence.Clear();
+            ChatLog.Reset();   // chat lives for one online session only
             Overlay.HideInvite();
             PendingInvite = null;
             homeStatus = "與遊戲伺服器中斷連線 · 離線單人任務";
@@ -427,6 +428,7 @@ namespace RiftWard.Client
         public void Logout()
         {
             patchNotesChecked = false;
+            ChatLog.Reset();
             Api.Post("/api/logout", null, _ => { });
             Net.Close();
             SessionStore.Forget();
@@ -1047,6 +1049,14 @@ namespace RiftWard.Client
             Screens.ShowArmoryFor("saber");
             yield return Settle(0.6f);
             yield return Shot(folder, "unity-armory-saber");
+            // 2K full screen: the saber page used to overlap there.
+            Screen.SetResolution(2560, 1440, FullScreenMode.Windowed);
+            yield return Settle(0.5f);
+            Screens.ShowArmoryFor("saber");
+            yield return Settle(0.6f);
+            yield return Shot(folder, "unity-armory-saber-2k");
+            Screen.SetResolution(1280, 800, FullScreenMode.Windowed);
+            yield return Settle(0.5f);
             Screens.ShowArmoryFor("minigun");
             yield return Settle(0.6f);
             yield return Shot(folder, "unity-armory-minigun");

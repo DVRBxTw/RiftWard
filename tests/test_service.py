@@ -581,6 +581,21 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(self.call("/api/admin/feedback/resolve", {"id": fid, "reopen": True}, auth)[1]["open"], 6)
         self.assertEqual(self.call("/api/admin/feedback/resolve", {"id": 99999}, auth)[0], 400)
 
+    def test_bulk_salvage_one_slot(self):
+        account = self.register()
+        auth = {"Authorization": "Bearer " + account["token"]}
+        aid = account["profile"]["id"]
+        items = [{"id": f"i{n}", "slot": slot, "rarity": 0, "level": 0, "stats": {service.GEAR_SLOTS[slot]: 1}}
+                 for n, slot in enumerate(["armor", "armor", "boots", "chip"])]
+        self.store._save_gear(aid, {"inventory": items, "equipped": {}})
+        self.assertEqual(self.call("/api/salvage/bulk", {"kind": "gear", "rarities": [0], "slot": "hat"}, auth)[0], 400)
+        self.assertEqual(self.call("/api/salvage/bulk", {"kind": "weapon", "rarities": [0], "slot": "armor"}, auth)[0], 400)
+        code, r = self.call("/api/salvage/bulk", {"kind": "gear", "rarities": [0], "slot": "armor"}, auth)
+        self.assertEqual((code, r["count"]), (200, 2))
+        self.assertEqual(sorted(i["slot"] for i in r["profile"]["inventory"]), ["boots", "chip"])
+        r = self.call("/api/salvage/bulk", {"kind": "gear", "rarities": [0]}, auth)[1]   # no slot: every slot, as before
+        self.assertEqual((r["count"], r["profile"]["inventory"]), (2, []))
+
     def test_levels_talents_keys_and_gear(self):
         account = self.register()
         aid = account["profile"]["id"]

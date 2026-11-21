@@ -381,14 +381,20 @@ namespace RiftWard.Sim
             UpdateEnemies(alive, dt);
             if (Enemies.Count == 0)
             {
+                // Nobody left to shoot: hostile rounds still in the air vanish, so a cleared wave never downs anyone
+                // (a dead boss's last volley used to be able to wipe the team and turn a win into a defeat).
+                foreach (var id in Bullets.Where(kv => kv.Value.Kind == BulletKind.Enemy || kv.Value.Kind == BulletKind.Sniper || kv.Value.Kind == BulletKind.Slam).Select(kv => kv.Key).ToList())
+                    Bullets.Remove(id);
+                // The final wave cleared is the win, at once.
+                if (Wave >= Defs.WavesPerMission && !Endless)
+                {
+                    if (!waveGraded) GradeWave();
+                    State = MissionState.Victory;
+                    return;
+                }
                 WaveDelay -= dt;
                 if (WaveDelay <= 0)
                 {
-                    if (Wave >= Defs.WavesPerMission && !Endless)
-                    {
-                        State = MissionState.Victory;
-                        return;
-                    }
                     Wave++;
                     SpawnWave();
                     WaveDelay = 2f;

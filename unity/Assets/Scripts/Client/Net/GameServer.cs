@@ -76,10 +76,9 @@ namespace RiftWard.Client
         float clock, presenceTimer;
         string dataDir = ".";
 
-        // Chat: recent world messages replayed to newcomers, temporary mutes and a word filter.
-        const int ChatHistory = 40, ChatBurst = 5;
+        // Chat: live only (no backlog for newcomers), temporary mutes and a word filter.
+        const int ChatBurst = 5;
         const float ChatWindow = 10f;
-        readonly List<byte[]> chatHistory = new List<byte[]>();
         readonly Dictionary<int, float> mutedUntil = new Dictionary<int, float>();
         string[] chatFilter = new string[0];
 
@@ -532,7 +531,7 @@ namespace RiftWard.Client
                 p.Conn.Send(Protocol.Frame(Msg.Welcome, w => w.Write(id)));
                 Debug.Log("ACCOUNT_PEER_VERIFIED id=" + id);
                 SendSoloLobby(p);
-                foreach (var line in chatHistory) p.Conn.Send(line);
+                // No backlog on login: chat shows only what is said while you are online.
                 FetchFriends(p);
             });
         }
@@ -707,8 +706,6 @@ namespace RiftWard.Client
                 return;
             }
             var frame = Protocol.Frame(Msg.ChatLine, w => WriteLine(w, ChatChannel.World, p.AccountId, p.ChatName, title, text, p.Profile.Admin));
-            chatHistory.Add(frame);
-            if (chatHistory.Count > ChatHistory) chatHistory.RemoveAt(0);
             foreach (var o in players.Values) if (o.Profile != null) o.Conn.Send(frame);
         }
 

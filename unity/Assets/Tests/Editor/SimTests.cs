@@ -364,6 +364,23 @@ namespace RiftWard.Tests
         }
 
         [Test]
+        public void ClearingTheFinalWaveWinsAndLeftoverRoundsVanish()
+        {
+            // A dead boss's last volley used to land during the victory delay and could turn a win into a defeat.
+            var sim = NewMission();
+            var a = sim.Actors[1];
+            sim.Wave = Defs.WavesPerMission;
+            sim.Enemies.Clear();
+            a.Hp = 5f;
+            sim.Bullets[1] = new Bullet { Id = 1, Position = a.Position + Vector3.up * 0.9f, Velocity = Vector3.zero, Damage = 999f, Kind = BulletKind.Enemy };
+            sim.Bullets[2] = new Bullet { Id = 2, Position = a.Position + new Vector3(3, 1, 0), Velocity = Vector3.zero, Damage = 999f, Kind = BulletKind.Slam };
+            sim.Tick(0.02f);
+            Assert.AreEqual(MissionState.Victory, sim.State);
+            Assert.IsTrue(a.Alive);
+            Assert.AreEqual(0, sim.Bullets.Count);
+        }
+
+        [Test]
         public void EmptyMagazineAutoReloads()
         {
             var sim = NewMission();
@@ -488,6 +505,7 @@ namespace RiftWard.Tests
         {
             var sim = NewMission();
             var a = sim.Actors[1];
+            PlaceEnemy(sim, new Vector3(20, 0, 20)).Speed = 0;   // an enemy alive somewhere: rounds only clear once none are left
             // A slam mark bursts after the wind-up and only hurts inside its circle.
             var mark = sim.SpawnBullet(new Vector3(a.Position.x, 0.05f, a.Position.z), Vector3.zero, 30f, BulletKind.Slam);
             mark.Life = Defs.SlamWindup;
@@ -928,7 +946,8 @@ namespace RiftWard.Tests
             sim.Tick(0.01f);
             Assert.AreEqual(1, sim.Bullets.Count);
             Assert.LessOrEqual(sim.Bullets.Values.First().Velocity.magnitude, Defs.BulletSpeed + 0.01f);
-            sim.Enemies.Clear();
+            // The shooter stays (a round fired by a live enemy keeps flying) but stops shooting and walks off.
+            e.Shoots = false; e.Speed = 0; e.Position = a.Position + new Vector3(20, 0, 20);
             sim.WaveDelay = 99;
             float hp = a.Hp;
             for (int i = 0; i < 200; i++) sim.Tick(0.02f);
