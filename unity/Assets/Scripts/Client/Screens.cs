@@ -386,6 +386,61 @@ namespace RiftWard.Client
             }
         }
 
+        void ShowStarMap(RectTransform r)
+        {
+            var p = app.Profile;
+            var body = Page(r, "missions");
+            Ui.Box(body, new Color(0.03f, 0.035f, 0.06f, 0.985f), "Space").rectTransform.Fill();
+            // A scatter of stars behind the planets.
+            var rng = new System.Random(42);
+            for (int i = 0; i < 90; i++)
+            {
+                float size = rng.Next(3) == 0 ? 3 : 2;
+                Ui.Box(body, new Color(1, 1, 1, 0.15f + (float)rng.NextDouble() * 0.5f), "Star").rectTransform
+                    .Place(new Vector2((float)rng.NextDouble(), (float)rng.NextDouble()), Vector2.zero, new Vector2(size, size));
+            }
+            Ui.Label(body, "星圖", 34, Palette.Bone, TextAnchor.UpperLeft, true).rectTransform.Place(new Vector2(0, 1), new Vector2(48, -26), new Vector2(300, 48), new Vector2(0, 1));
+            Ui.Label(body, "選擇要前往的星球，每顆星球有三個區域。", 14, Palette.Muted).rectTransform.Place(new Vector2(0, 1), new Vector2(48, -76), new Vector2(600, 22), new Vector2(0, 1));
+            // A dotted route between the two worlds.
+            for (int i = 0; i < 9; i++)
+                Ui.Box(body, new Color(Palette.Amber.r, Palette.Amber.g, Palette.Amber.b, 0.5f), "Route").rectTransform
+                    .Place(new Vector2(0.5f, 0.5f), new Vector2(-64 + i * 16, 40), new Vector2(8, 2));
+            for (int c = 0; c < Defs.Chapters.Length; c++)
+            {
+                int chapter = c, first = c * Defs.RegionsPerChapter, last = Mathf.Min(Defs.Regions.Length, first + Defs.RegionsPerChapter) - 1;
+                bool open = first <= p.Unlocked;
+                int cleared = 0;
+                for (int i = first; i <= last; i++) if (i < p.Cleared.Count && p.Cleared[i] >= 0) cleared++;
+                var (number, title) = Defs.Chapters[c];
+                Color accent = c == 0 ? Palette.Hex("8fd36a") : Palette.Hex("ffd36b");
+                var card = Ui.Rect(body, "Planet" + c).Place(new Vector2(0.5f, 0.5f), new Vector2(c == 0 ? -290 : 290, -10), new Vector2(460, 560));
+                var view = ModelPreview.Create(card, t => Models.Planet(t, chapter), 512, open ? 10f : 4f, 14f);
+                view.rectTransform.Place(new Vector2(0.5f, 1), new Vector2(0, 0), new Vector2(340, 340), new Vector2(0.5f, 1));
+                if (!open) view.color = new Color(0.35f, 0.35f, 0.4f, 1f);
+                Ui.Label(card, number, 14, open ? accent : Palette.Muted, TextAnchor.UpperCenter, true).rectTransform.Place(new Vector2(0.5f, 1), new Vector2(0, -338), new Vector2(400, 20), new Vector2(0.5f, 1));
+                Ui.Label(card, title, 32, open ? Palette.Bone : Palette.Muted, TextAnchor.UpperCenter, true).rectTransform.Place(new Vector2(0.5f, 1), new Vector2(0, -360), new Vector2(400, 42), new Vector2(0.5f, 1));
+                // The three stages, with a mark for each one cleared.
+                for (int i = first; i <= last; i++)
+                {
+                    bool done = i < p.Cleared.Count && p.Cleared[i] >= 0, reach = i <= p.Unlocked;
+                    var row = Ui.Rect(card, "Stage").Place(new Vector2(0.5f, 1), new Vector2(0, -410 - (i - first) * 26), new Vector2(300, 24), new Vector2(0.5f, 1));
+                    Ui.Label(row, $"0{i + 1}  {Defs.Regions[i].Name}", 15, reach ? Palette.Bone : Palette.Muted, TextAnchor.MiddleLeft).rectTransform.Fill();
+                    Ui.Label(row, done ? "✓ " + Defs.Difficulty(p.Cleared[i]).Name : reach ? "未通關" : "未解鎖", 13,
+                        done ? (Color)Defs.Difficulty(p.Cleared[i]).Accent : Palette.Muted, TextAnchor.MiddleRight, done).rectTransform.Fill();
+                }
+                var go = Ui.Button(card, open ? (cleared == last - first + 1 ? "進入星球 · 已全數通關" : $"進入星球 · {cleared}/{last - first + 1}") : $"通關{Defs.Regions[first - 1 >= 0 ? first - 1 : 0].Name}後解鎖",
+                    () =>
+                    {
+                        StarMap = false;
+                        int target = Defs.ChapterOf(app.SelectedRegion) == chapter ? app.SelectedRegion : Mathf.Max(first, Mathf.Min(p.Unlocked, last));
+                        app.SelectRegion(target);
+                        app.ShowHome();
+                    }, 16, open ? Palette.Ink : Palette.Muted, open ? accent : new Color(1, 1, 1, 0.04f), open ? accent : Palette.Line);
+                go.GetComponent<RectTransform>().Place(new Vector2(0.5f, 0), new Vector2(0, 0), new Vector2(300, 46), new Vector2(0.5f, 0));
+                go.interactable = open;
+            }
+        }
+
         static Color GradeColor(string grade) => grade == "S" ? Palette.Amber : grade == "A" ? (Color)Gear.RarityColors[3] : grade == "B" ? (Color)Gear.RarityColors[2] : Palette.Muted;
 
         static Text Caps(Transform parent, string text, Color? color = null) => Ui.Label(parent, text, 13, color ?? Palette.Muted);
@@ -579,10 +634,14 @@ namespace RiftWard.Client
             }
         }
 
+        /// The home page opens on the star map; picking a planet shows its three stages.
+        public bool StarMap = true;
+
         public void ShowHome(string status)
         {
             var r = Begin("home", false);
             var p = app.Profile;
+            if (StarMap && !(app.InRoom && !app.IsLeader)) { ShowStarMap(r); return; }
             int selected = Mathf.Clamp(app.SelectedRegion, 0, Mathf.Max(0, p.Unlocked));
             var region = Defs.Regions[selected];
             int tierIndex = Mathf.Clamp(app.SelectedDifficulty, 0, Defs.Difficulties.Length - 1);
@@ -597,22 +656,15 @@ namespace RiftWard.Client
             stack.GetComponent<VerticalLayoutGroup>().padding = new RectOffset(48, 48, 26, 20);
             Ui.Label(stack, "選擇關卡", 34, Palette.Bone, TextAnchor.UpperLeft, true).Sized(48);
             Ui.Rect(stack, "Gap").Sized(8);
-            // Chapter tabs: a chapter opens once its first region is unlocked.
+            // Which planet you are on, and the way back to the star map.
             int chapter = Defs.ChapterOf(selected);
-            var chapters = Ui.HStack(stack, 8).Sized(40);
-            for (int c = 0; c < Defs.Chapters.Length; c++)
-            {
-                int first = c * Defs.RegionsPerChapter;
-                bool open = first <= p.Unlocked, on = c == chapter;
-                var (number, title) = Defs.Chapters[c];
-                var tab = Ui.Button(chapters, open ? $"{number} · {title}" : $"{number} · 未解鎖", () =>
-                {
-                    int target = Mathf.Min(p.Unlocked, first + Defs.RegionsPerChapter - 1);
-                    app.SelectRegion(Mathf.Max(first, target));
-                }, 15, on ? Palette.Amber : open ? Palette.Bone : Palette.Muted,
-                    on ? new Color(Palette.Amber.r, Palette.Amber.g, Palette.Amber.b, 0.1f) : new Color(1, 1, 1, 0.03f), on ? Palette.Amber : Palette.Line);
-                tab.interactable = open && !on;
-            }
+            var planetRow = Ui.HStack(stack, 8).Sized(40);
+            planetRow.GetComponent<HorizontalLayoutGroup>().childForceExpandWidth = false;
+            var back = Ui.Button(planetRow, "← 星圖", () => { StarMap = true; app.ShowHome(); }, 15, Palette.Amber, new Color(1, 1, 1, 0.03f), Palette.Line);
+            back.gameObject.AddComponent<LayoutElement>().preferredWidth = 96;
+            back.interactable = !(app.InRoom && !app.IsLeader);
+            var (chapterNo, chapterTitle) = Defs.Chapters[chapter];
+            Ui.Label(planetRow, $"{chapterNo} · {chapterTitle}", 17, Palette.Bone, TextAnchor.MiddleLeft, true).gameObject.AddComponent<LayoutElement>().flexibleWidth = 1;
             Ui.Rect(stack, "Gap").Sized(8);
             Widgets.Section(stack, "部署區域").Sized(26);
             for (int i = chapter * Defs.RegionsPerChapter; i < Mathf.Min(Defs.Regions.Length, (chapter + 1) * Defs.RegionsPerChapter); i++)
@@ -2810,8 +2862,13 @@ namespace RiftWard.Client
             Ui.Label(s, pityLeft <= 1 ? $"保底：下一抽必出{pityPrize}！" : $"保底：再 {pityLeft} 抽內必出{pityPrize}", 13,
                 pityLeft <= 10 ? Gear.RarityColors[limitedPool ? 4 : 3] : Palette.Muted, TextAnchor.UpperLeft, pityLeft <= 10).Sized(18);
             var odds = Ui.HStack(s, 4).Sized(20);
-            float[] weights = { 50f, 33f, 14f, 2.5f, 0.5f };   // mirrors RARITY_WEIGHTS in server/service.py
-            for (int i = 0; i < Gear.RarityNames.Length; i++) Ui.Label(odds, $"{Gear.RarityNames[i]} {weights[i]:0.#}%", 12, Gear.RarityColors[i]);
+            // Mirrors RARITY_WEIGHTS / soft_weights in server/service.py: the soft pity moves odds from 劣質 to 神話.
+            float myth = limitedPool ? p.LimitedMyth : weaponPool ? p.WeaponMyth : p.GearMyth;
+            float[] weights = { 50f - (myth - 0.5f), 33f, 14f, 2.5f, myth };
+            for (int i = 0; i < Gear.RarityNames.Length; i++)
+                Ui.Label(odds, $"{Gear.RarityNames[i]} {weights[i]:0.##}%", 12, Gear.RarityColors[i], TextAnchor.UpperLeft, i == 4 && myth > 0.5f);
+            Ui.Label(s, myth > 0.5f ? $"軟保底生效中：神話機率提升至 {myth:0.##}%" : "連續 60 抽未出神話後，神話機率每抽 +0.02%", 12,
+                myth > 0.5f ? Gear.RarityColors[4] : Palette.Muted).Sized(16);
             var draws = Ui.HStack(s, 10).Sized(54);
             var one = PrimaryButton(draws, "抽 1 次", () => { drawPool = pool; Draw(1); }, 17);
             one.interactable = keys >= 1;

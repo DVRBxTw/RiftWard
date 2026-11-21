@@ -25,6 +25,8 @@ namespace RiftWard.Client
         public int Level = 1, LevelXp, LevelNeed = 150, Keys, WeaponKeys, TalentPoints, Shards;
         /// Draws left until 傳奇+ is guaranteed, per pool.
         public int GearPity = 50, WeaponPity = 50, LimitedPity = 80;
+        /// 神話 chance of the next draw per pool (base 0.5%, soft pity after 60 draws without one).
+        public float GearMyth = 0.5f, WeaponMyth = 0.5f, LimitedMyth = 0.5f;
         /// 限定補給 now running ("" when closed), when it ends (unix seconds), and whether this account's next 神話
         /// is guaranteed to be the limited weapon.
         public string LimitedWeapon = "";
@@ -124,6 +126,8 @@ namespace RiftWard.Client
             p.Keys = d.Int("keys"); p.WeaponKeys = d.Int("weapon_keys"); p.Shards = d.Int("shards"); p.TalentPoints = d.Int("talent_points");
             var pity = d.Obj("pity");
             if (pity != null) { p.GearPity = pity.Int("gear", 50); p.WeaponPity = pity.Int("weapon", 50); p.LimitedPity = pity.Int("limited", 80); }
+            var myth = d.Obj("myth_rate");
+            if (myth != null) { p.GearMyth = myth.Float("gear", 0.5f); p.WeaponMyth = myth.Float("weapon", 0.5f); p.LimitedMyth = myth.Float("limited", 0.5f); }
             var limited = d.Obj("limited");
             if (limited != null)
             {

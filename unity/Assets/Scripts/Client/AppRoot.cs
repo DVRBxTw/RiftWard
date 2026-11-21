@@ -752,6 +752,16 @@ namespace RiftWard.Client
             UpdateProfile(new Profile { Id = 1, Username = "DVRBXTW", Unlocked = 1, Gold = 1240, TutorialComplete = true, Admin = true, Loadout = lo });
             Profile.Cleared[0] = 1; Profile.Cleared[1] = 0;
             Profile.Grades["0:0"] = "S"; Profile.Grades["0:1"] = "A"; Profile.Grades["1:0"] = "B";
+            Screens.StarMap = true;
+            ShowHome();
+            yield return Settle(1.2f);
+            yield return Shot(folder, "unity-starmap");
+            Profile.Unlocked = 3;
+            ShowHome();
+            yield return Settle(1.2f);
+            yield return Shot(folder, "unity-starmap-ch2");
+            Profile.Unlocked = 1;
+            Screens.StarMap = false;
             ShowHome();
             yield return Settle(0.8f);
             yield return Shot(folder, "unity-home");

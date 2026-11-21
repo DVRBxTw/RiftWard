@@ -144,7 +144,7 @@ class ServiceTests(unittest.TestCase):
         pity, rarity = 0, 0
         for _ in range(49):
             pity = service.roll_rarity(type("R", (), {"choices": lambda self, pop, weights: [min(pop[0], 1)]})(), pity)[1]
-        rarity, pity = service.roll_rarity(rng, pity)
+        rarity, pity, _ = service.roll_rarity(rng, pity)
         self.assertGreaterEqual(rarity, 3)
         self.assertEqual(pity, 0)
         # The counter persists per pool and is reported as draws left.
@@ -870,6 +870,22 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(self.call("/api/daily/claim",{"task":"bonus"},auth)[0],400)
         # A bad difficulty in a combat record is rejected.
         self.assertEqual(self.call("/api/server/reward",{"account_id":aid,"gold":0,"stats":{**record,"difficulty":5}},key)[0],400)
+
+    def test_soft_pity_raises_myth_chance_after_sixty(self):
+        self.assertEqual(service.myth_rate(0), 0.5)
+        self.assertEqual(service.myth_rate(59), 0.5)      # the 60th draw is still base
+        self.assertEqual(service.myth_rate(60), 0.52)     # the 61st draw: +0.02%
+        self.assertEqual(service.myth_rate(70), 0.72)
+        self.assertAlmostEqual(sum(service.soft_weights(70)), 100)
+        rng = service.random.Random(1)
+        rarity, pity, myth = service.roll_rarity(rng, 0, 10)
+        self.assertEqual(myth, 0 if rarity == 4 else 11)
+        account = self.register()
+        auth = {"Authorization": "Bearer " + account["token"]}
+        self.assertEqual(account["profile"]["myth_rate"], {"gear": 0.5, "weapon": 0.5, "limited": 0.5})
+        with self.store.connect() as db:
+            db.execute("UPDATE progress SET pity=? WHERE account_id=?", (json.dumps({"weapon_myth": 65}), account["profile"]["id"]))
+        self.assertEqual(self.call("/api/me", {}, auth)[1]["profile"]["myth_rate"]["weapon"], 0.62)
 
     def test_best_grade_per_stage(self):
         account = self.register()

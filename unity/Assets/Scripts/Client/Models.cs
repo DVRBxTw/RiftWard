@@ -7,6 +7,57 @@ namespace RiftWard.Client
     /// Blocky character, enemy and weapon models. Everything faces +Z.
     public static class Models
     {
+        /// Star map planets. 0: the green world you crash on (oceans, continents, clouds); 1: the Empire's frozen
+        /// steel homeworld (ice, gold city lights and an orbital ring of dockyards).
+        public static void Planet(Transform t, int chapter)
+        {
+            var rng = new System.Random(chapter * 7919 + 3);
+            float R = 1f;
+            Vector3 OnSurface(float lat, float lon, float lift) =>
+                new Vector3(Mathf.Cos(lat) * Mathf.Cos(lon), Mathf.Sin(lat), Mathf.Cos(lat) * Mathf.Sin(lon)) * (R * lift);
+            float Rand(float a, float b) => a + (float)rng.NextDouble() * (b - a);
+            if (chapter == 0)
+            {
+                Build.Sphere(t, Vector3.zero, R * 2f, Palette.Hex("2a6fb5"), 0.15f, false);                      // ocean
+                Color[] land = { Palette.Hex("6fbf4a"), Palette.Hex("8fd36a"), Palette.Hex("4f9a3a"), Palette.Hex("c9b27a") };
+                for (int i = 0; i < 26; i++)
+                {
+                    float lat = Rand(-1.1f, 1.1f), lon = Rand(0, Mathf.PI * 2);
+                    var blob = Build.Sphere(t, OnSurface(lat, lon, 0.8f), Rand(0.4f, 0.7f), land[rng.Next(land.Length)], 0f, false);
+                    blob.transform.localScale = new Vector3(blob.transform.localScale.x, blob.transform.localScale.y * 0.6f, blob.transform.localScale.z);
+                }
+                foreach (float lat in new[] { 1.45f, -1.45f })
+                    Build.Sphere(t, OnSurface(lat, 0, 0.9f), 0.55f, Palette.Hex("f2f6ff"), 0.2f, false);                 // ice caps
+                for (int i = 0; i < 8; i++)
+                    Build.Sphere(t, OnSurface(Rand(-1.2f, 1.2f), Rand(0, Mathf.PI * 2), 0.98f), Rand(0.1f, 0.18f), new Color(1, 1, 1, 1), 0.4f, false);   // clouds
+                var air = Build.Sphere(t, Vector3.zero, R * 2.18f, Palette.Hex("9fd8ff"), 1.2f, false);
+                air.GetComponent<MeshRenderer>().sharedMaterial = Build.Mat(Palette.Hex("9fd8ff"), 1.2f, 0.18f);   // atmosphere glow
+            }
+            else
+            {
+                Build.Sphere(t, Vector3.zero, R * 2f, Palette.Hex("c8d6e6"), 0.1f, false);                     // ice
+                Color[] steel = { Palette.Hex("55606e"), Palette.Hex("3c4450"), Palette.Hex("7a8696") };
+                for (int i = 0; i < 22; i++)
+                {
+                    var plate = Build.Cube(t, OnSurface(Rand(-1.2f, 1.2f), Rand(0, Mathf.PI * 2), 0.96f), Vector3.one * Rand(0.18f, 0.42f), steel[rng.Next(steel.Length)], 0f, false);
+                    plate.transform.localRotation = Quaternion.LookRotation(plate.transform.localPosition.normalized);
+                }
+                for (int i = 0; i < 40; i++)
+                    Build.Sphere(t, OnSurface(Rand(-1.1f, 1.1f), Rand(0, Mathf.PI * 2), 1.0f), Rand(0.04f, 0.08f), Palette.Hex("ffd36b"), 4f, false);   // city lights
+                var ring = new GameObject("Ring").transform;
+                ring.SetParent(t, false);
+                ring.localRotation = Quaternion.Euler(18f, 0, 12f);
+                for (int i = 0; i < 48; i++)
+                {
+                    float a = i * Mathf.PI * 2f / 48;
+                    var seg = Build.Cube(ring, new Vector3(Mathf.Cos(a), 0, Mathf.Sin(a)) * 1.55f, new Vector3(0.2f, 0.03f, 0.08f), i % 6 == 0 ? Palette.Hex("ffd36b") : Palette.Hex("8a96a6"), i % 6 == 0 ? 3f : 0f, false);
+                    seg.transform.localRotation = Quaternion.Euler(0, -a * Mathf.Rad2Deg, 0);
+                }
+                var air = Build.Sphere(t, Vector3.zero, R * 2.16f, Palette.Hex("ffcf7a"), 1f, false);
+                air.GetComponent<MeshRenderer>().sharedMaterial = Build.Mat(Palette.Hex("ffcf7a"), 1f, 0.12f);
+            }
+        }
+
         /// Fine detail (panel seams, pads, straps, lights) is added at 高 quality and up; 低 and 中 keep the plain
         /// silhouette. Detail never casts shadows: dozens of enemies carry it.
         static bool Fine => GameSettings.Quality >= 2;

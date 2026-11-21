@@ -318,23 +318,43 @@ def level_for(xp: int):
 PITY_LIMIT = 50   # the 50th draw without 傳奇 or better is guaranteed to be 傳奇+
 
 
-def roll_rarity(rng, pity):
-    """Returns (rarity, new pity count). Pity counts draws since the last 傳奇+; at the limit the draw is forced
-    up to 傳奇 or 神話 (kept at their 5:1 ratio)."""
+# Soft pity: from the 61st draw since the last 神話, each draw adds 0.02% to the 神話 chance (taken from 劣質).
+SOFT_PITY_START = 60
+SOFT_PITY_STEP = 0.02
+
+
+def soft_weights(myth_streak):
+    """Rarity weights for the next draw after `myth_streak` draws without a 神話."""
+    bonus = max(0, myth_streak + 1 - SOFT_PITY_START) * SOFT_PITY_STEP
+    weights = list(RARITY_WEIGHTS)
+    weights[4] += bonus
+    weights[0] = max(0.0, weights[0] - bonus)
+    return weights
+
+
+def myth_rate(myth_streak):
+    """神話 chance of the next draw, in percent (shown on the supply screen)."""
+    return round(soft_weights(myth_streak)[4], 2)
+
+
+def roll_rarity(rng, pity, myth=0):
+    """Returns (rarity, new pity count, new 神話 streak). Pity counts draws since the last 傳奇+; at the limit the
+    draw is forced up to 傳奇 or 神話. The 神話 streak drives the soft pity."""
+    weights = soft_weights(myth)
     if pity + 1 >= PITY_LIMIT:
-        rarity = rng.choices([3, 4], weights=RARITY_WEIGHTS[3:])[0]
+        rarity = rng.choices([3, 4], weights=weights[3:])[0]
     else:
-        rarity = rng.choices(range(len(RARITIES)), weights=RARITY_WEIGHTS)[0]
-    return rarity, 0 if rarity >= 3 else pity + 1
+        rarity = rng.choices(range(len(RARITIES)), weights=weights)[0]
+    return rarity, 0 if rarity >= 3 else pity + 1, 0 if rarity == 4 else myth + 1
 
 
 def roll_limited_rarity(rng, pity):
-    """限定補給: returns (rarity, new pity count). The count runs until a 神話; the LIMITED_PITY-th draw without
-    one is a 神話."""
+    """限定補給: returns (rarity, new pity count). The count runs until a 神話 (and drives the soft pity); the
+    LIMITED_PITY-th draw without one is a 神話."""
     if pity + 1 >= LIMITED_PITY:
         rarity = len(RARITIES) - 1
     else:
-        rarity = rng.choices(range(len(RARITIES)), weights=RARITY_WEIGHTS)[0]
+        rarity = rng.choices(range(len(RARITIES)), weights=soft_weights(pity))[0]
     return rarity, 0 if rarity == len(RARITIES) - 1 else pity + 1
 
 
@@ -572,7 +592,8 @@ class Store:
         result["talent_points"] = max(0, level - 1 - sum(talents.values()))
         pity = self._pity(account_id)
         # Draws left until the pity hits: 傳奇+ for the regular supplies, 神話 for the limited one.
-        result["pity"] = {pool: (LIMITED_PITY if pool == "limited" else PITY_LIMIT) - count for pool, count in pity.items()}
+        result["pity"] = {pool: (LIMITED_PITY if pool == "limited" else PITY_LIMIT) - pity[pool] for pool in ("gear", "weapon", "limited")}
+        result["myth_rate"] = {"gear": myth_rate(pity["gear_myth"]), "weapon": myth_rate(pity["weapon_myth"]), "limited": myth_rate(pity["limited"])}
         banner = self.limited_banner()
         if banner:
             with self.connect() as db:
@@ -943,7 +964,7 @@ class Store:
             data = json.loads(row[0]) if row else {}
         except (TypeError, ValueError):
             data = {}
-        cap = {"gear": PITY_LIMIT, "weapon": PITY_LIMIT, "limited": LIMITED_PITY}
+        cap = {"gear": PITY_LIMIT, "weapon": PITY_LIMIT, "limited": LIMITED_PITY, "gear_myth": 100000, "weapon_myth": 100000}
         return {pool: max(0, min(cap[pool] - 1, data.get(pool, 0))) if isinstance(data.get(pool), int) else 0 for pool in cap}
 
     def _save_pity(self, account_id, pity):
@@ -1031,7 +1052,7 @@ class Store:
         pity = self._pity(account_id)
         items = []
         for _ in range(count):
-            rarity, pity["gear"] = roll_rarity(rng, pity["gear"])
+            rarity, pity["gear"], pity["gear_myth"] = roll_rarity(rng, pity["gear"], pity["gear_myth"])
             items.append(roll_item(rng, rarity))
         gear["inventory"].extend(items)
         self._save_gear(account_id, gear)
@@ -1055,7 +1076,7 @@ class Store:
         results, gold, shards = [], 0, 0
         for _ in range(count):
             weapon = rng.choices(list(WEAPON_WEIGHTS), weights=list(WEAPON_WEIGHTS.values()))[0]
-            rarity, pity["weapon"] = roll_rarity(rng, pity["weapon"])
+            rarity, pity["weapon"], pity["weapon_myth"] = roll_rarity(rng, pity["weapon"], pity["weapon_myth"])
             result = self._receive_weapon(loadout, weapon, rarity)
             gold += result["gold"]; shards += result["shards"]
             results.append(result)
