@@ -968,6 +968,13 @@ namespace RiftWard.Client
                     view.transform.position = a.Position;
                     actorViews[a.Id] = view;
                 }
+                // PvP: a red rim around every opponent.
+                if (a.Id != LocalId)
+                {
+                    var rim = view.GetComponent<PvpOutline>();
+                    if (rim == null && Sim.Pvp) view.AddComponent<PvpOutline>();
+                    else if (rim != null && rim.enabled != Sim.Pvp) rim.enabled = Sim.Pvp;
+                }
                 view.transform.position = Vector3.Lerp(view.transform.position, a.Position, 1f - Mathf.Exp(-20f * dt));
                 float lying = a.Alive ? 0f : -80f;
                 var current = view.transform.rotation;

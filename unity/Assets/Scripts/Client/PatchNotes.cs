@@ -15,6 +15,14 @@ namespace RiftWard.Client
         {
             new Entry
             {
+                Version = "0.8.2-unity.1", Date = "2026-11-22",
+                Lines = new[]
+                {
+                    "PvP：對手身上加上紅色描邊，更容易辨識敵人（會被牆擋住，不會穿牆顯示）。",
+                },
+            },
+            new Entry
+            {
                 Version = "0.8.1-unity.1", Date = "2026-11-22",
                 Lines = new[]
                 {
