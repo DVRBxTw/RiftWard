@@ -681,26 +681,44 @@ class ServiceTests(unittest.TestCase):
         # Gear enhancement: price by rarity and level, +12% stats per level, half refunded on salvage.
         with self.store.connect() as db:
             db.execute("UPDATE progress SET gold=10000 WHERE account_id=?", (r["profile"]["id"],))
-        for level in range(service.GEAR_MAX_LEVEL):
+        for level in range(service.GEAR_LIMIT_LEVEL):
             code, up = self.call("/api/gear/upgrade", {"item": other["id"]}, auth)
             self.assertEqual(code, 200)
         upgraded = next(i for i in up["profile"]["inventory"] if i["id"] == other["id"])
-        paid = sum(service.gear_upgrade_cost(other["rarity"], n) for n in range(service.GEAR_MAX_LEVEL))
+        paid = sum(service.gear_upgrade_cost(other["rarity"], n) for n in range(service.GEAR_LIMIT_LEVEL))
         self.assertEqual((upgraded["level"], up["profile"]["gold"]), (5, 10000 - paid))
         base_life = round(service.GEAR_BASE_LIFE[upgraded["rarity"]] * 1.6)   # every piece's rarity life, also +60%
         for k, v in upgraded["base"].items():
             self.assertEqual(upgraded["stats"][k], round(v * 1.6) + (base_life if k == "hp" else 0))   # +12% per level, +60% at +5
         self.assertEqual(upgraded["stats"]["hp"], round(upgraded["base"].get("hp", 0) * 1.6) + base_life)
+        # Past +5 each level also costs shards (1, 2, 3, ...): without them the upgrade is refused.
+        self.assertEqual(service.gear_upgrade_shards(5), 1)
+        self.assertEqual(self.call("/api/gear/upgrade", {"item": other["id"]}, auth)[1]["error"], "金幣或裂隙碎片不足")
+        with self.store.connect() as db:
+            db.execute("UPDATE progress SET gold=gold+200000, shards=100 WHERE account_id=?", (r["profile"]["id"],))
+        for level in range(service.GEAR_LIMIT_LEVEL, service.GEAR_MAX_LEVEL):
+            code, up = self.call("/api/gear/upgrade", {"item": other["id"]}, auth)
+            self.assertEqual(code, 200)
+        upgraded = next(i for i in up["profile"]["inventory"] if i["id"] == other["id"])
+        self.assertEqual(upgraded["level"], 10)
+        self.assertEqual(up["profile"]["shards"], 100 - 15)
+        k = next(iter(upgraded["base"]))
+        self.assertEqual(upgraded["stats"][k] - (round(service.GEAR_BASE_LIFE[upgraded["rarity"]] * 2) if k == "hp" else 0), round(upgraded["base"][k] * 2.0))   # +100% at +10
         self.assertEqual(self.call("/api/gear/upgrade", {"item": other["id"]}, auth)[0], 400)
+        paid = sum(service.gear_upgrade_cost(other["rarity"], n) for n in range(service.GEAR_MAX_LEVEL))
+        self.assertGreater(service.gear_upgrade_cost(other["rarity"], 9), service.gear_upgrade_cost(other["rarity"], 4) * 5)
         self.assertGreater(service.gear_upgrade_cost(4, 0), service.gear_upgrade_cost(0, 0))
         gold = up["profile"]["gold"]
+        shards = up["profile"]["shards"]
         code, r = self.call("/api/gear/salvage", {"item": other["id"]}, auth)
         self.assertEqual(r["profile"]["gold"], gold + service.GEAR_SALVAGE_GOLD[other["rarity"]] + paid * 4 // 5)   # 80% of the gold
+        self.assertEqual(r["profile"]["shards"], shards + service.SALVAGE_SHARDS[other["rarity"]] + 15)   # upgrade shards back in full
         other = r["profile"]["inventory"][1]
-        gold = r["profile"]["gold"]
+        gold, shards = r["profile"]["gold"], r["profile"]["shards"]
         code, r = self.call("/api/gear/salvage", {"item": other["id"]}, auth)
         self.assertEqual((code, len(r["profile"]["inventory"])), (200, 8))   # 10 drawn, 2 salvaged
-        self.assertGreater(r["profile"]["gold"], gold)
+        # 劣質–稀世 refund gold, 傳奇+ refund shards instead.
+        self.assertGreater(r["profile"]["gold"] - gold + r["profile"]["shards"] - shards, 0)
         # Bulk salvage: 傳奇+ needs confirm; worn gear always survives.
         self.assertEqual(self.call("/api/salvage/bulk", {"kind": "gear", "rarities": [3]}, auth)[0], 400)
         self.assertEqual(self.call("/api/salvage/bulk", {"kind": "gear", "rarities": []}, auth)[0], 400)

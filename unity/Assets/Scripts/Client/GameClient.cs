@@ -752,6 +752,12 @@ namespace RiftWard.Client
         void RenderNameTag(Actor a, GameObject view)
         {
             if (a.Id == LocalId || string.IsNullOrEmpty(a.Name)) return;
+            // PvP: no names or health bars over opponents (they are drawn on the HUD, so they would show through walls).
+            if (Sim.Pvp)
+            {
+                if (nameTags.TryGetValue(a.Id, out var hidden)) { hidden.enabled = false; teammateHealthBars[a.Id].Root.gameObject.SetActive(false); }
+                return;
+            }
             // Drawn on the HUD in the game font (the old 3D text used a Latin-only font, so Chinese titles fell
             // back to a system font, and fog and bloom softened it further).
             if (!nameTags.TryGetValue(a.Id, out var tag))

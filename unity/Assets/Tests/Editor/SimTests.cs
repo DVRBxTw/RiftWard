@@ -28,6 +28,25 @@ namespace RiftWard.Tests
         }
 
         [Test]
+        public void GearSkillDamageScalesGadgetsButNotGuns()
+        {
+            float Lightning(float gadgetPct)
+            {
+                var sim = NewMission(); sim.Enemies.Clear(); sim.WaveDelay = 999;
+                var e = PlaceEnemy(sim, new Vector3(0, 0, 6), 10000);
+                sim.ApplyProfileBonus(1, 0, 0, 0, 0, 0, 0, 0, gadgetPct);
+                sim.Actors[1].LightningLevel = 1;
+                sim.Tick(0.02f);
+                return 10000 - e.Hp;
+            }
+            Assert.AreEqual(Lightning(0) * 1.5f, Lightning(50), 0.5f, "+50% 技能傷害 = 1.5x lightning");
+            var gun = NewMission(); gun.Enemies.Clear(); gun.WaveDelay = 999;
+            gun.ApplyProfileBonus(1, 0, 0, 0, 0, 0, 0, 0, 50);
+            var plain = NewMission();
+            Assert.AreEqual(plain.Actors[1].Damage, gun.Actors[1].Damage, 0.001f, "the gun is untouched");
+        }
+
+        [Test]
         public void PvpPlayersShootEachOtherRespawnAndTheClockDecides()
         {
             var sim = new GameSim(5);

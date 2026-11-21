@@ -36,7 +36,10 @@ namespace RiftWard.Client
         public string Name => Gear.ItemName(Slot, Rarity) + (Level > 0 ? $" +{Level}" : "") + (Limit > 0 ? $" ★{Limit}" : "");
         public string SetName => Set != "" ? Gear.Sets[Set].name : "";
         public bool Maxed => Level >= Gear.MaxLevel;
+        /// 突破 opens at +5 (enhancement itself goes on to +10).
+        public bool CanLimit => Level >= Gear.LimitLevel;
         public int UpgradeCost => Gear.UpgradeCost(Rarity, Level);
+        public int UpgradeShards => Gear.UpgradeShards(Level);
         public Color Color => Gear.RarityColors[Rarity];
 
         /// withDefense: false for the small slot tiles, where a third entry no longer fits.
@@ -56,9 +59,12 @@ namespace RiftWard.Client
         public static readonly Color GearKeyColor = Palette.Hex("b07cff"), WeaponKeyColor = Palette.Hex("e5534b"), ShardColor = Palette.Hex("4fd6e8");
         public static readonly string[] RarityNames = { "劣質", "普通", "稀世", "傳奇", "神話" };
         /// Gear enhancement; mirrors GEAR_UPGRADE_BASE / GEAR_MAX_LEVEL in server/service.py.
-        public const int MaxLevel = 5;
+        /// Mirrors gear_upgrade_cost / gear_upgrade_shards in server/service.py: +10 cap, steeper gold and shards past +5.
+        public const int MaxLevel = 10, LimitLevel = 5;
         public static readonly int[] UpgradeBase = { 100, 175, 300, 500, 800 };
-        public static int UpgradeCost(int rarity, int level) => UpgradeBase[Mathf.Clamp(rarity, 0, 4)] * (level + 1);
+        public static int UpgradeCost(int rarity, int level) =>
+            (int)System.Math.Round(UpgradeBase[Mathf.Clamp(rarity, 0, 4)] * (level + 1) * System.Math.Pow(1.5, System.Math.Max(0, level - LimitLevel + 1)), System.MidpointRounding.ToEven);
+        public static int UpgradeShards(int level) => Mathf.Max(0, level - LimitLevel + 1);
 
         // ---- crafting; mirrors REFORGE_* / LIMIT_* / ASCEND_* / GEAR_SETS in server/service.py
         public static readonly int[] ReforgeShards = { 0, 0, 1, 2, 3 }, ReforgeGold = { 0, 0, 500, 1000, 2000 };
@@ -148,6 +154,7 @@ namespace RiftWard.Client
             "reload" => $"換彈 +{value:0.#}%",
             "crit" => $"爆擊 +{value:0.#}%",
             "def" => $"防禦 +{value:0.#}%",
+            "gadget" => $"技能傷害 +{value:0.#}%",
             "skill_dmg" => $"手榴彈傷害 +{value:0.#}%",
             "skill_cd" => $"手榴彈冷卻 -{value:0.#}%",
             "skill_radius" => $"爆炸範圍 +{value:0.#}%",

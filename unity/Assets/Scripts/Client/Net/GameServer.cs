@@ -1081,7 +1081,7 @@ namespace RiftWard.Client
             lo.Constellation = new Dictionary<string, int>(p.Profile.Loadout.Constellation);
             sim.AddActor(id, lo, p.Profile.Admin).Name = string.IsNullOrEmpty(p.Profile.Title) ? p.Profile.Username : $"〔{p.Profile.Title}〕{p.Profile.Username}";
             var b = p.Profile;
-            sim.ApplyProfileBonus(id, b.BonusOf("hp"), b.BonusOf("damage"), b.BonusOf("speed"), b.BonusOf("reload"), b.BonusOf("crit"), b.BonusOf("hp_pct"), b.BonusOf("def"));
+            sim.ApplyProfileBonus(id, b.BonusOf("hp"), b.BonusOf("damage"), b.BonusOf("speed"), b.BonusOf("reload"), b.BonusOf("crit"), b.BonusOf("hp_pct"), b.BonusOf("def"), b.BonusOf("gadget"));
             sim.ApplySkillBonus(id, b.BonusOf("skill_dmg"), b.BonusOf("skill_cd"), b.BonusOf("skill_radius"));
             p.OfferSent = null;
             p.LastInput = clock;

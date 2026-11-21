@@ -369,7 +369,7 @@ namespace RiftWard.Client
         /// What one point of each stat is worth when comparing gear (percent stats against flat life and defense).
         static readonly Dictionary<string, float> GearStatValue = new Dictionary<string, float>
         {
-            ["damage"] = 4f, ["crit"] = 3f, ["speed"] = 1.5f, ["reload"] = 1.5f, ["hp"] = 0.25f, ["hp_pct"] = 2f, ["def"] = 4f,
+            ["damage"] = 4f, ["crit"] = 3f, ["speed"] = 1.5f, ["reload"] = 1.5f, ["hp"] = 0.25f, ["hp_pct"] = 2f, ["def"] = 4f, ["gadget"] = 1.5f,
         };
         static float StatValue(string stat, float amount) => (GearStatValue.TryGetValue(stat, out var v) ? v : 1f) * amount;
         static float GearValue(GearItem i) => i.Stats.Sum(kv => StatValue(kv.Key, kv.Value)) + StatValue("def", i.Defense);
@@ -1575,9 +1575,10 @@ namespace RiftWard.Client
                 var craft = Ui.Button(row, "改造", () => CraftDialog(item.Id), 12, Gear.ShardColor);
                 craft.GetComponent<RectTransform>().Place(new Vector2(1, 0.5f), new Vector2(-84, 0), new Vector2(68, 34), new Vector2(1, 0.5f));
                 // Enhance: price depends on rarity and current level.
-                var enhance = Ui.Button(row, item.Maxed ? "已滿強化" : $"強化 {item.UpgradeCost}G", () => CharacterRequest("/api/gear/upgrade", new Dictionary<string, object> { ["item"] = item.Id }),
+                string price = item.UpgradeShards > 0 ? $"強化 {item.UpgradeCost}G+{item.UpgradeShards}碎" : $"強化 {item.UpgradeCost}G";
+                var enhance = Ui.Button(row, item.Maxed ? "已滿強化" : price, () => CharacterRequest("/api/gear/upgrade", new Dictionary<string, object> { ["item"] = item.Id }),
                     12, item.Maxed ? Palette.Muted : Palette.Amber);
-                enhance.interactable = !item.Maxed && p.Gold >= item.UpgradeCost;
+                enhance.interactable = !item.Maxed && p.Gold >= item.UpgradeCost && p.Shards >= item.UpgradeShards;
                 enhance.GetComponent<RectTransform>().Place(new Vector2(1, 0.5f), Vector2.zero, new Vector2(78, 34), new Vector2(1, 0.5f));
             }
 
@@ -1637,12 +1638,12 @@ namespace RiftWard.Client
             // ---- 突破
             Widgets.Section(st, $"突破  {item.Limit} / {Gear.LimitMax}").Sized(24);
             bool limitMax = item.Limit >= Gear.LimitMax;
-            Ui.Label(st, !item.Maxed ? $"強化到 +{Gear.MaxLevel} 後才能突破。每階全屬性 +{Gear.LimitBonus * 100:0}%、防禦 +1%。"
+            Ui.Label(st, !item.CanLimit ? $"強化到 +{Gear.LimitLevel} 後才能突破。每階全屬性 +{Gear.LimitBonus * 100:0}%、防禦 +1%。"
                 : limitMax ? "已達最高突破。" : $"每階全屬性 +{Gear.LimitBonus * 100:0}%、防禦 +1%（目前 +{item.Limit * Gear.LimitBonus * 100:0}%）。", 12, Palette.Muted).Sized(20);
             int lShards = limitMax ? 0 : Gear.LimitShards[item.Limit], lGold = limitMax ? 0 : Gear.LimitGold[item.Limit];
             var limit = Ui.Button(st, limitMax ? "已滿突破" : $"突破 ★{item.Limit + 1} · {Cost(lShards, lGold)}", () =>
                 Send("/api/gear/limit", new Dictionary<string, object> { ["item"] = itemId }, "突破成功"), 14, Gear.ShardColor).Sized(38);
-            limit.interactable = item.Maxed && !limitMax && p.Shards >= lShards && p.Gold >= lGold;
+            limit.interactable = item.CanLimit && !limitMax && p.Shards >= lShards && p.Gold >= lGold;
 
             // ---- 升階
             bool top = item.Rarity >= Gear.RarityNames.Length - 1;

@@ -185,7 +185,9 @@ def roll_daily(account_id, day, veteran):
 # Upgrade prices scale with rarity (劣質 .. 神話): better items cost more to improve.
 RARITY_UPGRADE_MULT = [0.6, 1.0, 1.4, 2.0, 3.0]
 GEAR_UPGRADE_BASE = [100, 175, 300, 500, 800]   # gold for gear +1; level n -> n+1 costs base * (n + 1)
-GEAR_MAX_LEVEL = 5
+GEAR_MAX_LEVEL = 10                            # enhancement cap (was +5); +6 and up also cost shards
+GEAR_LIMIT_LEVEL = 5                           # 突破 opens at +5, as before
+GEAR_UPGRADE_STEEP = 1.5                       # gold for +6 .. +10 grows by this per level past +5
 GEAR_LEVEL_BONUS = 0.12                        # every enhancement level adds 12% to all of an item's stats (+60% at +5)
 
 
@@ -204,7 +206,19 @@ def weapon_invested(weapon: str, rarity: int, levels: dict):
 
 
 def gear_upgrade_cost(rarity: int, level: int) -> int:
-    return GEAR_UPGRADE_BASE[rarity] * (level + 1)
+    """Gold for level -> level + 1 (mirrored in Gear.cs)."""
+    steep = GEAR_UPGRADE_STEEP ** max(0, level - GEAR_LIMIT_LEVEL + 1)
+    return int(round(GEAR_UPGRADE_BASE[rarity] * (level + 1) * steep))
+
+
+def gear_upgrade_shards(level: int) -> int:
+    """Shards for level -> level + 1: none up to +5, then 1, 2, 3, 4, 5 (mirrored in Gear.cs)."""
+    return max(0, level - GEAR_LIMIT_LEVEL + 1)
+
+
+def gear_level_mult(level: int) -> float:
+    """Every enhancement level adds GEAR_LEVEL_BONUS to the item's stats up to +5, then two thirds of that per level."""
+    return 1 + GEAR_LEVEL_BONUS * min(level, GEAR_LIMIT_LEVEL) + GEAR_LEVEL_BONUS * 2 / 3 * max(0, level - GEAR_LIMIT_LEVEL)
 
 
 # Defense (% damage taken removed) grows with each item's enhancement and 突破, on top of its stats.
@@ -222,7 +236,7 @@ def gear_invested(item) -> int:
 
 
 def gear_invested_shards(item) -> int:
-    return sum(LIMIT_SHARDS[:item.get("limit", 0)])
+    return sum(LIMIT_SHARDS[:item.get("limit", 0)]) + sum(gear_upgrade_shards(n) for n in range(item.get("level", 0)))
 
 
 # Every piece of gear carries base life by rarity, on top of its own stats, so building gear makes you tougher
@@ -233,7 +247,7 @@ GEAR_BASE_LIFE = [5, 10, 20, 35, 60]
 def gear_stats(item) -> dict:
     """Effective stats of an item at its enhancement level and 突破 tier (stored stats are the +0 values), with the
     rarity's base life added to its life."""
-    mult = (1 + GEAR_LEVEL_BONUS * item.get("level", 0)) * (1 + GEAR_LIMIT_BONUS * item.get("limit", 0))
+    mult = gear_level_mult(item.get("level", 0)) * (1 + GEAR_LIMIT_BONUS * item.get("limit", 0))
     stats = {k: int(round(v * mult)) for k, v in item["stats"].items()}
     stats["hp"] = stats.get("hp", 0) + int(round(GEAR_BASE_LIFE[item["rarity"]] * mult))
     return stats
@@ -295,7 +309,9 @@ GEAR_SLOTS = {"armor": "hp", "module": "damage", "boots": "speed", "chip": "crit
 RARITIES = ["劣質", "普通", "稀世", "傳奇", "神話"]
 RARITY_WEIGHTS = [50, 33, 14, 2.5, 0.5]   # percent per draw; mirrored on the supply screen (Screens.cs)
 # Primary stat value per rarity for each stat (hp is flat, the rest are percentages).
-GEAR_VALUES = {"hp": [6, 12, 20, 32, 50], "damage": [2, 4, 7, 11, 16], "speed": [2, 3, 5, 8, 12],
+# "gadget" = 技能傷害: every non-gun hit (drones, plasma, blades, mines, missiles, lightning, grenade, tornado, burst).
+# No slot has it as its primary stat, so it only ever rolls as a secondary.
+GEAR_VALUES = {"hp": [6, 12, 20, 32, 50], "damage": [2, 4, 7, 11, 16], "speed": [2, 3, 5, 8, 12], "gadget": [3, 5, 8, 12, 18],
                "crit": [2, 3, 5, 8, 12], "reload": [3, 5, 8, 12, 18]}
 GEAR_NAMES = {"armor": "護甲", "module": "槍械模組", "boots": "戰術靴", "chip": "戰術晶片"}
 INVENTORY_LIMIT = 200
@@ -680,7 +696,7 @@ class Store:
         values["legend_weapons"] = sum(1 for w in loadout["owned"] if max(loadout["copies"].get(w, [0])) >= 3)
         values["mythic_items"] = sum(1 for w in loadout["owned"] for r in loadout["copies"].get(w, []) if r >= 4) + \
             sum(1 for i in gear["inventory"] if i["rarity"] >= 4)
-        values["maxed_gear"] = sum(1 for i in gear["inventory"] if i.get("level", 0) >= GEAR_MAX_LEVEL)
+        values["maxed_gear"] = sum(1 for i in gear["inventory"] if i.get("level", 0) >= GEAR_LIMIT_LEVEL)
         return values
 
     @staticmethod
@@ -1331,10 +1347,11 @@ class Store:
         level = item.get("level", 0)
         if level >= GEAR_MAX_LEVEL:
             raise ValueError("已達最高強化等級")
-        cost = gear_upgrade_cost(item["rarity"], level)
+        cost, shards = gear_upgrade_cost(item["rarity"], level), gear_upgrade_shards(level)
         with self.connect() as db:
-            if not db.execute("UPDATE progress SET gold=gold-? WHERE account_id=? AND gold>=?", (cost, account_id, cost)).rowcount:
-                raise ValueError("金幣不足")
+            if not db.execute("UPDATE progress SET gold=gold-?, shards=shards-? WHERE account_id=? AND gold>=? AND shards>=?",
+                              (cost, shards, account_id, cost, shards)).rowcount:
+                raise ValueError("金幣不足" if shards == 0 else "金幣或裂隙碎片不足")
         item["level"] = level + 1
         self._save_gear(account_id, gear)
         return self.profile(account_id)
@@ -1377,8 +1394,8 @@ class Store:
         """突破: a +5 item gains a tier (up to three), each +8% to all its stats."""
         gear = self._raw_gear(account_id)
         item = self._gear_item(gear, item_id)
-        if item.get("level", 0) < GEAR_MAX_LEVEL:
-            raise ValueError(f"強化到 +{GEAR_MAX_LEVEL} 後才能突破")
+        if item.get("level", 0) < GEAR_LIMIT_LEVEL:
+            raise ValueError(f"強化到 +{GEAR_LIMIT_LEVEL} 後才能突破")
         tier = item.get("limit", 0)
         if tier >= GEAR_LIMIT_MAX:
             raise ValueError("已達最高突破")

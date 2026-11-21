@@ -117,13 +117,13 @@ namespace RiftWard.Sim
         // ------------------------------------------------------------ weapons
 
         /// Permanent account bonuses (talents + equipped gear) applied when a player joins a mission.
-        public void ApplyProfileBonus(int id, float hp, float damagePct, float speedPct, float reloadPct, float critPct, float hpPct = 0f, float defPct = 0f)
+        public void ApplyProfileBonus(int id, float hp, float damagePct, float speedPct, float reloadPct, float critPct, float hpPct = 0f, float defPct = 0f, float gadgetPct = 0f)
         {
             if (!Actors.TryGetValue(id, out var a)) return;
             hp = Mathf.Clamp(hp, 0, 400); damagePct = Mathf.Clamp(damagePct, 0, 200); speedPct = Mathf.Clamp(speedPct, 0, 60);
             reloadPct = Mathf.Clamp(reloadPct, 0, 60); critPct = Mathf.Clamp(critPct, 0, 60); hpPct = Mathf.Clamp(hpPct, 0, 60);
             defPct = Mathf.Clamp(defPct, 0, 40);
-            a.ProfileBonus = new[] { hp, damagePct, speedPct, reloadPct, critPct, hpPct, defPct };
+            a.ProfileBonus = new[] { hp, damagePct, speedPct, reloadPct, critPct, hpPct, defPct, Mathf.Clamp(gadgetPct, 0, 150) };
             ApplyBonusStats(a);
         }
 
@@ -157,6 +157,7 @@ namespace RiftWard.Sim
             a.MaxHp = (a.MaxHp + hp) * (1f + a.HpPct);
             // Gear defense: its own layer on top of the in-mission armour, so it still counts once that is capped.
             a.GearDefense = a.ProfileBonus.Length > 6 ? Mathf.Clamp(a.ProfileBonus[6] / 100f, 0f, 0.4f) : 0f;
+            a.GadgetMult = 1f + (a.ProfileBonus.Length > 7 ? a.ProfileBonus[7] / 100f : 0f);
             a.Hp = a.MaxHp;
             a.DamageMult *= 1f + damagePct / 100f;
             a.Speed *= 1f + speedPct / 100f;
@@ -1056,7 +1057,7 @@ namespace RiftWard.Sim
             {
                 a.StatKills++;
                 if (a.Lifesteal > 0) Heal(a, a.Lifesteal);
-                if (a.Explode > 0) Explode(e.Position + Vector3.up, 3.2f, a.Explode, -1, new Color32(0xff, 0xb3, 0x47, 255), null, Defs.SrcBurst, a.Id);   // owner -1: no chain blasts
+                if (a.Explode > 0) Explode(e.Position + Vector3.up, 3.2f, a.Explode * a.GadgetMult, -1, new Color32(0xff, 0xb3, 0x47, 255), null, Defs.SrcBurst, a.Id);   // owner -1: no chain blasts
             }
             if (e.Boss) SpawnPickup(e.Position, PickupKind.Health);
             else if (Rand01() < Defs.PickupChance) SpawnPickup(e.Position, Rand01() < 0.4f ? PickupKind.Health : PickupKind.Ammo);
@@ -1087,7 +1088,7 @@ namespace RiftWard.Sim
                         if (!Enemies.ContainsKey(e.Id)) continue;
                         Vector3 origin = a.Position + Defs.DroneOffset(i, a.Drones, Elapsed);
                         Vector3 end = e.Position + Vector3.up * 1.1f * e.Scale;
-                        float dealt = Defs.DroneDamage * scale * a.DroneDamageMult * a.DamageMult * (a.DroneEvolved ? Defs.DroneEvolvedMult : 1f) * (i < targets.Count ? 1f : Defs.GadgetSupport);
+                        float dealt = Defs.DroneDamage * scale * a.DroneDamageMult * a.DamageMult * a.GadgetMult * (a.DroneEvolved ? Defs.DroneEvolvedMult : 1f) * (i < targets.Count ? 1f : Defs.GadgetSupport);
                         Credit(a, e, dealt, Defs.SrcDrone);
                         e.Hp -= dealt;
                         bool killed = e.Hp <= 0;
@@ -1109,7 +1110,7 @@ namespace RiftWard.Sim
                     {
                         Vector3 at = target.Position + Vector3.up;
                         Shots.Add(new ShotEvent { Shooter = GadgetShooter(a.Id, GadgetPlasma), Origin = a.Position + new Vector3(0, 2.0f, 0), End = at, Hit = true });
-                        Explode(at, radius, Defs.PlasmaDamage * scale * a.PlasmaDamageMult * (1f + Defs.PlasmaOwnerDamageShare * (a.DamageMult - 1f)), a.Id, new Color32(0x9b, 0x7b, 0xff, 255), plasmaHits, Defs.SrcPlasma);
+                        Explode(at, radius, Defs.PlasmaDamage * scale * a.PlasmaDamageMult * a.GadgetMult * (1f + Defs.PlasmaOwnerDamageShare * (a.DamageMult - 1f)), a.Id, new Color32(0x9b, 0x7b, 0xff, 255), plasmaHits, Defs.SrcPlasma);
                     }
                 }
             }
@@ -1126,7 +1127,7 @@ namespace RiftWard.Sim
                 {
                     a.OrbitTimer = Defs.OrbitInterval;
                     int n = Defs.BladeCount(a.OrbitLevel);
-                    float damage = Defs.OrbitDamage(a.OrbitLevel) * scale * a.DamageMult;
+                    float damage = Defs.OrbitDamage(a.OrbitLevel) * scale * a.DamageMult * a.GadgetMult;
                     var bladeHits = new Dictionary<int, int>();
                     for (int i = 0; i < n; i++)
                     {
@@ -1152,7 +1153,7 @@ namespace RiftWard.Sim
                     if (Bullets.Values.Count(b => b.Kind == BulletKind.Mine && b.Owner == a.Id) < 6)
                     {
                         var mine = new Bullet { Id = nextBullet++, Kind = BulletKind.Mine, Owner = a.Id, Position = new Vector3(a.Position.x, 0.1f, a.Position.z), Life = 25f,
-                            Damage = (55f + 20f * (a.MineLevel - 1)) * scale * a.DamageMult };
+                            Damage = (55f + 20f * (a.MineLevel - 1)) * scale * a.DamageMult * a.GadgetMult };
                         Bullets[mine.Id] = mine;
                     }
                 }
@@ -1166,7 +1167,7 @@ namespace RiftWard.Sim
                         float side = (i - (Mathf.Min(5, a.MissileLevel) - 1) / 2f) * 2.5f;
                         var missile = new Bullet { Id = nextBullet++, Kind = BulletKind.Missile, Owner = a.Id, Target = targets[i % targets.Count].Id, Life = 4f,
                             Position = a.Position + Vector3.up * 2f, Velocity = new Vector3(Mathf.Cos(a.Yaw) * side, 7f, -Mathf.Sin(a.Yaw) * side),
-                            Damage = Defs.MissileDamage(a.MissileLevel) * scale * a.DamageMult * (i < targets.Count ? 1f : Defs.GadgetSupport) };
+                            Damage = Defs.MissileDamage(a.MissileLevel) * scale * a.DamageMult * a.GadgetMult * (i < targets.Count ? 1f : Defs.GadgetSupport) };
                         Bullets[missile.Id] = missile;
                     }
                 }
@@ -1176,7 +1177,7 @@ namespace RiftWard.Sim
                     var first = Enemies.Values.Where(e => (e.Position - a.Position).sqrMagnitude < 18f * 18f).OrderBy(e => (e.Position - a.Position).sqrMagnitude).FirstOrDefault();
                     if (first == null) { a.LightningTimer = 0.3f; continue; }
                     a.LightningTimer = 3.2f * (1f - 0.08f * (a.LightningLevel - 1));
-                    float damage = (28f + 10f * a.LightningLevel) * scale * a.DamageMult;
+                    float damage = (28f + 10f * a.LightningLevel) * scale * a.DamageMult * a.GadgetMult;
                     var hit = new HashSet<int>();
                     Vector3 from = a.Position + Vector3.up * 1.6f;
                     var current = first;
@@ -1385,7 +1386,7 @@ namespace RiftWard.Sim
                 {
                     Bullets.Remove(b.Id);
                     bool known = Actors.TryGetValue(b.Owner, out var owner);
-                    float mult = known ? owner.DamageMult * owner.SkillDamageMult : 1f;
+                    float mult = known ? owner.DamageMult * owner.SkillDamageMult * owner.GadgetMult : 1f;
                     float radius = Defs.GrenadeRadius * (known ? owner.SkillRadiusMult : 1f);
                     Explode(b.Position + Vector3.up * 0.5f, radius, Defs.GrenadeDamage * (1f + 0.15f * Region) * mult, b.Owner, new Color32(0xff, 0xb3, 0x47, 255), null, Defs.SrcGrenade);
                 }
@@ -1696,7 +1697,7 @@ namespace RiftWard.Sim
             var to = aimAt.Value - a.Position; to.y = 0;
             var dir = to.sqrMagnitude > 0.01f ? to.normalized : new Vector3(Mathf.Sin(a.Yaw), 0, Mathf.Cos(a.Yaw));
             var tornado = SpawnBullet(new Vector3(a.Position.x, 0, a.Position.z) + dir * 1.2f, dir * Defs.TornadoSpeed,
-                Defs.TornadoDamage * (1f + 0.15f * Region) * a.DamageMult * a.SkillDamageMult, BulletKind.Tornado);
+                Defs.TornadoDamage * (1f + 0.15f * Region) * a.DamageMult * a.SkillDamageMult * a.GadgetMult, BulletKind.Tornado);
             tornado.Owner = a.Id;
             tornado.Target = target?.Id ?? -1;
             tornado.Life = Defs.TornadoLife;

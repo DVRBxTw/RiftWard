@@ -909,8 +909,9 @@ namespace RiftWard.Client
                 Dot(p.Position, p.Kind == PickupKind.SuperChest ? Palette.Hex("ff3b5c") : p.Kind == PickupKind.Chest ? Palette.Hex("ffcf4a") : p.Kind == PickupKind.Health ? Palette.Hex("5dff8f") : p.Kind == PickupKind.Xp ? new Color(0.37f, 0.9f, 1f, 0.6f) : Palette.Hex("ffd166"), p.Kind == PickupKind.Xp ? 3f : 6f, false);
             foreach (var e in sim.Enemies.Values)
                 Dot(e.Position, e.Boss ? Palette.Danger : e.Elite ? Palette.Hex("ffcf4a") : Palette.Hex("ff6a5c"), e.Boss ? 13f : e.Elite ? 9f : 6f, e.Boss || e.Elite);
-            foreach (var a in sim.Actors.Values)
-                if (a.Id != local.Id) Dot(a.Position, a.Alive ? Palette.Teammate : Palette.Danger, 8f, true);
+            if (!sim.Pvp)   // PvP: opponents stay off the radar, or it would give everyone's position away
+                foreach (var a in sim.Actors.Values)
+                    if (a.Id != local.Id) Dot(a.Position, a.Alive ? Palette.Teammate : Palette.Danger, 8f, true);
             if (PingSource != null) foreach (var (at, color) in PingSource()) Dot(at, color, 9f, true);
             for (int i = used; i < dots.Count; i++) dots[i].enabled = false;
         }

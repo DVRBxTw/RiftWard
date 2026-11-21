@@ -77,6 +77,8 @@ namespace RiftWard.Sim
         public float UltCooldown;
         /// PvP: seconds until a dead player comes back, and a wind wake slowing them.
         public float RespawnTimer, SlowTime;
+        /// 技能傷害 from gear: multiplies every non-gun hit (gadgets, grenade, tornado, burst).
+        public float GadgetMult = 1f;
         /// Recent damage as a share of max life, draining at Defs.BurstDrain per second (see Defs.BurstCap).
         public float Burst;
         public int Id;
