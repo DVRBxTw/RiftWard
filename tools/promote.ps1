@@ -68,6 +68,10 @@ Write-Output "正式服 running $version (ports 24780 / 24781)"
 if (-not $NoGitHub) {
   git -C $project tag $tag
   git -C $project push origin $tag
-  & $gh release create $tag $zip --title "正式服 v$version" --notes-file $Notes --latest
+  # GitHub gets only the launcher: RiftWard.exe (正式服 built in) downloads the game on first start.
+  $exe = Join-Path $project 'release-exe\RiftWard.exe'
+  New-Item -ItemType Directory -Force -Path (Split-Path $exe) | Out-Null
+  & (Join-Path $PSScriptRoot 'build_launcher.ps1') -Out $exe -Prod | Out-Null
+  & $gh release create $tag $exe --title "正式服 v$version" --notes-file $Notes --latest
 }
 Write-Output "PROMOTED $tag"

@@ -47,5 +47,8 @@ if ((Get-Content $manifest -Raw | ConvertFrom-Json).version -ne $version) { thro
 git -C $project push origin main
 git -C $project tag $tag
 git -C $project push origin $tag
-& $gh release create $tag $zip --title "測試服 $tag" --notes-file $Notes --prerelease
+# GitHub gets only the launcher: RiftWard-Test.exe (測試服 built in) downloads the game on first start.
+$exe = Join-Path $project 'RiftWard-Test.exe'
+& (Join-Path $PSScriptRoot 'build_launcher.ps1') -Out $exe | Out-Null
+& $gh release create $tag $exe --title "測試服 $tag" --notes-file $Notes --prerelease
 Write-Output "RELEASED $tag"

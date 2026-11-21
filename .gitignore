@@ -16,3 +16,5 @@ launcher/ui-font.ttf
 preview.png*
 *.zip
 /prod/
+/RiftWard-Test.exe
+/release-exe/

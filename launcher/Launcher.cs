@@ -41,10 +41,30 @@ namespace RiftWard.Launcher
         static readonly Regex HashRx = new Regex("^[0-9a-f]{64}$");
         static readonly Regex HostRx = new Regex(@"^[A-Za-z0-9][A-Za-z0-9.-]{0,252}$");
 
+        /// Which server this launcher belongs to is compiled in (/define:PROD builds RiftWard.exe for the 正式服,
+        /// the default build is RiftWard-Test.exe for the 測試服), so the exe alone is a complete download. A
+        /// server.cfg next to it still overrides the address and ports.
+#if PROD
+        public const string ServerName = "正式服";
+        public const int ApiPort = 24781, GamePort = 24780;
+        public const string CacheFolder = "updates-prod";
+#else
+        public const string ServerName = "測試服";
+        public const int ApiPort = 24771, GamePort = 24770;
+        public const string CacheFolder = "updates";
+#endif
+        public const string DefaultAddress = "123.241.56.94";
+
+        /// The server.cfg the game reads, for installs that came as the bare exe.
+        public static string EmbeddedConfig()
+        {
+            return "[server]\r\naddress=\"" + DefaultAddress + "\"\r\nname=\"" + ServerName + "\"\r\nport=" + ApiPort + "\r\ngame_port=" + GamePort + "\r\n";
+        }
+
         public static string ReadOrigin(string installDir)
         {
-            string address = "123.241.56.94";
-            int port = 24771;   // 測試服; the 正式服 package's server.cfg says port=24781
+            string address = DefaultAddress;
+            int port = ApiPort;
             string path = Path.Combine(installDir, "server.cfg");
             if (File.Exists(path))
             {
@@ -192,7 +212,7 @@ namespace RiftWard.Launcher
 
         readonly string installDir = AppDomain.CurrentDomain.BaseDirectory;
         // RIFTWARD_UPDATE_DIR: tests point the cache elsewhere so they never touch a real install.
-        readonly string updateDir = Environment.GetEnvironmentVariable("RIFTWARD_UPDATE_DIR") ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "RiftWard", "updates");
+        readonly string updateDir = Environment.GetEnvironmentVariable("RIFTWARD_UPDATE_DIR") ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "RiftWard", Updater.CacheFolder);
         readonly Label status, detail;
         readonly Panel bar, barFill;
         readonly Button retry;
@@ -581,6 +601,7 @@ namespace RiftWard.Launcher
         {
             string cfg = Path.Combine(installDir, "server.cfg");
             if (File.Exists(cfg)) File.Copy(cfg, Path.Combine(folder, "server.cfg"), true);
+            else File.WriteAllText(Path.Combine(folder, "server.cfg"), Updater.EmbeddedConfig());   // bare-exe install
             string exe = Path.Combine(folder, "RiftWard.exe");
             if (!File.Exists(exe)) { Fail("遊戲執行檔遺失，請重試。"); return; }
             SetStatus("驗證完成，正在啟動…", "版本 " + m.Version);
