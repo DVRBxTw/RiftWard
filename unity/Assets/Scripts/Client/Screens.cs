@@ -1201,13 +1201,14 @@ namespace RiftWard.Client
                         buy.interactable = !has && p.Shards >= Defs.PierceShards && p.Gold >= Defs.PierceGold;
                     }
                 }
-                // 命之座: feed a spare 稀世+ copy of this weapon to raise it.
+                // 命之座: feed a spare copy of this weapon with the same rarity as the one in use (稀世+).
                 {
                     int c = p.Loadout.ConstellationOf(armoryPick);
                     Color cc = Palette.Hex("8fd8ff");
                     var copiesHere = p.Loadout.Copies.TryGetValue(armoryPick, out var cl) ? cl : new List<int>();
                     int activeIdx = p.Loadout.Active.TryGetValue(armoryPick, out var ai) ? ai : 0;
-                    int spares = copiesHere.Where((r, i) => i != activeIdx && r >= 2).Count();
+                    int activeRarity = activeIdx < copiesHere.Count ? copiesHere[activeIdx] : 0;
+                    int spares = activeRarity < 2 ? 0 : copiesHere.Where((r, i) => i != activeIdx && r == activeRarity).Count();
                     var row = Ui.Rect(ds, "Constellation").Sized(34);
                     Ui.Label(row, "命之座", 16, cc, TextAnchor.MiddleLeft, true).rectTransform.Place(new Vector2(0, 0.5f), Vector2.zero, new Vector2(80, 24), new Vector2(0, 0.5f));
                     string next = c >= Defs.ConstellationMax ? "已達 C6：傷害 +24%、彈匣 +15%、射速 +10%"
@@ -1219,7 +1220,7 @@ namespace RiftWard.Client
                         .Place(new Vector2(0, 0.5f), new Vector2(246 + Defs.MaxUpgradeLevel * 20, 0), new Vector2(50, 20), new Vector2(0, 0.5f));
                     bool full = c >= Defs.ConstellationMax;
                     int price = full ? 0 : Defs.ConstellationGold[c];
-                    var raise = Ui.Button(row, full ? "命之座已滿" : spares == 0 ? "需要稀世以上複本" : $"升命座  {price / 1000}K G",
+                    var raise = Ui.Button(row, full ? "命之座已滿" : activeRarity < 2 ? "需稀世以上才能升" : spares == 0 ? $"需要{Gear.RarityNames[activeRarity]}複本" : $"升命座  {price / 1000}K G",
                         () => ArmoryRequest("/api/weapon/constellation", new Dictionary<string, object> { ["weapon"] = armoryPick }), 14, cc, new Color(0, 0, 0, 0), cc);
                     raise.GetComponent<RectTransform>().Place(new Vector2(1, 0.5f), Vector2.zero, new Vector2(160, 32), new Vector2(1, 0.5f));
                     raise.interactable = !full && spares > 0 && p.Gold >= price;

@@ -12,6 +12,8 @@ namespace RiftWard.Client
         public static float Master = 0.9f, Music = 0.7f, Effects = 0.9f, Sensitivity = 1f;
         /// Extra multiplier on top of the field-of-view scaling while aimed down sights.
         public static float AdsSensitivity = 1f;
+        /// Corner readout: latency and frame rate, each switched on its own in settings (the key flips both).
+        public static bool ShowPing = true, ShowFps = true;
 
         public static readonly (int w, int h, string label)[] Resolutions =
         {
@@ -37,6 +39,8 @@ namespace RiftWard.Client
             Effects = Mathf.Clamp01(F("rw.effects", 0.9f));
             Sensitivity = Mathf.Clamp(F("rw.sensitivity", 1f), 0.2f, 3f);
             AdsSensitivity = Mathf.Clamp(F("rw.adssensitivity", 1f), 0.3f, 2f);
+            ShowPing = I("rw.showping", 1) == 1;
+            ShowFps = I("rw.showfps", 1) == 1;
         }
 
         public static void Save()
@@ -52,6 +56,8 @@ namespace RiftWard.Client
                 PlayerPrefs.SetFloat("rw.effects", Effects);
                 PlayerPrefs.SetFloat("rw.sensitivity", Sensitivity);
                 PlayerPrefs.SetFloat("rw.adssensitivity", AdsSensitivity);
+                PlayerPrefs.SetInt("rw.showping", ShowPing ? 1 : 0);
+                PlayerPrefs.SetInt("rw.showfps", ShowFps ? 1 : 0);
                 PlayerPrefs.Save();
             }
             catch { }
@@ -139,6 +145,8 @@ namespace RiftWard.Client
             Cycle("解析度 / 比例", () => Resolution >= 0 && Resolution < Resolutions.Length ? Resolutions[Resolution].label : "自動（螢幕原生）", NextResolution);
             Cycle("畫質", () => QualityNames[Quality] + (Quality == 0 ? "（關閉光暈後製）" : ""), () => Quality = (Quality + 1) % QualityNames.Length);
             Cycle("幀率上限", () => FrameCaps[FrameCap].label, () => FrameCap = (FrameCap + 1) % FrameCaps.Length);
+            Cycle("顯示延遲（Ping）", () => ShowPing ? "顯示" : "隱藏", () => ShowPing = !ShowPing);
+            Cycle("顯示 FPS", () => ShowFps ? "顯示" : "隱藏", () => ShowFps = !ShowFps);
             Widgets.Section(stack, "音效").Sized(26);
             Slide("主音量", 0, 1, () => Master, v => Master = v, v => $"{v * 100:0}%");
             Slide("背景音樂", 0, 1, () => Music, v => Music = v, v => $"{v * 100:0}%");

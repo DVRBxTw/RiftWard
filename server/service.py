@@ -387,7 +387,7 @@ def default_loadout():
 
 
 WEAPON_COPY_LIMIT = 50
-# 命之座: feed a spare 稀世+ copy of the same weapon (and gold) to raise it, up to C6. Per level +4% damage;
+# 命之座: feed a spare copy of the same weapon at the same rarity as the one in use (稀世+, and gold) to raise it, up to C6. Per level +4% damage;
 # C3 adds 15% magazine, C6 10% fire rate (mirrors Defs.Constellation* in the game).
 CONST_MAX = 6
 CONST_GOLD = [1000, 2000, 4000, 6000, 9000, 12000]
@@ -1260,7 +1260,7 @@ class Store:
 
     @_locked
     def raise_constellation(self, account_id: int, weapon):
-        """命之座 +1: consumes the lowest-rarity spare (not in use) 稀世+ copy of the weapon, plus gold."""
+        """命之座 +1: consumes a spare (not in use) copy of the weapon with the same rarity as the active copy, plus gold."""
         profile = self.profile(account_id)
         loadout = profile["loadout"]
         if weapon not in loadout["owned"]:
@@ -1268,9 +1268,13 @@ class Store:
         level = loadout["const"].get(weapon, 0)
         if level >= CONST_MAX:
             raise ValueError("命之座已達上限")
-        spares = [i for i, r in enumerate(loadout["copies"][weapon]) if i != loadout["active"][weapon] and r >= CONST_MIN_RARITY]
+        active_rarity = loadout["copies"][weapon][loadout["active"][weapon]]
+        if active_rarity < CONST_MIN_RARITY:
+            raise ValueError("使用中的武器需為稀世以上才能升命之座")
+        # The material must match the copy in use: same weapon and the same rarity.
+        spares = [i for i, r in enumerate(loadout["copies"][weapon]) if i != loadout["active"][weapon] and r == active_rarity]
         if not spares:
-            raise ValueError("需要一把未使用的稀世以上同款武器作為素材")
+            raise ValueError("需要一把未使用、與使用中武器同稀有度的同款武器作為素材")
         index = min(spares, key=lambda i: (loadout["copies"][weapon][i], sum(loadout["copy_levels"][weapon][i].values())))
         cost = CONST_GOLD[level]
         with self.connect() as db:

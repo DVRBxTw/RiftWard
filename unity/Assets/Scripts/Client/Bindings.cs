@@ -8,7 +8,7 @@ namespace RiftWard.Client
     /// Rebindable controls, saved on this computer. Mouse buttons (fire / aim) and Esc stay fixed.
     public static class Bindings
     {
-        public enum Action { Forward, Back, Left, Right, Jump, Dash, Descend, Reload, Skill, Interact, View, Slot1, Slot2, Chat, Inspect, Ping }
+        public enum Action { Forward, Back, Left, Right, Jump, Dash, Descend, Reload, Skill, Interact, View, Slot1, Slot2, Chat, Inspect, Ping, Upgrades, NetStats }
 
         static readonly (Action action, string label, KeyCode key)[] Defaults =
         {
@@ -18,6 +18,7 @@ namespace RiftWard.Client
             (Action.View, "切換視角", KeyCode.V), (Action.Slot1, "1 號武器", KeyCode.Alpha1), (Action.Slot2, "2 號武器", KeyCode.Alpha2),
             (Action.Chat, "聊天", KeyCode.Return), (Action.Inspect, "檢視武器", KeyCode.F),
             (Action.Ping, "標點 / 標點輪盤", KeyCode.Mouse2),
+            (Action.Upgrades, "本場升級（按住）", KeyCode.Tab), (Action.NetStats, "快速開關 延遲 / FPS", KeyCode.F3),
         };
 
         static readonly KeyCode[] keys = new KeyCode[Defaults.Length];
@@ -80,7 +81,7 @@ namespace RiftWard.Client
         public static string Summary()
         {
             string move = Name(Action.Forward) + Name(Action.Left) + Name(Action.Back) + Name(Action.Right);
-            return $"{move} 移動 · 左鍵射擊 · 右鍵瞄準 · {Name(Action.Reload)} 換彈 · {Name(Action.Slot1)}/{Name(Action.Slot2)} 換槍 · {Name(Action.Skill)} 手榴彈 · {Name(Action.Dash)} 衝刺 · {Name(Action.Interact)} 救援 · {Name(Action.View)} 視角 · {Name(Action.Inspect)} 檢視武器 · {Name(Action.Ping)} 標點（雙擊危險／長按輪盤）";
+            return $"{move} 移動 · 左鍵射擊 · 右鍵瞄準 · {Name(Action.Reload)} 換彈 · {Name(Action.Slot1)}/{Name(Action.Slot2)} 換槍 · {Name(Action.Skill)} 手榴彈 · {Name(Action.Dash)} 衝刺 · {Name(Action.Interact)} 救援 · {Name(Action.View)} 視角 · {Name(Action.Inspect)} 檢視武器 · {Name(Action.Ping)} 標點（雙擊危險／長按輪盤） · 按住 {Name(Action.Upgrades)} 本場升級 · {Name(Action.NetStats)} Ping/FPS";
         }
 
         /// Assigns a key; if another action already uses it, the two swap so nothing is left unbound.
@@ -112,6 +113,8 @@ namespace RiftWard.Client
         }
 
         static KeyCode[] candidates;
+        /// True while a settings row waits for a new key, so that key press does nothing else.
+        public static bool Capturing;
 
         /// Key rows for the settings panel: click a row, then press the new key (Esc cancels).
         public static void BuildRows(Transform stack)
@@ -138,6 +141,7 @@ namespace RiftWard.Client
                 rt.anchorMin = new Vector2(0, 0); rt.anchorMax = new Vector2(1, 1); rt.offsetMin = new Vector2(170, 3); rt.offsetMax = new Vector2(0, -3);
                 captions.Add((b, action));
             }
+            Ui.Label(stack, "固定按鍵：滑鼠左鍵 射擊 · 滑鼠右鍵 瞄準 · Esc 選單 · 聊天時 Tab 切換頻道", 12, Palette.Muted).Sized(22);
             Ui.Label(stack, "點選右側按鍵後，按下想要的新按鍵；Esc 取消。重複的按鍵會自動互換。", 12, Palette.Muted).Sized(22);
             Ui.Button(stack, "恢復預設按鍵", () => { Reset(); Refresh(); }, 14, Palette.Muted).Sized(36);
         }
@@ -148,7 +152,7 @@ namespace RiftWard.Client
             System.Action<KeyCode> done;
             int startFrame;
 
-            public void Begin(System.Action<KeyCode> callback) { done = callback; startFrame = Time.frameCount; enabled = true; }
+            public void Begin(System.Action<KeyCode> callback) { Capturing = true; done = callback; startFrame = Time.frameCount; enabled = true; }
 
             void Update()
             {
@@ -170,6 +174,7 @@ namespace RiftWard.Client
                 var callback = done;
                 done = null;
                 enabled = false;
+                Capturing = false;
                 callback?.Invoke(k);
             }
         }

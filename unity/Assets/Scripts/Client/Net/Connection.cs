@@ -10,7 +10,8 @@ namespace RiftWard.Client
     /// A framed TCP connection. A background thread reads whole messages into a queue drained on the main thread.
     public sealed class Connection
     {
-        public readonly int Id;
+        /// Player id on the server. Reassigned when a dropped player reconnects and takes back their old seat.
+        public int Id;
         readonly TcpClient tcp;
         readonly NetworkStream stream;
         readonly object sendLock = new object();

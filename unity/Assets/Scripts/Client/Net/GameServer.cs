@@ -22,6 +22,8 @@ namespace RiftWard.Client
             public int[] OfferSent;
             /// Upgrade stacks last sent to this player (BuffStacks message), to send only on change.
             public string StacksSent = "";
+            /// Last time anything arrived on this connection (clients send a latency probe every second).
+            public float LastSeen;
             public float LastInput, LastPing = -9f, PingWindow, LastFriendNotice = -9f;
             public int PingCount;
             public bool ReceivedMissionInput;
@@ -46,6 +48,10 @@ namespace RiftWard.Client
         /// Seconds without input during a mission before a player is treated as disconnected.
         const float DisconnectTimeout = 10f;
         const float DeploymentTimeout = 45f;
+        /// How long a player who dropped mid-mission keeps their seat (and soldier) for a reconnect.
+        const float ReconnectGrace = 60f;
+        /// Players who dropped mid-mission, by account id, waiting to reconnect: their soldier stands still in the room.
+        readonly Dictionary<int, (Player player, float since)> ghosts = new Dictionary<int, (Player, float)>();
 
         sealed class Room
         {
@@ -158,6 +164,14 @@ namespace RiftWard.Client
                 while (p.Conn.Inbox.TryDequeue(out var msg)) Handle(p, msg.type, msg.payload);
                 if (p.Conn.Closed) Drop(p.Conn.Id);
             }
+            foreach (var g in ghosts.ToList())
+            {
+                var gp = g.Value.player;
+                bool seated = gp.Room != null && rooms.TryGetValue(gp.Room.Code, out var gr) && gr == gp.Room && gr.Mode == "playing" && gr.Sim != null && gr.Sim.Actors.ContainsKey(gp.Conn.Id);
+                if (seated && clock - g.Value.since < ReconnectGrace) continue;
+                ghosts.Remove(g.Key);
+                ForgetGhost(gp);
+            }
             foreach (var room in rooms.Values.ToList()) TickRoom(room);
             presenceTimer += Time.fixedDeltaTime;
             if (presenceTimer >= 2f)
@@ -181,9 +195,24 @@ namespace RiftWard.Client
                     (kv.Value.ReceivedMissionInput ? DisconnectTimeout : DeploymentTimeout))
                 {
                     Debug.Log("PEER_TIMEOUT " + kv.Key);
-                    LeaveRoom(kv.Value, true);
+                    kv.Value.Conn.Close("timeout");   // dropped next tick; the seat is held for a reconnect
+                    Drop(kv.Key);
                 }
             if (room.Sim != sim || room.Mode != "playing" || room.Members.Count == 0) return;
+            // Seats held for players reconnecting: alone, the run freezes until they return; with a team, the computer
+            // plays for them (and picks their upgrades) so nobody waits on a dropped connection.
+            var away = ghosts.Values.Select(g => g.player).Where(g => g.Room == room && sim.Actors.ContainsKey(g.Conn.Id)).ToList();
+            if (away.Count > 0)
+            {
+                if (!MembersOf(room).Any(kv => sim.Actors.ContainsKey(kv.Key))) return;
+                var stand = new HashSet<int>(away.Select(g => g.Conn.Id));
+                foreach (var g in away)
+                {
+                    sim.Inputs[g.Conn.Id] = sim.BotInput(sim.Actors[g.Conn.Id], g.ClientSeq, stand);
+                    if (sim.BuffPending && sim.BuffOffers.TryGetValue(g.Conn.Id, out var picks) && picks.Length > 0)
+                        sim.ChooseBuff(g.Conn.Id, picks[UnityEngine.Random.Range(0, picks.Length)]);
+                }
+            }
             if (room.Paused && room.Members.Count == 1) return;   // solo pause: nothing moves, nothing is sent
             foreach (var kv in MembersOf(room))
                 if (sim.Actors.TryGetValue(kv.Key, out var actor) && clock - kv.Value.LastInput > 0.25f)
@@ -270,11 +299,64 @@ namespace RiftWard.Client
         void Drop(int id)
         {
             if (!players.TryGetValue(id, out var p)) return;
+            var room = p.Room;
+            if (p.Profile != null && room != null && room.Mode == "playing" && !room.Finishing && room.Sim != null && room.Sim.Actors.ContainsKey(id))
+            {
+                // Mid-mission: hold the seat so they can reconnect into the same run; the soldier stops in place.
+                players.Remove(id);
+                var actor = room.Sim.Actors[id];
+                room.Sim.Inputs[id] = new PlayerInput { Seq = room.Sim.Inputs.TryGetValue(id, out var old) ? old.Seq : 0, Yaw = actor.Yaw, Slot = actor.Slot };
+                ghosts[p.AccountId] = (p, clock);
+                RoomNotice(room, $"{p.ChatName} 連線中斷，正在嘗試重新連線…");
+                Debug.Log("PEER_GHOST " + id);
+                return;
+            }
             LeaveRoom(p, false);
             players.Remove(id);
             // Record when this account was last online (shown as "離線 · 3 小時前" in friends' lists).
             if (p.Profile != null) api.Post("/api/server/seen", new Dictionary<string, object> { ["account_id"] = p.AccountId }, _ => { });
             Debug.Log("PEER_LEFT " + id);
+        }
+
+        /// The reconnect window closed (or the mission ended): the held seat is released for good.
+        void ForgetGhost(Player p)
+        {
+            var room = p.Room;
+            if (room != null && (!rooms.TryGetValue(room.Code, out var live) || live != room)) { room.Members.Remove(p.Conn.Id); p.Room = null; }
+            LeaveRoom(p, false);
+            api?.Post("/api/server/seen", new Dictionary<string, object> { ["account_id"] = p.AccountId }, _ => { });
+            Debug.Log("PEER_GHOST_EXPIRED " + p.Conn.Id);
+        }
+
+        /// A dropped player logged back in: their new connection takes over the held seat (same id, same soldier).
+        /// Returns false if there was nothing to resume.
+        bool Resume(Player fresh, Profile profile)
+        {
+            if (!ghosts.TryGetValue(profile.Id, out var g)) return false;
+            ghosts.Remove(profile.Id);
+            var p = g.player;
+            int oldId = p.Conn.Id;
+            var room = p.Room;
+            bool seated = room != null && rooms.TryGetValue(room.Code, out var live) && live == room && room.Mode == "playing" && room.Sim != null && room.Sim.Actors.ContainsKey(oldId);
+            if (!seated) { ForgetGhost(p); return false; }
+            players.Remove(fresh.Conn.Id);
+            fresh.Conn.Id = oldId;
+            p.Conn = fresh.Conn;
+            p.Profile = profile;
+            players[oldId] = p;
+            p.Conn.Send(Protocol.Frame(Msg.Welcome, w => { w.Write(oldId); w.Write(true); }));
+            p.OfferSent = null;
+            p.StacksSent = "";
+            p.LastInput = p.LastActive = clock;
+            p.ReceivedMissionInput = false;
+            p.Bot = false;
+            room.ForceFull = true;
+            p.Conn.Send(Protocol.Frame(Msg.Deploy, w => { w.Write(room.Sim.Region); w.Write(Defs.PackTier(room.Sim.Difficulty, room.Sim.Endless)); }));
+            SendLobby(room);
+            RoomNotice(room, $"{p.ChatName} 已重新連線");
+            Debug.Log("PEER_RESUMED " + oldId);
+            if (api != null) FetchFriends(p);
+            return true;
         }
 
         // ------------------------------------------------------------ rooms
@@ -392,6 +474,7 @@ namespace RiftWard.Client
         void Handle(Player p, Msg type, byte[] payload)
         {
             using var r = Connection.Reader(payload);
+            p.LastSeen = clock;
             try
             {
                 if (p.Profile == null)
@@ -399,6 +482,7 @@ namespace RiftWard.Client
                     if (type == Msg.Hello && !p.Pending) Authenticate(p, r.ReadString(), r.ReadString());
                     return;
                 }
+                if (type == Msg.NetPing) { long stamp = r.ReadInt64(); p.Conn.Send(Protocol.Frame(Msg.NetPong, w => w.Write(stamp))); return; }
                 int id = p.Conn.Id;
                 var room = p.Room;
                 var sim = room?.Sim;
@@ -573,9 +657,14 @@ namespace RiftWard.Client
                 if (!result.Bool("ok")) { Reject(p, result.Str("error", "登入已失效")); return; }
                 var profile = Profile.From(result.Obj("profile"));
                 if (!profile.TutorialComplete) { Reject(p, "請先完成新手教學"); return; }
-                if (players.Values.Any(o => o != p && o.Profile != null && o.Profile.Id == profile.Id)) { Reject(p, "這個帳號已在其他視窗登入遊戲"); return; }
+                var twin = players.Values.FirstOrDefault(o => o != p && o.Profile != null && o.Profile.Id == profile.Id);
+                // A silent twin is this player's own dead connection that the server has not noticed yet (a reconnect
+                // after the network dropped): it is replaced. A live one is really another window.
+                if (twin != null && clock - twin.LastSeen < 3f) { Reject(p, "這個帳號已在其他視窗登入遊戲"); return; }
+                if (twin != null) { Debug.Log("PEER_REPLACED " + twin.Conn.Id); twin.Conn.Close("replaced"); Drop(twin.Conn.Id); }
+                if (Resume(p, profile)) return;
                 p.Profile = profile;
-                p.Conn.Send(Protocol.Frame(Msg.Welcome, w => w.Write(id)));
+                p.Conn.Send(Protocol.Frame(Msg.Welcome, w => { w.Write(id); w.Write(false); }));
                 Debug.Log("ACCOUNT_PEER_VERIFIED id=" + id);
                 SendSoloLobby(p);
                 // No backlog on login: chat shows only what is said while you are online.

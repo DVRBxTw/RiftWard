@@ -35,6 +35,8 @@ namespace RiftWard.Sim
         /// [byte count, count × byte]: the player's own upgrade stacks this mission (sent when they change),
         /// for the hold-Tab upgrade panel.
         BuffStacks = 23,
+        /// [long stamp]: latency probe, sent about once a second; the server echoes it back as NetPong.
+        NetPing = 24,
         // server → client
         Welcome = 50, Error = 51, Lobby = 52, Deploy = 53, Snapshot = 54, Events = 55, BuffOffer = 56, Finish = 57, ProfileSync = 58, Notice = 59, BackHome = 60,
         /// [byte channel][int account id][string name][string title][string text][bool admin]
@@ -49,6 +51,8 @@ namespace RiftWard.Sim
         FriendRequestIn = 65,
         /// [int account id][string name]: a friend asks to join your room.
         JoinRequestIn = 66,
+        /// [long stamp]: echo of the client's NetPing, for the round-trip time shown in the corner.
+        NetPong = 67,
     }
 
     /// Chat channels: everyone on the server, the player's room, server notices, and private messages.

@@ -65,9 +65,43 @@ namespace RiftWard.Tests
                 Set(player, "ReceivedMissionInput", false);
                 Set(server, "clock", 60f);
                 tick.Invoke(server, new[] { room });
-                Assert.IsFalse(sim.Actors.ContainsKey(1), "A player who never finishes loading still has a bounded timeout");
+                Assert.IsFalse(((IDictionary)Get(server, "players")).Contains(1), "A player who never finishes loading still has a bounded timeout");
+                var ghosts = (IDictionary)Get(server, "ghosts");
+                Assert.IsTrue(ghosts.Contains(1), "The timed-out player's seat is held for a reconnect");
+                Assert.IsTrue(sim.Actors.ContainsKey(1), "The held soldier stays in the mission");
+                // Reconnecting: a fresh connection with the same account takes the seat back under the old id.
+                var fresh = Activator.CreateInstance(playerType, true);
+                var freshConn = new Connection(7, listenerPair(out var freshClient));
+                Set(fresh, "Conn", freshConn);
+                ((IDictionary)Get(server, "players")).Add(7, fresh);
+                var resume = typeof(GameServer).GetMethod("Resume", BindingFlags.Instance | BindingFlags.NonPublic);
+                Assert.IsTrue((bool)resume.Invoke(server, new object[] { fresh, new Profile { Id = 1, Username = "Loading" } }));
+                Assert.AreEqual(1, freshConn.Id, "The new connection takes the old player id");
+                Assert.AreSame(player, ((IDictionary)Get(server, "players"))[1]);
+                Assert.IsFalse(((IDictionary)Get(server, "players")).Contains(7));
+                Assert.IsFalse(ghosts.Contains(1));
+                Assert.IsTrue(sim.Actors.ContainsKey(1), "Back in the same run with the same soldier");
+                // Dropping again and never returning: the seat is released.
+                freshConn.Close();
+                typeof(GameServer).GetMethod("Drop", BindingFlags.Instance | BindingFlags.NonPublic).Invoke(server, new object[] { 1 });
+                Assert.IsTrue(ghosts.Contains(1));
+                ghosts.Remove(1);
+                typeof(GameServer).GetMethod("ForgetGhost", BindingFlags.Instance | BindingFlags.NonPublic).Invoke(server, new[] { player });
+                Assert.IsFalse(sim.Actors.ContainsKey(1), "An expired seat removes the soldier");
+                freshClient.Dispose();
             }
             finally { connection.Close(); UnityEngine.Object.DestroyImmediate(go); }
+        }
+
+        static TcpClient listenerPair(out TcpClient client)
+        {
+            var l = new TcpListener(IPAddress.Loopback, 0);
+            l.Start();
+            client = new TcpClient();
+            client.Connect((IPEndPoint)l.LocalEndpoint);
+            var server = l.AcceptTcpClient();
+            l.Stop();
+            return server;
         }
 
         [Test]

@@ -120,6 +120,11 @@ namespace RiftWard.Client
         /// Highest tier cleared in the deployed region when the mission began; the result sheet compares against it.
         int clearedAtDeploy = -1;
         bool inNetMission, netTest;
+        NetStatus netStatus;
+        /// Automatic reconnect after an unexpected drop: a few spaced attempts, then a dialog.
+        static readonly float[] ReconnectDelays = { 1f, 2f, 3f, 5f, 8f, 10f };
+        Coroutine reconnect;
+        bool reconnecting;
         string lobbyMode = "lobby";
         string homeStatus = "離線模式 · 單人任務";
         bool training;
@@ -149,6 +154,7 @@ namespace RiftWard.Client
             Overlay = new SocialOverlay { Join = AcceptInvite, Decline = DeclineInvite, RespondFriend = RespondFriend, AnswerJoin = AnswerJoin, Hold = () => inNetMission || Client.Sim != null };
             FriendPresence.CameOnline += name => Overlay.Toast($"好友 {name} 上線了");
             Chat = new ChatHud { Send = SendChat };
+            netStatus = new NetStatus();
             Net.Message += OnNetMessage;
             Net.Disconnected += OnNetDisconnected;
             var env = Environment.GetEnvironmentVariable("RIFTWARD_TEST_API_PORT");
@@ -223,6 +229,8 @@ namespace RiftWard.Client
             switch (type)
             {
                 case Msg.Welcome:
+                    bool resumed = r.BaseStream.Position < r.BaseStream.Length && r.ReadBoolean();
+                    if (reconnecting) Reconnected(resumed);
                     Debug.Log("UNITY_CLIENT_WELCOME id=" + Net.LocalId);
                     if (!netTest) ShowWaitingFriendRequests();
                     if (netTest) { JoinRoom("TEST"); SendChat(ChatChannel.World, "net-test hello " + Net.LocalId); }
@@ -347,6 +355,8 @@ namespace RiftWard.Client
                     break;
                 case Msg.Error:
                     string message = r.ReadString();
+                    StopReconnect();
+                    netStatus.HideDialog();
                     Net.Close();
                     LeaveNetMission();
                     Screens.ShowAccount(message, true);
@@ -385,6 +395,75 @@ namespace RiftWard.Client
             ChatLog.Reset();   // chat lives for one online session only
             Overlay.HideInvite();
             PendingInvite = null;
+            if (reconnecting) return;   // an attempt connected and dropped again: the loop carries on
+            if (!netTest && !string.IsNullOrEmpty(Api.Token))
+            {
+                homeStatus = "連線中斷 · 正在重新連線…";
+                if (Screens.Mode == "home") ShowHome();
+                reconnect = StartCoroutine(Reconnect(reason));
+                return;
+            }
+            GiveUpOnline();
+        }
+
+        /// Tries to get back on the server; a run in progress keeps going on screen meanwhile, and the server holds
+        /// the seat, so a quick reconnect drops the player straight back into it.
+        IEnumerator Reconnect(string reason)
+        {
+            reconnecting = true;
+            Debug.Log("UNITY_CLIENT_RECONNECT reason=" + reason);
+            for (int attempt = 1; attempt <= ReconnectDelays.Length; attempt++)
+            {
+                for (float wait = ReconnectDelays[attempt - 1]; wait > 0; wait -= Time.unscaledDeltaTime)
+                {
+                    netStatus.ShowReconnecting(attempt, ReconnectDelays.Length, reason, wait);
+                    yield return null;
+                }
+                netStatus.ShowReconnecting(attempt, ReconnectDelays.Length, reason, 0);
+                bool? connected = null;
+                string error = "";
+                Net.Connect(Api.Host, gamePort, Api.Token, (ok, e) => { connected = ok; error = e; });
+                while (connected == null) yield return null;
+                if (connected == true)
+                {
+                    // Logged in again once Welcome arrives (Reconnected ends this loop); give the account check time.
+                    for (float t = 0; t < 10f && reconnecting && Net.Connected; t += Time.unscaledDeltaTime) yield return null;
+                    if (!reconnecting) yield break;
+                    if (Net.Connected) Net.Close();
+                    error = "伺服器沒有完成登入";
+                }
+                if (!string.IsNullOrEmpty(error)) reason = error;
+            }
+            reconnecting = false;
+            reconnect = null;
+            Debug.Log("UNITY_CLIENT_RECONNECT_FAILED reason=" + reason);
+            GiveUpOnline();
+            netStatus.ShowFailed(ReconnectDelays.Length, reason,
+                () => { netStatus.HideDialog(); if (!reconnecting && !Net.Connected) reconnect = StartCoroutine(Reconnect(reason)); },
+                netStatus.HideDialog);
+        }
+
+        void Reconnected(bool resumed)
+        {
+            StopReconnect();
+            netStatus.HideDialog();
+            Debug.Log("UNITY_CLIENT_RECONNECTED resumed=" + resumed);
+            if (resumed) { Overlay.Toast("已重新連線，回到任務中"); return; }
+            if (inNetMission) { LeaveNetMission(); ShowHome(); Overlay.Toast("已重新連線 · 原任務已結束"); }
+            else Overlay.Toast("已重新連線");
+        }
+
+        void StopReconnect()
+        {
+            if (reconnect != null) StopCoroutine(reconnect);
+            reconnect = null;
+            reconnecting = false;
+            netStatus?.HideReconnecting();
+        }
+
+        /// Offline for good: the run in progress ends and the base offers offline missions.
+        void GiveUpOnline()
+        {
             homeStatus = "與遊戲伺服器中斷連線 · 離線單人任務";
             if (inNetMission) { LeaveNetMission(); ShowHome(); }
             else if (Screens.Mode == "home" || Screens.Mode == "connecting") ShowHome();
@@ -673,6 +752,8 @@ namespace RiftWard.Client
         {
             UpdateMusic();
             Net.Poll();
+            netStatus.Update(Net, Client.Sim != null);
+            if (Bindings.Pressed(Bindings.Action.NetStats) && !ChatHud.Typing && !Bindings.Capturing) { bool on = !(GameSettings.ShowPing || GameSettings.ShowFps); GameSettings.ShowPing = GameSettings.ShowFps = on; GameSettings.Save(); }
             Overlay.Update();
             PressDefaultOnEnter();
             TabNavigate();
@@ -766,6 +847,14 @@ namespace RiftWard.Client
             ShowHome();
             yield return Settle(0.8f);
             yield return Shot(folder, "unity-home");
+            netStatus.ShowReconnecting(2, ReconnectDelays.Length, "伺服器沒有回應", 3f);
+            yield return Settle(0.3f);
+            yield return Shot(folder, "unity-net-reconnect");
+            netStatus.ShowFailed(ReconnectDelays.Length, "伺服器沒有回應", null, netStatus.HideDialog);
+            yield return Settle(0.3f);
+            yield return Shot(folder, "unity-net-dialog");
+            netStatus.HideDialog();
+            netStatus.HideReconnecting();
             // Scene check: every region's arena from the lobby camera, interface hidden; first at 低 quality (the
             // plain look), then at the current quality.
             int sceneQuality = GameSettings.Quality;

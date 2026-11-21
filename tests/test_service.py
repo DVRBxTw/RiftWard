@@ -904,7 +904,7 @@ class ServiceTests(unittest.TestCase):
         self.assertIn(4, self.call("/api/codex", {}, auth)[1]["codex"]["weapons"]["sniper"])
         self.assertGreater(found["found"], codex["found"])
 
-    def test_constellation_consumes_a_spare_copy(self):
+    def test_constellation_needs_a_spare_of_the_same_rarity(self):
         account = self.register()
         auth = {"Authorization": "Bearer " + account["token"]}
         aid = account["profile"]["id"]
@@ -912,14 +912,20 @@ class ServiceTests(unittest.TestCase):
             db.execute("UPDATE progress SET gold=100000 WHERE account_id=?", (aid,))
         code, r = self.call("/api/weapon/constellation", {"weapon": "rifle"}, auth)
         self.assertEqual(code, 400)   # only the copy in use
-        self.store.admin_grant("Beta_Test", 0, "rifle", rarity=1)   # 普通: too low to feed
-        self.assertEqual(self.call("/api/weapon/constellation", {"weapon": "rifle"}, auth)[0], 400)
         self.store.admin_grant("Beta_Test", 0, "rifle", rarity=3)
         self.store.admin_grant("Beta_Test", 0, "rifle", rarity=2)
+        self.store.admin_grant("Beta_Test", 0, "rifle", rarity=2)
+        # The copy in use is 劣質: below 稀世, it cannot be raised.
+        self.assertEqual(self.call("/api/weapon/constellation", {"weapon": "rifle"}, auth)[0], 400)
+        self.assertEqual(self.call("/api/weapon/select", {"weapon": "rifle", "index": 2, "rarity": 2}, auth)[0], 200)
         code, r = self.call("/api/weapon/constellation", {"weapon": "rifle"}, auth)
         lo = r["profile"]["loadout"]
-        self.assertEqual((code, lo["const"]["rifle"], sorted(lo["copies"]["rifle"])), (200, 1, [0, 1, 3]))   # the 稀世 went first
+        self.assertEqual((code, lo["const"]["rifle"], sorted(lo["copies"]["rifle"])), (200, 1, [0, 2, 3]))   # a 稀世 fed the 稀世
         self.assertEqual(r["profile"]["gold"], 100000 - service.CONST_GOLD[0])
+        # Only a 傳奇 is spare now: a different rarity is not accepted.
+        code, r = self.call("/api/weapon/constellation", {"weapon": "rifle"}, auth)
+        self.assertEqual(code, 400)
+        self.assertIn("同稀有度", r["error"])
         self.assertEqual(self.call("/api/me", {}, auth)[1]["profile"]["loadout"]["const"], {"rifle": 1})
 
     def test_skill_talents_use_talent_points(self):

@@ -521,7 +521,7 @@ namespace RiftWard.Client
 
         void UpdateUpgrades(GameSim sim, Actor local)
         {
-            bool show = local != null && sim != null && (Input.GetKey(KeyCode.Tab) || ForceUpgrades) && !ChatHud.Typing && !sim.BuffPending;
+            bool show = local != null && sim != null && (Bindings.Held(Bindings.Action.Upgrades) || ForceUpgrades) && !ChatHud.Typing && !sim.BuffPending;
             if (!show) { if (upgradesRoot != null) upgradesRoot.gameObject.SetActive(false); return; }
             string sig = string.Join(",", local.BuffStacks) + (sim.Endless ? "e" : "");
             if (upgradesRoot != null && sig == upgradesShown) { upgradesRoot.gameObject.SetActive(true); return; }
@@ -536,7 +536,7 @@ namespace RiftWard.Client
             upgradesRoot = box.rectTransform.Place(new Vector2(0.5f, 0.5f), new Vector2(0, 20), new Vector2(720, height));
             Ui.Frame(upgradesRoot, Palette.Amber, 1, 0);
             Ui.Label(upgradesRoot, "本場升級", 22, Palette.Bone, TextAnchor.UpperLeft, true).rectTransform.Place(new Vector2(0, 1), new Vector2(26, -18), new Vector2(300, 30), new Vector2(0, 1));
-            Ui.Label(upgradesRoot, $"Lv {sim.Level} · 已選 {local.BuffStacks.Sum()} 次 · 放開 Tab 關閉", 13, Palette.Muted, TextAnchor.UpperRight)
+            Ui.Label(upgradesRoot, $"Lv {sim.Level} · 已選 {local.BuffStacks.Sum()} 次 · 放開 {Bindings.Name(Bindings.Action.Upgrades)} 關閉", 13, Palette.Muted, TextAnchor.UpperRight)
                 .rectTransform.Place(new Vector2(1, 1), new Vector2(-26, -26), new Vector2(360, 20), new Vector2(1, 1));
             if (owned.Count == 0)
                 Ui.Label(upgradesRoot, "還沒有選擇任何升級，升級時會出現三選一。", 15, Palette.Muted).rectTransform.Place(new Vector2(0, 1), new Vector2(26, -70), new Vector2(600, 24), new Vector2(0, 1));
