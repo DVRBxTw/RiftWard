@@ -30,6 +30,8 @@ namespace RiftWard.Client
         public string LimitedWeapon = "";
         public long LimitedEndsAt;
         public bool LimitedGuarantee;
+        /// The running 登入獎勵 event, or null.
+        public LoginEvent Login;
         public bool LimitedOpen => LimitedWeapon != "" && LimitedEndsAt > System.DateTimeOffset.UtcNow.ToUnixTimeSeconds();
         public Dictionary<string, int> Talents = new Dictionary<string, int>();
         public List<GearItem> Inventory = new List<GearItem>();
@@ -118,6 +120,7 @@ namespace RiftWard.Client
                 p.LimitedEndsAt = (long)(limited.TryGetValue("ends_at", out var end) && end is double e ? e : 0);
                 p.LimitedGuarantee = limited.Bool("guarantee");
             }
+            p.Login = LoginEvent.From(d.Obj("login_event"));
             var talents = d.Obj("talents");
             if (talents != null) foreach (var kv in talents) p.Talents[kv.Key] = kv.Value is double n ? (int)n : 0;
             foreach (var o in d.Arr("inventory") ?? new List<object>()) if (o is Dictionary<string, object> item) p.Inventory.Add(GearItem.From(item));
@@ -166,6 +169,43 @@ namespace RiftWard.Client
     }
 
     /// Reward bundle of a daily task or the all-tasks bonus.
+    /// One day of a 登入獎勵 event: currencies plus an optional weapon and gear pieces.
+    public sealed class LoginReward
+    {
+        public DailyReward Base;
+        public string Weapon = "", Gear = "";
+        public int Rarity = 1, GearRarity = 1, GearCount = 1;
+
+        public static LoginReward From(Dictionary<string, object> d) => new LoginReward
+        {
+            Base = DailyReward.From(d), Weapon = d.Str("weapon"), Rarity = Mathf.Clamp(d.Int("rarity", 1), 0, 4),
+            Gear = d.Str("gear"), GearRarity = Mathf.Clamp(d.Int("gear_rarity", 1), 0, 4), GearCount = Mathf.Max(1, d.Int("gear_count", 1)),
+        };
+
+        public string WeaponText => RiftWard.Sim.Defs.Weapons.ContainsKey(Weapon) ? RiftWard.Client.Gear.WeaponName(Weapon, Rarity) : "";
+        public string GearText => Gear == "" ? "" :
+            $"{RiftWard.Client.Gear.RarityNames[GearRarity]}{(RiftWard.Client.Gear.SlotNames.TryGetValue(Gear, out var slot) ? slot : "裝備")} ×{GearCount}";
+    }
+
+    public sealed class LoginEvent
+    {
+        public string Title = "";
+        public List<LoginReward> Rewards = new List<LoginReward>();
+        public int Claimed;
+        public bool CanClaim;
+        public long EndsAt;
+        public bool Done => Claimed >= Rewards.Count;
+
+        public static LoginEvent From(Dictionary<string, object> d)
+        {
+            if (d == null) return null;
+            var e = new LoginEvent { Title = d.Str("title"), Claimed = d.Int("claimed"), CanClaim = d.Bool("can_claim"),
+                EndsAt = (long)(d.TryGetValue("ends_at", out var end) && end is double n ? n : 0) };
+            foreach (var o in d.Arr("rewards") ?? new List<object>()) if (o is Dictionary<string, object> r) e.Rewards.Add(LoginReward.From(r));
+            return e.Rewards.Count > 0 ? e : null;
+        }
+    }
+
     public struct DailyReward
     {
         public int Gold, Keys, WeaponKeys, Shards;

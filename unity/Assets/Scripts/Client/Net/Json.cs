@@ -151,6 +151,8 @@ namespace RiftWard.Client
             d != null && d.TryGetValue(key, out var v) && v != null ? v.ToString() : fallback;
         public static int Int(this Dictionary<string, object> d, string key, int fallback = 0) =>
             d != null && d.TryGetValue(key, out var v) && v is double n ? (int)n : fallback;
+        public static float Float(this Dictionary<string, object> d, string key, float fallback = 0) =>
+            d != null && d.TryGetValue(key, out var v) && v is double n ? (float)n : fallback;
         public static bool Bool(this Dictionary<string, object> d, string key) =>
             d != null && d.TryGetValue(key, out var v) && v is bool b && b;
         public static Dictionary<string, object> Obj(this Dictionary<string, object> d, string key) =>

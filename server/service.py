@@ -428,6 +428,10 @@ class Store:
                     reply TEXT NOT NULL DEFAULT '', replied INTEGER NOT NULL DEFAULT 0
                 );
                 CREATE INDEX IF NOT EXISTS feedback_account ON feedback(account_id, id);
+                CREATE TABLE IF NOT EXISTS login_claims (
+                    account_id INTEGER NOT NULL, event_id INTEGER NOT NULL, claimed INTEGER NOT NULL DEFAULT 0,
+                    last_day TEXT NOT NULL DEFAULT '', PRIMARY KEY(account_id, event_id)
+                );
                 CREATE TABLE IF NOT EXISTS settings (
                     key TEXT PRIMARY KEY, value TEXT NOT NULL
                 );
@@ -538,6 +542,9 @@ class Store:
             with self.connect() as db:
                 row = db.execute("SELECT limited_guarantee FROM progress WHERE account_id=?", (account_id,)).fetchone()
             result["limited"] = dict(banner, guarantee=bool(row and row[0]))
+        event = self._login_view(account_id)
+        if event:
+            result["login_event"] = event
         result["inventory"] = [dict(item, stats=gear_stats(item), base=item["stats"], level=item.get("level", 0), defense=gear_defense(item)) for item in gear["inventory"]]
         result["equipment"] = gear["equipped"]
         bonus = {TALENT_BONUS_KEY.get(k, k): talents[k] * per for k, per in TALENTS.items()}
@@ -1626,6 +1633,30 @@ class Store:
         return {"friends": friends, "incoming": [briefs[i] for i in incoming if i in briefs], "outgoing": [briefs[i] for i in outgoing if i in briefs]}
 
     @_locked
+    def player_card(self, viewer_id, username):
+        """Public card of another player: level, title, equipped weapons and gear, mission record and achievement
+        tiers, plus how the viewer stands with them (self / friend / sent / received / none). Never gold, keys or
+        anything private."""
+        target, name = self._account_by_name(username)
+        p = self.profile(target)
+        stats = p.get("stats") or {}
+        shots = stats.get("shots", 0)
+        lo = p["loadout"]
+        weapons = [{"weapon": w, "rarity": lo.get("rarity", {}).get(w, 1)} for w in lo.get("equipped", [])]
+        worn = {i["id"]: i for i in p["inventory"]}
+        gear = [{"slot": slot, "rarity": worn[item]["rarity"], "level": worn[item].get("level", 0), "limit": worn[item].get("limit", 0),
+                 "set": worn[item].get("set", "")} for slot, item in p["equipment"].items() if item in worn]
+        tiers = sum(a["claimed"] for a in p.get("achievements", []))
+        with self.connect() as db:
+            mine = db.execute("SELECT status FROM friendships WHERE requester=? AND addressee=?", (viewer_id, target)).fetchone()
+            theirs = db.execute("SELECT status FROM friendships WHERE requester=? AND addressee=?", (target, viewer_id)).fetchone()
+        relation = "self" if target == viewer_id else "friend" if (mine and mine[0] == "accepted") or (theirs and theirs[0] == "accepted")             else "sent" if mine else "received" if theirs else "none"
+        return {"id": target, "username": name, "level": p["level"], "title": p.get("title", {}).get("text", ""),
+                "weapons": weapons, "gear": gear, "achievement_tiers": tiers, "achievement_total": 3 * len(ACHIEVEMENTS),
+                "missions": stats.get("missions", 0), "victories": stats.get("victories", 0), "kills": stats.get("kills", 0),
+                "accuracy": round(stats.get("hits", 0) / shots, 3) if shots else 0, "best_wave": stats.get("best_wave", 0),
+                "endless_best": stats.get("endless_best", 0), "relation": relation}
+
     def request_friend(self, account_id, username):
         target, name = self._account_by_name(username)
         if target == account_id:
@@ -1691,6 +1722,22 @@ class Store:
         """Gives gold, keys, shards, optionally a weapon at a chosen rarity and optionally gear pieces at a chosen
         rarity (a slot, or "random" for a random slot per piece). A player without that weapon gets it (equipped if
         a slot is free); one who has it gets the copy added to their armory. Gear goes into the bag."""
+        self._check_reward(gold, weapon, keys, weapon_keys, rarity, shards, gear, gear_rarity, gear_count)
+        if not isinstance(username, str) or not (username == "*" or USERNAME.fullmatch(username)):
+            raise ValueError("請輸入正確的玩家帳號")
+        with self.connect() as db:
+            if username == "*":
+                ids = [row[0] for row in db.execute("SELECT id FROM accounts")]
+            else:
+                row = db.execute("SELECT id FROM accounts WHERE username=?", (username,)).fetchone()
+                if row is None:
+                    raise ValueError("找不到此玩家")
+                ids = [row[0]]
+        self._grant(ids, gold, weapon, keys, weapon_keys, rarity, shards, gear, gear_rarity, gear_count)
+        return len(ids)
+
+    @staticmethod
+    def _check_reward(gold, weapon, keys=0, weapon_keys=0, rarity=1, shards=0, gear=None, gear_rarity=1, gear_count=1):
         def count_ok(v, high):
             return isinstance(v, int) and not isinstance(v, bool) and 0 <= v <= high
         if not count_ok(gold, 100000):
@@ -1711,16 +1758,9 @@ class Store:
             raise ValueError("裝備數量需為 1–10")
         if gold == 0 and not weapon and keys == 0 and weapon_keys == 0 and shards == 0 and not gear:
             raise ValueError("請選擇要發放的金幣、鑰匙、碎片、武器或裝備")
-        if not isinstance(username, str) or not (username == "*" or USERNAME.fullmatch(username)):
-            raise ValueError("請輸入正確的玩家帳號")
+
+    def _grant(self, ids, gold, weapon, keys=0, weapon_keys=0, rarity=1, shards=0, gear=None, gear_rarity=1, gear_count=1):
         with self.connect() as db:
-            if username == "*":
-                ids = [row[0] for row in db.execute("SELECT id FROM accounts")]
-            else:
-                row = db.execute("SELECT id FROM accounts WHERE username=?", (username,)).fetchone()
-                if row is None:
-                    raise ValueError("找不到此玩家")
-                ids = [row[0]]
             db.execute("UPDATE progress SET gold=gold+?, keys=keys+?, weapon_keys=weapon_keys+?, shards=shards+? WHERE account_id IN (%s)" % ",".join("?" * len(ids)),
                        (gold, keys, weapon_keys, shards, *ids)) if ids else None
         if gear:
@@ -1758,7 +1798,79 @@ class Store:
                 sync_rarity(loadout)
                 with self.connect() as db:
                     db.execute("UPDATE progress SET loadout=? WHERE account_id=?", (json.dumps(loadout), account_id))
-        return len(ids)
+
+    # ---- 登入獎勵: an admin-made event of up to 7 daily rewards; one claim per calendar day, in order.
+    REWARD_KEYS = ("gold", "keys", "weapon_keys", "shards", "weapon", "rarity", "gear", "gear_rarity", "gear_count")
+
+    @classmethod
+    def _clean_reward(cls, raw):
+        if not isinstance(raw, dict):
+            raise ValueError("獎勵格式不正確")
+        r = {"gold": raw.get("gold", 0), "keys": raw.get("keys", 0), "weapon_keys": raw.get("weapon_keys", 0), "shards": raw.get("shards", 0),
+             "weapon": raw.get("weapon") or "", "rarity": raw.get("rarity", 1), "gear": raw.get("gear") or "",
+             "gear_rarity": raw.get("gear_rarity", 1), "gear_count": raw.get("gear_count", 1)}
+        cls._check_reward(r["gold"], r["weapon"], r["keys"], r["weapon_keys"], r["rarity"], r["shards"], r["gear"], r["gear_rarity"], r["gear_count"])
+        return r
+
+    def login_event(self):
+        with self.connect() as db:
+            row = db.execute("SELECT value FROM settings WHERE key='login_event'").fetchone()
+        try:
+            data = json.loads(row[0]) if row else None
+        except (TypeError, ValueError):
+            return None
+        if not isinstance(data, dict) or not isinstance(data.get("ends_at"), int) or data["ends_at"] <= time.time():
+            return None
+        return data
+
+    def set_login_event(self, title, rewards, days):
+        """Admin: starts a login event (replacing any running one, which restarts everyone's progress), or ends it
+        with days=0."""
+        if isinstance(days, bool) or not isinstance(days, int) or not 0 <= days <= 90:
+            raise ValueError("活動天數需為 0 到 90 的整數")
+        with self.connect() as db:
+            if days == 0:
+                db.execute("DELETE FROM settings WHERE key='login_event'")
+                return None
+        title = title.strip() if isinstance(title, str) else ""
+        if not 1 <= len(title) <= 20:
+            raise ValueError("活動標題需為 1–20 字")
+        if not isinstance(rewards, list) or not 1 <= len(rewards) <= 7:
+            raise ValueError("獎勵需為 1 到 7 天")
+        if days < len(rewards):
+            raise ValueError("活動天數不能少於獎勵天數")
+        clean = [self._clean_reward(r) for r in rewards]
+        event = {"id": int(time.time() * 1000), "title": title, "rewards": clean, "ends_at": int(time.time()) + days * 86400}
+        with self.connect() as db:
+            db.execute("INSERT INTO settings(key, value) VALUES('login_event', ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (json.dumps(event),))
+        return event
+
+    def _login_view(self, account_id):
+        event = self.login_event()
+        if event is None:
+            return None
+        with self.connect() as db:
+            row = db.execute("SELECT claimed, last_day FROM login_claims WHERE account_id=? AND event_id=?", (account_id, event["id"])).fetchone()
+        claimed, last = (row[0], row[1]) if row else (0, "")
+        return {"title": event["title"], "rewards": event["rewards"], "ends_at": event["ends_at"], "claimed": claimed,
+                "can_claim": claimed < len(event["rewards"]) and last != daily_day(), "resets_in": daily_resets_in()}
+
+    @_locked
+    def claim_login(self, account_id):
+        event = self.login_event()
+        if event is None:
+            raise ValueError("目前沒有登入活動")
+        view = self._login_view(account_id)
+        if not view["can_claim"]:
+            raise ValueError("今天已經領過了，明天再來" if view["claimed"] < len(event["rewards"]) else "活動獎勵已全部領取")
+        reward = event["rewards"][view["claimed"]]
+        with self.connect() as db:
+            db.execute("INSERT INTO login_claims(account_id, event_id, claimed, last_day) VALUES(?,?,1,?) "
+                       "ON CONFLICT(account_id, event_id) DO UPDATE SET claimed=claimed+1, last_day=excluded.last_day",
+                       (account_id, event["id"], daily_day()))
+        self._grant([account_id], reward["gold"], reward["weapon"], reward["keys"], reward["weapon_keys"], reward["rarity"], reward["shards"],
+                    reward["gear"], reward["gear_rarity"], reward["gear_count"])
+        return reward, self.profile(account_id)
 
     @staticmethod
     def _parse_loadout(raw):
@@ -2338,6 +2450,20 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(400, {"ok": False, "error": str(exc)})
                 return
             self._json(200, {"ok": True, "reward": reward, "profile": result})
+        elif self.path == "/api/login/claim":
+            try:
+                reward, result = store.claim_login(profile["id"])
+            except ValueError as exc:
+                self._json(400, {"ok": False, "error": str(exc)})
+                return
+            self._json(200, {"ok": True, "reward": reward, "profile": result})
+        elif self.path == "/api/player/card":
+            try:
+                card = store.player_card(profile["id"], data.get("username"))
+            except ValueError as exc:
+                self._json(400, {"ok": False, "error": str(exc)})
+                return
+            self._json(200, {"ok": True, "card": card})
         elif self.path in ("/api/feedback/send", "/api/feedback/mine"):
             try:
                 result = store.send_feedback(profile["id"], data.get("category"), data.get("body")) if self.path.endswith("send") else store.my_feedback(profile["id"])
@@ -2379,6 +2505,13 @@ class Handler(BaseHTTPRequestHandler):
                     self._json(200, {"ok": True, **store.resolve_feedback(data.get("id"), data.get("reply", ""), data.get("reopen") is True)})
                 except ValueError as exc:
                     self._json(400, {"ok": False, "error": str(exc)})
+            elif self.path == "/api/admin/login":
+                try:
+                    event = store.set_login_event(data.get("title"), data.get("rewards"), data.get("days"))
+                except ValueError as exc:
+                    self._json(400, {"ok": False, "error": str(exc)})
+                    return
+                self._json(200, {"ok": True, "event": event, "profile": store.profile(profile["id"])})
             elif self.path == "/api/admin/limited":
                 try:
                     banner = store.set_limited_banner(profile["id"], data.get("weapon"), data.get("days"))

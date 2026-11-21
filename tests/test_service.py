@@ -596,6 +596,53 @@ class ServiceTests(unittest.TestCase):
         r = self.call("/api/salvage/bulk", {"kind": "gear", "rarities": [0]}, auth)[1]   # no slot: every slot, as before
         self.assertEqual((r["count"], r["profile"]["inventory"]), (2, []))
 
+    def test_login_event_one_claim_per_day_in_order(self):
+        self.store.register("Admin_Boss", "admin-password-1")
+        account = self.register()
+        auth = {"Authorization": "Bearer " + account["token"]}
+        aid = account["profile"]["id"]
+        self.assertEqual(self.call("/api/login/claim", {}, auth)[0], 400)
+        with self.assertRaises(ValueError):
+            self.store.set_login_event("", [{"gold": 1}], 7)
+        with self.assertRaises(ValueError):
+            self.store.set_login_event("週年", [{"gold": 0}], 7)
+        with self.assertRaises(ValueError):
+            self.store.set_login_event("週年", [{"gold": 1}] * 8, 9)
+        self.store.set_login_event("週年慶", [{"gold": 100}, {"weapon_keys": 5}, {"weapon": "sniper", "rarity": 3}], 7)
+        event = self.store.profile(aid)["login_event"]
+        self.assertEqual((event["title"], event["claimed"], event["can_claim"]), ("週年慶", 0, True))
+        gold = self.store.profile(aid)["gold"]
+        code, r = self.call("/api/login/claim", {}, auth)
+        self.assertEqual((code, r["profile"]["gold"] - gold, r["profile"]["login_event"]["can_claim"]), (200, 100, False))
+        self.assertEqual(self.call("/api/login/claim", {}, auth)[0], 400)
+        with self.store.connect() as db:   # next day
+            db.execute("UPDATE login_claims SET last_day='2000-01-01'")
+        keys = self.store.profile(aid)["weapon_keys"]
+        self.assertEqual(self.call("/api/login/claim", {}, auth)[1]["profile"]["weapon_keys"] - keys, 5)
+        with self.store.connect() as db:
+            db.execute("UPDATE login_claims SET last_day='2000-01-01'")
+        self.assertIn("sniper", self.call("/api/login/claim", {}, auth)[1]["profile"]["loadout"]["owned"])
+        with self.store.connect() as db:
+            db.execute("UPDATE login_claims SET last_day='2000-01-01'")
+        self.assertIn("全部", self.call("/api/login/claim", {}, auth)[1]["error"])
+        self.store.set_login_event("", None, 0)
+        self.assertNotIn("login_event", self.store.profile(aid))
+
+    def test_player_card_is_public_and_shows_relation(self):
+        account = self.register()
+        auth = {"Authorization": "Bearer " + account["token"]}
+        self.store.register("Other_Player", "other-password-1")
+        code, r = self.call("/api/player/card", {"username": "Other_Player"}, auth)
+        card = r["card"]
+        self.assertEqual((code, card["username"], card["relation"]), (200, "Other_Player", "none"))
+        for private in ("gold", "keys", "weapon_keys", "shards", "inventory", "token", "loadout"):
+            self.assertNotIn(private, card)
+        self.assertEqual(card["weapons"][0]["weapon"], "rifle")
+        self.assertEqual(self.call("/api/player/card", {"username": "Beta_Test"}, auth)[1]["card"]["relation"], "self")
+        self.call("/api/friends/request", {"username": "Other_Player"}, auth)
+        self.assertEqual(self.call("/api/player/card", {"username": "Other_Player"}, auth)[1]["card"]["relation"], "sent")
+        self.assertEqual(self.call("/api/player/card", {"username": "Nobody_Here"}, auth)[0], 400)
+
     def test_levels_talents_keys_and_gear(self):
         account = self.register()
         aid = account["profile"]["id"]

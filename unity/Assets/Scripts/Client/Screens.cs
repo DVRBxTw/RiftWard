@@ -80,7 +80,7 @@ namespace RiftWard.Client
                     b.GetComponentInChildren<Text>().fontStyle = FontStyle.Bold;
                     Ui.Box(b.transform, Palette.Amber, "Underline").rectTransform.Place(new Vector2(0.5f, 0), new Vector2(0, 1), new Vector2(40, 3), new Vector2(0.5f, 0));
                 }
-                if (ids[i] == "gear" && p.TalentPoints > 0 || ids[i] == "daily" && p.Daily.Claimable + p.AchievementsClaimable > 0
+                if (ids[i] == "gear" && p.TalentPoints > 0 || ids[i] == "daily" && (p.Daily.Claimable + p.AchievementsClaimable > 0 || p.Login != null && p.Login.CanClaim)
                     || ids[i] == "social" && p.FriendRequests + p.MailUnread + p.MailClaimable + (app.PendingInvite != null ? 1 : 0) > 0)
                     Ui.Box(b.transform, Palette.Amber, "Badge").rectTransform.Place(new Vector2(0.5f, 0.5f), new Vector2(30, 12), new Vector2(7, 7));
             }
@@ -268,16 +268,112 @@ namespace RiftWard.Client
         }
 
         /// Sub-navigation inside the 任務 tab; the 成就 tab carries a dot while a tier waits to be claimed.
-        void MissionTabs(RectTransform pad, int active)
+        float MissionTabs(RectTransform pad, int active)
         {
-            SubTabs(pad, new[] { "每日任務", "成就" }, new Action[] { ShowDaily, ShowAchievements }, active);
             var p = app.Profile;
-            int[] waiting = { p.Daily.Claimable, p.AchievementsClaimable };
-            for (int i = 0; i < 2; i++)
+            bool login = p.Login != null;
+            SubTabs(pad, login ? new[] { "每日任務", "成就", "登入獎勵" } : new[] { "每日任務", "成就" },
+                login ? new Action[] { ShowDaily, ShowAchievements, ShowLogin } : new Action[] { ShowDaily, ShowAchievements }, active);
+            int[] waiting = { p.Daily.Claimable, p.AchievementsClaimable, login && p.Login.CanClaim ? 1 : 0 };
+            for (int i = 0; i < (login ? 3 : 2); i++)
                 if (waiting[i] > 0 && i != active)
                     Ui.Box(pad, Palette.Amber, "Badge").rectTransform.Place(new Vector2(0, 1), new Vector2(i * 156 + 134, -8), new Vector2(7, 7), new Vector2(0, 1));
+            return (login ? 3 : 2) * 156 + 24;
         }
 
+        // ---- 登入獎勵 (player)
+
+        Text loginStatus;
+
+        public void ShowLogin()
+        {
+            var p = app.Profile;
+            if (p.Login == null) { ShowDaily(); return; }
+            var ev = p.Login;
+            var r = Begin("login");
+            var pad = Page(r, "daily");
+            pad.offsetMin = new Vector2(48, 36); pad.offsetMax = new Vector2(-48, -NavHeight - 28);
+            float x = MissionTabs(pad, 2);
+            long left = System.Math.Max(0, ev.EndsAt - System.DateTimeOffset.UtcNow.ToUnixTimeSeconds());
+            Ui.Label(pad, $"活動剩 {left / 86400} 天 {left % 86400 / 3600} 小時 · 每天 00:00（台灣時間）可領下一天", 13, Palette.Muted, TextAnchor.MiddleLeft)
+                .rectTransform.Place(new Vector2(0, 1), new Vector2(x, 0), new Vector2(520, 40), new Vector2(0, 1));
+
+            Ui.Label(pad, ev.Title, 40, Palette.Bone, TextAnchor.UpperLeft, true).rectTransform.Place(new Vector2(0, 1), new Vector2(0, -70), new Vector2(900, 52), new Vector2(0, 1));
+            Ui.Label(pad, ev.Done ? "已領完全部獎勵，感謝參與！" : ev.CanClaim ? $"今天可以領取第 {ev.Claimed + 1} 天的獎勵" : $"已領取 {ev.Claimed} / {ev.Rewards.Count} 天，明天再來領下一份",
+                16, ev.CanClaim ? Palette.Amber : Palette.Muted).rectTransform.Place(new Vector2(0, 1), new Vector2(0, -124), new Vector2(900, 24), new Vector2(0, 1));
+
+            var strip = Ui.Rect(pad, "Days");
+            strip.anchorMin = new Vector2(0, 0); strip.anchorMax = new Vector2(1, 1);
+            strip.offsetMin = new Vector2(0, 150); strip.offsetMax = new Vector2(0, -168);
+            int n = ev.Rewards.Count;
+            for (int i = 0; i < n; i++)
+            {
+                var rw = ev.Rewards[i];
+                bool got = i < ev.Claimed, today = i == ev.Claimed && ev.CanClaim, last = i == n - 1;
+                bool special = rw.Weapon != "" || rw.Gear != "" && rw.GearRarity >= 3;
+                Color accent = got ? Palette.Line : today ? Palette.Amber : special ? Gear.RarityColors[rw.Weapon != "" ? rw.Rarity : rw.GearRarity] : Palette.Muted;
+                var card = Ui.Box(strip, today ? new Color(Palette.Amber.r, Palette.Amber.g, Palette.Amber.b, 0.10f) : new Color(1, 1, 1, got ? 0.02f : 0.045f), "Day").rectTransform;
+                card.anchorMin = new Vector2((float)i / n, 0); card.anchorMax = new Vector2((float)(i + 1) / n, 1);
+                card.offsetMin = new Vector2(i == 0 ? 0 : 6, 0); card.offsetMax = new Vector2(i == n - 1 ? 0 : -6, 0);
+                Ui.Frame(card, accent, today ? 2 : 1, 0);
+                var top = Ui.Box(card, accent, "Top").rectTransform;
+                top.anchorMin = new Vector2(0, 1); top.anchorMax = new Vector2(1, 1); top.pivot = new Vector2(0.5f, 1);
+                top.sizeDelta = new Vector2(0, 4); top.anchoredPosition = Vector2.zero;
+                Ui.Label(card, $"第 {i + 1} 天", 18, got ? Palette.Muted : Palette.Bone, TextAnchor.UpperCenter, true).rectTransform.Place(new Vector2(0.5f, 1), new Vector2(0, -18), new Vector2(160, 26), new Vector2(0.5f, 1));
+                if (last && n > 1 && !got)
+                {
+                    var tag = Ui.Box(card, Gear.RarityColors[3], "Tag");
+                    tag.rectTransform.Place(new Vector2(1, 1), new Vector2(-6, -10), new Vector2(40, 18), new Vector2(1, 1));
+                    Ui.Label(tag.transform, "大獎", 12, Palette.Ink, TextAnchor.MiddleCenter, true).rectTransform.Fill();
+                }
+                var lines = Ui.VStack(card, 6, TextAnchor.UpperCenter);
+                lines.anchorMin = new Vector2(0, 0); lines.anchorMax = new Vector2(1, 1);
+                lines.offsetMin = new Vector2(8, 70); lines.offsetMax = new Vector2(-8, -56);
+                void Line(string text, Color color, int size = 15)
+                {
+                    var t = Ui.Label(lines, text, size, got ? Palette.Muted : color, TextAnchor.UpperCenter, true);
+                    t.horizontalOverflow = HorizontalWrapMode.Wrap;
+                    t.Sized(size * 2 + 6);
+                }
+                if (rw.WeaponText != "") Line(rw.WeaponText, Gear.RarityColors[rw.Rarity], 16);
+                if (rw.GearText != "") Line(rw.GearText, Gear.RarityColors[rw.GearRarity]);
+                if (rw.Base.Gold > 0) Line($"{rw.Base.Gold:N0} 金幣", Palette.Amber);
+                if (rw.Base.Keys > 0) Line($"{rw.Base.Keys} 裝備鑰匙", Gear.GearKeyColor);
+                if (rw.Base.WeaponKeys > 0) Line($"{rw.Base.WeaponKeys} 武器鑰匙", Gear.WeaponKeyColor);
+                if (rw.Base.Shards > 0) Line($"{rw.Base.Shards} 裂隙碎片", Gear.ShardColor);
+                if (got) Ui.Label(card, "✓ 已領取", 15, Palette.Teammate, TextAnchor.MiddleCenter, true).rectTransform.Place(new Vector2(0.5f, 0), new Vector2(0, 18), new Vector2(160, 36), new Vector2(0.5f, 0));
+                else if (today)
+                {
+                    var b = PrimaryButton(card, "領取", ClaimLogin, 17);
+                    var brt = b.GetComponent<RectTransform>(); brt.anchorMin = new Vector2(0, 0); brt.anchorMax = new Vector2(1, 0);
+                    brt.pivot = new Vector2(0.5f, 0); brt.sizeDelta = new Vector2(-24, 40); brt.anchoredPosition = new Vector2(0, 16);
+                }
+                else Ui.Label(card, i == ev.Claimed ? "明天可領" : "未解鎖", 14, Palette.Line, TextAnchor.MiddleCenter).rectTransform.Place(new Vector2(0.5f, 0), new Vector2(0, 18), new Vector2(160, 36), new Vector2(0.5f, 0));
+            }
+            loginStatus = Ui.Label(pad, "", 15, Palette.Amber, TextAnchor.MiddleLeft);
+            loginStatus.rectTransform.Place(new Vector2(0, 0), new Vector2(0, 100), new Vector2(900, 30), new Vector2(0, 0));
+        }
+
+        void ClaimLogin()
+        {
+            loginStatus.color = Palette.Amber; loginStatus.text = "領取中…";
+            app.Api.Post("/api/login/claim", null, result =>
+            {
+                if (Mode != "login") return;
+                if (!result.Bool("ok")) { loginStatus.color = Palette.Danger; loginStatus.text = result.Str("error", "領取失敗"); return; }
+                app.UpdateProfile(Profile.From(result.Obj("profile")));
+                var got = LoginReward.From(result.Obj("reward"));
+                ShowLogin();
+                var parts = new List<string>();
+                if (got.WeaponText != "") parts.Add(got.WeaponText);
+                if (got.GearText != "") parts.Add(got.GearText);
+                if (got.Base.Gold > 0) parts.Add($"金幣 +{got.Base.Gold}");
+                if (got.Base.Keys > 0) parts.Add($"裝備鑰匙 +{got.Base.Keys}");
+                if (got.Base.WeaponKeys > 0) parts.Add($"武器鑰匙 +{got.Base.WeaponKeys}");
+                if (got.Base.Shards > 0) parts.Add($"碎片 +{got.Base.Shards}");
+                loginStatus.text = "已領取  " + string.Join("、", parts);
+            });
+        }
         void SubTabs(RectTransform pad, string[] names, Action[] go, int active)
         {
             var row = Ui.Rect(pad, "SubTabs").Place(new Vector2(0, 1), Vector2.zero, new Vector2(156 * names.Length, 40), new Vector2(0, 1));
@@ -1386,10 +1482,10 @@ namespace RiftWard.Client
             var daily = p.Daily;
             var pad = Page(r, "daily");
             pad.offsetMin = new Vector2(48, 36); pad.offsetMax = new Vector2(-48, -NavHeight - 28);
-            MissionTabs(pad, 0);
+            float tabsEnd = MissionTabs(pad, 0);
             int left = Mathf.Max(0, daily.ResetsIn - (int)(Time.realtimeSinceStartup - daily.FetchedAt));
             Ui.Label(pad, $"每天 00:00（台灣時間）更換 · 距離更新 {left / 3600} 小時 {left % 3600 / 60} 分 · 進度在連線任務結算時計入", 13, Palette.Muted, TextAnchor.MiddleLeft)
-                .rectTransform.Place(new Vector2(0, 1), new Vector2(336, 0), new Vector2(560, 40), new Vector2(0, 1));
+                .rectTransform.Place(new Vector2(0, 1), new Vector2(tabsEnd, 0), new Vector2(560, 40), new Vector2(0, 1));
             dailyStatus = Ui.Label(pad, "", 14, Palette.Amber, TextAnchor.UpperRight);
             dailyStatus.rectTransform.Place(new Vector2(1, 1), new Vector2(0, -10), new Vector2(420, 20), new Vector2(1, 1));
 
@@ -1918,6 +2014,9 @@ namespace RiftWard.Client
             dot.rectTransform.Place(new Vector2(0, 0.5f), new Vector2(16, 0), new Vector2(9, 9), new Vector2(0, 0.5f));
             var info = Ui.Rect(rt, "Info").Place(new Vector2(0, 1), new Vector2(36, -4), new Vector2(360, 26), new Vector2(0, 1));
             PersonLabel(info, f, 16, 0);
+            var open = info.gameObject.AddComponent<Image>();
+            open.color = new Color(0, 0, 0, 0);
+            info.gameObject.AddComponent<Button>().onClick.AddListener(() => ShowPlayerCard(who));
             var status = Ui.Label(rt, FriendPresence.Describe(id), 12, FriendPresence.ColorOf(id), TextAnchor.UpperLeft);
             status.rectTransform.Place(new Vector2(0, 1), new Vector2(36, -32), new Vector2(240, 18), new Vector2(0, 1));
             Button remove = null;
@@ -2200,7 +2299,146 @@ namespace RiftWard.Client
             var label = Ui.Label(chatList, ChatLog.Format(line), 15, Palette.Bone);
             label.supportRichText = true;
             label.gameObject.AddComponent<ContentSizeFitter>().verticalFit = ContentSizeFitter.FitMode.PreferredSize;
+            // Click another player's line to open their 資料卡.
+            if (line.AccountId > 0 && line.AccountId != app.Profile.Id && !string.IsNullOrEmpty(line.Name))
+            {
+                string who = line.Name;
+                label.raycastTarget = true;
+                label.gameObject.AddComponent<Button>().onClick.AddListener(() => ShowPlayerCard(who));
+            }
         }
+
+        // ---- 玩家資料卡
+
+        RectTransform cardRoot;
+
+        public void ShowPlayerCard(string username)
+        {
+            if (string.IsNullOrWhiteSpace(username)) return;
+            app.Api.Post("/api/player/card", new Dictionary<string, object> { ["username"] = username }, result =>
+            {
+                if (!result.Bool("ok")) { app.Overlay.Toast(result.Str("error", "無法讀取玩家資料")); return; }
+                PlayerCard(result.Obj("card"));
+            });
+        }
+
+        public void PlayerCard(Dictionary<string, object> c)
+        {
+            if (cardRoot != null) UnityEngine.Object.Destroy(cardRoot.gameObject);
+            if (root == null) return;
+            cardRoot = Ui.Rect(root, "PlayerCard").Fill();
+            var shade = Ui.Box(cardRoot, new Color(0, 0, 0, 0.6f), "Shade");
+            shade.rectTransform.Fill();
+            shade.gameObject.AddComponent<Button>().onClick.AddListener(CloseCard);
+            var box = Ui.Box(cardRoot, new Color(0.09f, 0.095f, 0.105f, 0.99f), "Card");
+            var rt = box.rectTransform.Place(new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(560, 470));
+            Ui.Frame(rt, Palette.Amber, 1, 4);
+            string who = c.Str("username");
+            int id = c.Int("id");
+            string relation = c.Str("relation");
+
+            Ui.Label(rt, who, 28, Palette.Bone, TextAnchor.UpperLeft, true).rectTransform.Place(new Vector2(0, 1), new Vector2(28, -20), new Vector2(360, 36), new Vector2(0, 1));
+            string title = c.Str("title");
+            Ui.Label(rt, $"Lv {c.Int("level", 1)}" + (title != "" ? $"　「{title}」" : ""), 15, Palette.Amber, TextAnchor.UpperLeft)
+                .rectTransform.Place(new Vector2(0, 1), new Vector2(28, -58), new Vector2(420, 22), new Vector2(0, 1));
+            var close = Ui.Button(rt, "✕", CloseCard, 18, Palette.Muted, new Color(0, 0, 0, 0));
+            close.GetComponent<RectTransform>().Place(new Vector2(1, 1), new Vector2(-10, -10), new Vector2(36, 36), new Vector2(1, 1));
+
+            // Record: four stat tiles.
+            float acc = c.Float("accuracy") * 100f;
+            int missions = c.Int("missions"), wins = c.Int("victories");
+            var tiles = new[]
+            {
+                ("任務", missions > 0 ? $"{wins}/{missions}" : "0", "勝場 / 出擊"),
+                ("擊殺", c.Int("kills").ToString("N0"), "累計"),
+                ("命中率", $"{acc:0.0}%", "命中 / 射擊"),
+                ("無盡最佳", c.Int("endless_best") > 0 ? $"第 {c.Int("endless_best")} 波" : "—", $"成就 {c.Int("achievement_tiers")}/{c.Int("achievement_total")}"),
+            };
+            for (int i = 0; i < tiles.Length; i++)
+            {
+                var t = Ui.Box(rt, new Color(1, 1, 1, 0.04f), "Stat").rectTransform.Place(new Vector2(0, 1), new Vector2(28 + i * 128, -94), new Vector2(120, 80), new Vector2(0, 1));
+                Ui.Label(t, tiles[i].Item1, 12, Palette.Muted).rectTransform.Place(new Vector2(0, 1), new Vector2(10, -8), new Vector2(110, 16), new Vector2(0, 1));
+                var v = Ui.Label(t, tiles[i].Item2, 22, Palette.Bone, TextAnchor.UpperLeft, true);
+                v.resizeTextForBestFit = true; v.resizeTextMinSize = 12; v.resizeTextMaxSize = 22;
+                v.rectTransform.Place(new Vector2(0, 1), new Vector2(10, -24), new Vector2(104, 30), new Vector2(0, 1));
+                Ui.Label(t, tiles[i].Item3, 11, Palette.Muted).rectTransform.Place(new Vector2(0, 1), new Vector2(10, -60), new Vector2(110, 14), new Vector2(0, 1));
+            }
+
+            // Weapons in their loadout.
+            Ui.Label(rt, "出戰武器", 13, Palette.Muted).rectTransform.Place(new Vector2(0, 1), new Vector2(28, -188), new Vector2(200, 18), new Vector2(0, 1));
+            var weapons = (c.Arr("weapons") ?? new List<object>()).OfType<Dictionary<string, object>>().ToList();
+            for (int i = 0; i < weapons.Count && i < 4; i++)
+            {
+                int rarity = Mathf.Clamp(weapons[i].Int("rarity", 1), 0, 4);
+                var w = Ui.Box(rt, new Color(1, 1, 1, 0.04f), "Weapon").rectTransform.Place(new Vector2(0, 1), new Vector2(28 + i * 128, -210), new Vector2(120, 44), new Vector2(0, 1));
+                Ui.Frame(w, Gear.RarityColors[rarity], 1, 3);
+                var n = Ui.Label(w, Gear.WeaponName(weapons[i].Str("weapon"), rarity), 13, Gear.RarityColors[rarity], TextAnchor.MiddleLeft, true);
+                n.horizontalOverflow = HorizontalWrapMode.Wrap;
+                var nrt = n.rectTransform.Fill(); nrt.offsetMin = new Vector2(10, 2); nrt.offsetMax = new Vector2(-4, -2);
+            }
+            if (weapons.Count == 0) Ui.Label(rt, "尚未配置", 13, Palette.Line).rectTransform.Place(new Vector2(0, 1), new Vector2(28, -210), new Vector2(200, 30), new Vector2(0, 1));
+
+            // Worn gear, one cell per slot.
+            Ui.Label(rt, "穿戴裝備", 13, Palette.Muted).rectTransform.Place(new Vector2(0, 1), new Vector2(28, -266), new Vector2(200, 18), new Vector2(0, 1));
+            var gear = (c.Arr("gear") ?? new List<object>()).OfType<Dictionary<string, object>>().ToDictionary(g => g.Str("slot"));
+            var slots = Gear.Slots.ToList();
+            for (int i = 0; i < slots.Count; i++)
+            {
+                var cell = Ui.Box(rt, new Color(1, 1, 1, 0.04f), "Gear").rectTransform.Place(new Vector2(0, 1), new Vector2(28 + (i % 4) * 128, -288 - (i / 4) * 64), new Vector2(120, 56), new Vector2(0, 1));
+                Ui.Label(cell, Gear.SlotNames[slots[i]], 11, Palette.Muted).rectTransform.Place(new Vector2(0, 1), new Vector2(10, -6), new Vector2(110, 14), new Vector2(0, 1));
+                if (!gear.TryGetValue(slots[i], out var g)) { Ui.Label(cell, "未穿戴", 13, Palette.Line).rectTransform.Place(new Vector2(0, 1), new Vector2(10, -24), new Vector2(110, 20), new Vector2(0, 1)); continue; }
+                int r = Mathf.Clamp(g.Int("rarity"), 0, 4);
+                Ui.Frame(cell, Gear.RarityColors[r], 1, 3);
+                string lv = g.Int("level") > 0 ? $" +{g.Int("level")}" : "";
+                string lim = g.Int("limit") > 0 ? $" 突{g.Int("limit")}" : "";
+                Ui.Label(cell, Gear.RarityNames[r] + lv + lim, 14, Gear.RarityColors[r], TextAnchor.UpperLeft, true).rectTransform.Place(new Vector2(0, 1), new Vector2(10, -20), new Vector2(110, 18), new Vector2(0, 1));
+                if (Gear.Sets.TryGetValue(g.Str("set"), out var set))
+                    Ui.Label(cell, set.name + "套裝", 11, set.color).rectTransform.Place(new Vector2(0, 1), new Vector2(10, -38), new Vector2(110, 14), new Vector2(0, 1));
+            }
+
+            // Actions, depending on how the viewer stands with them.
+            var status = Ui.Label(rt, "", 13, Palette.Muted, TextAnchor.MiddleLeft);
+            status.rectTransform.Place(new Vector2(0, 0), new Vector2(28, 66), new Vector2(500, 20), new Vector2(0, 0));
+            float x = -24;
+            Button Action(string text, Color color, Action click, float width)
+            {
+                var b = Ui.Button(rt, text, click, 15, color, null, color);
+                b.GetComponent<RectTransform>().Place(new Vector2(1, 0), new Vector2(x, 20), new Vector2(width, 38), new Vector2(1, 0));
+                x -= width + 10;
+                return b;
+            }
+            if (relation == "self") { status.text = "這是你自己"; return; }
+            Action("私訊", Palette.Hex("ff8fd0"), () => { CloseCard(); ShowWhisper(who); }, 84);
+            if (relation == "friend")
+            {
+                var invite = Action("邀請組隊", Palette.Teammate, () => { app.InviteFriend(id); status.text = $"已向 {who} 送出組隊邀請"; }, 110);
+                PaintInvite(invite, app.Net.Welcomed && FriendPresence.StateOf(id) != PresenceState.Offline);
+                status.text = "你們是好友";
+            }
+            else if (relation == "sent") status.text = "已送出好友邀請，等待對方回應";
+            else
+            {
+                Button add = null;
+                add = Action(relation == "received" ? "接受好友" : "加為好友", Palette.Amber, () =>
+                {
+                    add.interactable = false;
+                    status.text = "處理中…";
+                    app.Api.Post("/api/friends/request", new Dictionary<string, object> { ["username"] = who }, result =>
+                    {
+                        if (!result.Bool("ok")) { add.interactable = true; status.color = Palette.Danger; status.text = result.Str("error", "操作失敗"); return; }
+                        bool accepted = result.Str("status") == "accepted";
+                        if (!accepted) app.NotifyFriendRequest(who);
+                        app.RefreshFriends();
+                        status.color = Palette.Teammate;
+                        status.text = accepted ? $"你和 {who} 已成為好友" : "已送出好友邀請";
+                        add.SetCaption(accepted ? "已是好友" : "已送出");
+                    });
+                }, 110);
+                if (relation == "received") status.text = $"{who} 想加你為好友";
+            }
+        }
+
+        void CloseCard() { if (cardRoot != null) UnityEngine.Object.Destroy(cardRoot.gameObject); cardRoot = null; }
 
         void OnChatLine(ChatLog.Line line)
         {
@@ -2231,10 +2469,10 @@ namespace RiftWard.Client
             var p = app.Profile;
             var pad = Page(r, "daily");
             pad.offsetMin = new Vector2(48, 36); pad.offsetMax = new Vector2(-48, -NavHeight - 28);
-            MissionTabs(pad, 1);
+            float tabsEnd = MissionTabs(pad, 1);
             int done = p.Achievements.Sum(a => a.Claimed), total = p.Achievements.Count * 3;
             Ui.Label(pad, $"已完成 {done} / {total} 階 · 每階都有獎勵，部分成就的金階附贈稱號", 13, Palette.Muted, TextAnchor.MiddleLeft)
-                .rectTransform.Place(new Vector2(0, 1), new Vector2(336, 0), new Vector2(420, 40), new Vector2(0, 1));
+                .rectTransform.Place(new Vector2(0, 1), new Vector2(tabsEnd, 0), new Vector2(420, 40), new Vector2(0, 1));
 
             // Worn title and the button that changes it, top right.
             var titleBox = Ui.Rect(pad, "Title").Place(new Vector2(1, 1), Vector2.zero, new Vector2(330, 40), new Vector2(1, 1));
@@ -2814,12 +3052,24 @@ namespace RiftWard.Client
             pad.offsetMin = new Vector2(48, 40); pad.offsetMax = new Vector2(-48, -40);
             Ui.Button(pad, "← 返回基地", app.ShowHome, 15)
                 .GetComponent<RectTransform>().Place(new Vector2(0, 1), Vector2.zero, new Vector2(130, 32), new Vector2(0, 1));
-            Ui.Label(pad, "管理員控制台", 40, Palette.Bone, TextAnchor.UpperLeft, true).rectTransform.Place(new Vector2(0, 1), new Vector2(0, -40), new Vector2(500, 52), new Vector2(0, 1));
+            Ui.Label(pad, "管理員工具", 40, Palette.Bone, TextAnchor.UpperLeft, true).rectTransform.Place(new Vector2(0, 1), new Vector2(0, -40), new Vector2(240, 52), new Vector2(0, 1));
+            // 發放福利 / 登入獎勵 / 限定獎池
+            string[] tabNames = { "發放福利", "登入獎勵", "限定獎池" };
+            for (int i = 0; i < tabNames.Length; i++)
+            {
+                int tab = i;
+                bool on = adminTab == i;
+                var tb = Ui.Button(pad, tabNames[i], () => { adminTab = tab; ShowAdmin(); }, 16, on ? Palette.Amber : Palette.Muted,
+                    on ? new Color(Palette.Amber.r, Palette.Amber.g, Palette.Amber.b, 0.1f) : new Color(0, 0, 0, 0), on ? Palette.Amber : Palette.Line);
+                tb.GetComponent<RectTransform>().Place(new Vector2(0, 1), new Vector2(250 + i * 126, -46), new Vector2(118, 40), new Vector2(0, 1));
+            }
             Ui.Button(pad, "管理員能力", ShowAbilityOverlay, 15, Palette.Danger, new Color(0, 0, 0, 0), Palette.Danger)
                 .GetComponent<RectTransform>().Place(new Vector2(1, 1), new Vector2(0, -38), new Vector2(140, 40), new Vector2(1, 1));
             Ui.Button(pad, "玩家回饋", () => ShowFeedbackAdmin("open"), 15, Palette.Amber, new Color(0, 0, 0, 0), Palette.Amber)
                 .GetComponent<RectTransform>().Place(new Vector2(1, 1), new Vector2(-152, -38), new Vector2(140, 40), new Vector2(1, 1));
 
+            if (adminTab == 1) { LoginEventPanel(pad); return; }
+            if (adminTab == 2) { LimitedPanel(pad); return; }
             var grant = Ui.Box(pad, Palette.Sheet, "Grant").rectTransform;
             grant.anchorMin = new Vector2(0, 0); grant.anchorMax = new Vector2(0.36f, 1);
             grant.offsetMin = Vector2.zero; grant.offsetMax = new Vector2(-8, -100);
@@ -3070,21 +3320,21 @@ namespace RiftWard.Client
         RectTransform auditList;
 
         /// Anti-cheat log: rejected mission reports (red) and suspicious but paid ones (amber), newest first.
-        void AuditPanel(RectTransform pad)
+        int adminTab;
+        public void ShowAdminTab(int tab) { adminTab = tab; ShowAdmin(); }
+
+        /// 限定獎池: open the limited supply for N days (or change how long is left), or close it now.
+        void LimitedPanel(RectTransform pad)
         {
-            var au = AdminColumn(pad, 0.68f, 1f, Palette.Danger, "Audit");
-            var head = Ui.Rect(au, "Head").Sized(30);
-            Ui.Label(head, "稽核記錄", 22, Palette.Bone, TextAnchor.MiddleLeft, true).rectTransform.Fill();
-            Ui.Button(head, "重新整理", LoadAudit, 12, Palette.Muted, new Color(0, 0, 0, 0), Palette.Line)
-                .GetComponent<RectTransform>().Place(new Vector2(1, 0.5f), Vector2.zero, new Vector2(84, 28), new Vector2(1, 0.5f));
+            var lp = AdminColumn(pad, 0f, 0.5f, Palette.Hex("ff7a2a"), "Limited");
+            Ui.Label(lp, "限定獎池", 22, Palette.Bone, TextAnchor.UpperLeft, true).Sized(30);
+            Ui.Label(lp, "開放期間玩家可在商城用武器鑰匙抽取限定武器。神話 0.5%，80 抽內必出神話；神話有 50% 是限定武器，歪了下次神話必中。輸入新天數會從現在重新計算剩餘時間。", 13, Palette.Muted).Sized(56);
             Text limitedStatus = null;
-            // 限定補給: open it for N days (or change how long is left), or close it now.
-            Widgets.Section(au, "限定補給").Sized(22);
             var p0 = app.Profile;
             long limitedLeft = p0.LimitedOpen ? p0.LimitedEndsAt - System.DateTimeOffset.UtcNow.ToUnixTimeSeconds() : 0;
-            Ui.Label(au, p0.LimitedOpen ? $"進行中：{Defs.Weapons[p0.LimitedWeapon].Name}　剩 {limitedLeft / 86400} 天 {limitedLeft % 86400 / 3600} 小時" : "目前未開放", 13,
+            Ui.Label(lp, p0.LimitedOpen ? $"進行中：{Defs.Weapons[p0.LimitedWeapon].Name}　剩 {limitedLeft / 86400} 天 {limitedLeft % 86400 / 3600} 小時" : "目前未開放", 13,
                 p0.LimitedOpen ? Palette.Hex("ff7a2a") : Palette.Muted, TextAnchor.MiddleLeft).Sized(20);
-            var limitedRow = Ui.HStack(au, 10).Sized(40);
+            var limitedRow = Ui.HStack(lp, 10).Sized(40);
             var daysInput = Widgets.Input(limitedRow, "天數", false, 2);
             daysInput.contentType = InputField.ContentType.IntegerNumber;
             void SetLimited(int days)
@@ -3106,7 +3356,162 @@ namespace RiftWard.Client
                 SetLimited(days);
             }, 14);
             Ui.DangerButton(limitedRow, "立即關閉", () => SetLimited(0), 14);
-            limitedStatus = Ui.Label(au, "", 13, Palette.Amber).Sized(20);
+            Ui.Label(lp, "快速設定", 13, Palette.Muted).Sized(18);
+            var presets = Ui.HStack(lp, 10).Sized(38);
+            foreach (int d in new[] { 3, 7, 14, 30 }) { int dd = d; Ui.Button(presets, $"開放 {d} 天", () => SetLimited(dd), 14); }
+            limitedStatus = Ui.Label(lp, "", 13, Palette.Amber).Sized(20);
+            adminStatus = Ui.Label(lp, "", 14, Palette.Amber).Sized(22);
+        }
+
+        // ---- 登入獎勵 (admin): title, up to 7 days of rewards, and how long the event runs.
+        void LoginEventPanel(RectTransform pad)
+        {
+            var ed = AdminColumn(pad, 0f, 0.66f, Palette.Amber, "LoginEditor");
+            Ui.Label(ed, "建立登入活動", 22, Palette.Bone, TextAnchor.UpperLeft, true).Sized(30);
+            Ui.Label(ed, "玩家每天可領下一天的獎勵（依序，一天一次）。建立新活動會取代目前的活動，所有人的進度重新開始。金額留空或 0 的那天會略過。", 13, Palette.Muted).Sized(36);
+            var head = Ui.HStack(ed, 10).Sized(44);
+            head.GetComponent<HorizontalLayoutGroup>().childForceExpandWidth = false;
+            var title = Widgets.Input(head, "活動標題（例：週年慶七日簽到）", false, 20);
+            title.gameObject.AddComponent<LayoutElement>().flexibleWidth = 1;
+            var days = Widgets.Input(head, "活動天數", false, 2);
+            days.contentType = InputField.ContentType.IntegerNumber;
+            days.gameObject.AddComponent<LayoutElement>().preferredWidth = 110;
+            days.text = "14";
+
+            var caps = Ui.HStack(ed, 8).Sized(14);
+            caps.GetComponent<HorizontalLayoutGroup>().childForceExpandWidth = false;
+            void Cap(string text, float width) => Caps(caps, text).gameObject.AddComponent<LayoutElement>().preferredWidth = width;
+            Cap("", 56); Cap("金幣", 84); Cap("裝備鑰匙", 64); Cap("武器鑰匙", 64); Cap("碎片", 56); Cap("武器", 150); Cap("稀有度", 76); Cap("裝備", 100); Cap("稀有度", 76);
+
+            string[] weaponIds = new[] { "" }.Concat(Defs.WeaponOrder).ToArray();
+            string[] gearIds = { "", "random", "armor", "module", "boots", "chip" };
+            string[] gearNames = { "無", "隨機部位", "護甲", "模組", "靴子", "晶片" };
+            var rows = new List<Func<Dictionary<string, object>>>();
+            // A starting suggestion; a running event's rewards replace it.
+            var preset = new[]
+            {
+                (500, 0, 0, 0, "", 1, "", 1), (0, 3, 0, 0, "", 1, "", 1), (1000, 0, 2, 0, "", 1, "", 1), (0, 0, 0, 3, "", 1, "random", 3),
+                (1500, 5, 0, 0, "", 1, "", 1), (0, 0, 5, 2, "", 1, "", 1), (0, 0, 0, 0, "sniper", 3, "", 1),
+            };
+            var running = app.Profile.Login;
+            if (running != null) title.text = running.Title;
+            for (int d = 0; d < 7; d++)
+            {
+                var row = Ui.HStack(ed, 8).Sized(36);
+                row.GetComponent<HorizontalLayoutGroup>().childForceExpandWidth = false;
+                Ui.Label(row, $"第 {d + 1} 天", 14, d == 6 ? Gear.RarityColors[3] : Palette.Bone, TextAnchor.MiddleLeft, true).gameObject.AddComponent<LayoutElement>().preferredWidth = 56;
+                var pr = preset[d];
+                var ex = running != null && d < running.Rewards.Count ? running.Rewards[d] : null;
+                InputField Num(string value, float width, int chars)
+                {
+                    var f = Widgets.Input(row, "0", false, chars);
+                    f.contentType = InputField.ContentType.IntegerNumber;
+                    f.text = value == "0" ? "" : value;
+                    f.gameObject.AddComponent<LayoutElement>().preferredWidth = width;
+                    return f;
+                }
+                var gold = Num((ex?.Base.Gold ?? pr.Item1).ToString(), 84, 6);
+                var keys = Num((ex?.Base.Keys ?? pr.Item2).ToString(), 64, 4);
+                var wkeys = Num((ex?.Base.WeaponKeys ?? pr.Item3).ToString(), 64, 4);
+                var shards = Num((ex?.Base.Shards ?? pr.Item4).ToString(), 56, 4);
+                int weapon = Mathf.Max(0, Array.IndexOf(weaponIds, ex != null ? ex.Weapon : pr.Item5));
+                int rarity = ex?.Rarity ?? pr.Item6;
+                int gear = Mathf.Max(0, Array.IndexOf(gearIds, ex != null ? ex.Gear : pr.Item7));
+                int gearRarity = ex?.GearRarity ?? pr.Item8;
+                Button wb = null, rb = null, gb = null, grb = null;
+                void Paint()
+                {
+                    wb.SetCaption(weapon == 0 ? "無" : Defs.Weapons[weaponIds[weapon]].Name);
+                    rb.SetCaption(Gear.RarityNames[rarity]); rb.GetComponentInChildren<Text>().color = weapon == 0 ? Palette.Line : Gear.RarityColors[rarity];
+                    rb.interactable = weapon > 0;
+                    gb.SetCaption(gearNames[gear]);
+                    grb.SetCaption(Gear.RarityNames[gearRarity]); grb.GetComponentInChildren<Text>().color = gear == 0 ? Palette.Line : Gear.RarityColors[gearRarity];
+                    grb.interactable = gear > 0;
+                }
+                wb = Ui.Button(row, "", () => { weapon = (weapon + 1) % weaponIds.Length; Paint(); }, 13);
+                wb.gameObject.AddComponent<LayoutElement>().preferredWidth = 150;
+                rb = Ui.Button(row, "", () => { rarity = (rarity + 1) % Gear.RarityNames.Length; Paint(); }, 13);
+                rb.gameObject.AddComponent<LayoutElement>().preferredWidth = 76;
+                gb = Ui.Button(row, "", () => { gear = (gear + 1) % gearIds.Length; Paint(); }, 13);
+                gb.gameObject.AddComponent<LayoutElement>().preferredWidth = 100;
+                grb = Ui.Button(row, "", () => { gearRarity = (gearRarity + 1) % Gear.RarityNames.Length; Paint(); }, 13);
+                grb.gameObject.AddComponent<LayoutElement>().preferredWidth = 76;
+                Paint();
+                rows.Add(() =>
+                {
+                    int Val(InputField f) => int.TryParse(f.text, out var v) ? v : 0;
+                    var r = new Dictionary<string, object> { ["gold"] = Val(gold), ["keys"] = Val(keys), ["weapon_keys"] = Val(wkeys), ["shards"] = Val(shards),
+                        ["weapon"] = weaponIds[weapon], ["rarity"] = rarity, ["gear"] = gearIds[gear], ["gear_rarity"] = gearRarity, ["gear_count"] = 1 };
+                    bool empty = Val(gold) == 0 && Val(keys) == 0 && Val(wkeys) == 0 && Val(shards) == 0 && weapon == 0 && gear == 0;
+                    return empty ? null : r;
+                });
+            }
+            Text status = null;
+            var actions = Ui.HStack(ed, 10).Sized(46);
+            actions.GetComponent<HorizontalLayoutGroup>().childForceExpandWidth = false;
+            void Post(Dictionary<string, object> data, string done)
+            {
+                status.color = Palette.Amber; status.text = "設定中…";
+                app.Api.Post("/api/admin/login", data, result =>
+                {
+                    if (Mode != "admin") return;
+                    if (!result.Bool("ok")) { status.color = Palette.Danger; status.text = result.Str("error", "設定失敗"); return; }
+                    app.UpdateProfile(Profile.From(result.Obj("profile")));
+                    ShowAdmin();
+                    adminStatus.color = Palette.Amber; adminStatus.text = done;
+                });
+            }
+            Button start = null;
+            float armedAt = -9f;
+            start = PrimaryButton(actions, running != null ? "取代目前活動" : "開始活動", () =>
+            {
+                var rewards = rows.Select(f => f()).Where(r => r != null).Cast<object>().ToList();
+                if (title.text.Trim() == "") { status.color = Palette.Danger; status.text = "請輸入活動標題。"; return; }
+                if (rewards.Count == 0) { status.color = Palette.Danger; status.text = "至少要有一天的獎勵。"; return; }
+                if (!int.TryParse(days.text, out int dayCount) || dayCount < rewards.Count) { status.color = Palette.Danger; status.text = $"活動天數至少要 {rewards.Count} 天（最多 90）。"; return; }
+                // Replacing restarts everyone's progress: ask once.
+                if (running != null && Time.unscaledTime - armedAt > 4f) { armedAt = Time.unscaledTime; start.SetCaption("確定取代？"); return; }
+                Post(new Dictionary<string, object> { ["title"] = title.text.Trim(), ["rewards"] = rewards, ["days"] = dayCount }, $"登入活動「{title.text.Trim()}」已開始，共 {rewards.Count} 天獎勵。");
+            }, 16);
+            start.gameObject.AddComponent<LayoutElement>().preferredWidth = 180;
+            if (running != null)
+                Ui.DangerButton(actions, "結束活動", () => Post(new Dictionary<string, object> { ["days"] = 0 }, "登入活動已結束。"), 15)
+                    .gameObject.AddComponent<LayoutElement>().preferredWidth = 120;
+            status = Ui.Label(ed, "", 13, Palette.Amber).Sized(20);
+
+            // Right: what players see right now.
+            var pv = AdminColumn(pad, 0.66f, 1f, Palette.Teammate, "LoginNow");
+            Ui.Label(pv, "目前的活動", 22, Palette.Bone, TextAnchor.UpperLeft, true).Sized(30);
+            if (running == null) { Ui.Label(pv, "目前沒有登入活動。", 14, Palette.Muted).Sized(24); }
+            else
+            {
+                long left = System.Math.Max(0, running.EndsAt - System.DateTimeOffset.UtcNow.ToUnixTimeSeconds());
+                Ui.Label(pv, running.Title, 18, Palette.Amber, TextAnchor.UpperLeft, true).Sized(26);
+                Ui.Label(pv, $"剩 {left / 86400} 天 {left % 86400 / 3600} 小時 · 你已領 {running.Claimed}/{running.Rewards.Count} 天", 13, Palette.Muted).Sized(20);
+                for (int i = 0; i < running.Rewards.Count; i++)
+                {
+                    var rw = running.Rewards[i];
+                    var parts = new List<string>();
+                    if (rw.WeaponText != "") parts.Add(rw.WeaponText);
+                    if (rw.GearText != "") parts.Add(rw.GearText);
+                    if (rw.Base.Gold > 0) parts.Add($"{rw.Base.Gold} 金幣");
+                    if (rw.Base.Keys > 0) parts.Add($"{rw.Base.Keys} 裝備鑰匙");
+                    if (rw.Base.WeaponKeys > 0) parts.Add($"{rw.Base.WeaponKeys} 武器鑰匙");
+                    if (rw.Base.Shards > 0) parts.Add($"{rw.Base.Shards} 碎片");
+                    Ui.Label(pv, $"第 {i + 1} 天　{string.Join("、", parts)}", 13, Palette.Bone).Sized(20);
+                }
+            }
+            Ui.Label(pv, "玩家在「任務 › 登入獎勵」領取，有可領獎勵時導覽列會亮紅點。", 12, Palette.Muted).Sized(36);
+            adminStatus = Ui.Label(pv, "", 14, Palette.Amber).Sized(22);
+        }
+
+        void AuditPanel(RectTransform pad)
+        {
+            var au = AdminColumn(pad, 0.68f, 1f, Palette.Danger, "Audit");
+            var head = Ui.Rect(au, "Head").Sized(30);
+            Ui.Label(head, "稽核記錄", 22, Palette.Bone, TextAnchor.MiddleLeft, true).rectTransform.Fill();
+            Ui.Button(head, "重新整理", LoadAudit, 12, Palette.Muted, new Color(0, 0, 0, 0), Palette.Line)
+                .GetComponent<RectTransform>().Place(new Vector2(1, 0.5f), Vector2.zero, new Vector2(84, 28), new Vector2(1, 0.5f));
             Widgets.Section(au, "稽核").Sized(22);
             Ui.Label(au, "伺服器會檢查每場結算。紅色＝不合理，已拒絕發放；黃色＝數據可疑，已發放但請留意。", 13, Palette.Muted).Sized(54);
             auditList = Widgets.ScrollList(au, out _);

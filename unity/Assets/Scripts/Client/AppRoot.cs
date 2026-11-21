@@ -877,9 +877,25 @@ namespace RiftWard.Client
             Screens.ShowShop();
             yield return Settle(0.5f);
             yield return Shot(folder, "unity-shop-limited");
-            Screens.ShowAdmin();
+            Screens.ShowAdminTab(2);
             yield return Settle(0.4f);
             yield return Shot(folder, "unity-admin-limited");
+            // 登入獎勵: a sample event, three days claimed and today's open.
+            Profile.Login = LoginEvent.From(new Dictionary<string, object> {
+                ["title"] = "週年慶七日簽到", ["claimed"] = 3.0, ["can_claim"] = true, ["ends_at"] = (double)(DateTimeOffset.UtcNow.ToUnixTimeSeconds() + 10 * 86400),
+                ["rewards"] = new List<object> {
+                    new Dictionary<string, object> { ["gold"] = 500.0 }, new Dictionary<string, object> { ["keys"] = 3.0 },
+                    new Dictionary<string, object> { ["gold"] = 1000.0, ["weapon_keys"] = 2.0 }, new Dictionary<string, object> { ["shards"] = 3.0, ["gear"] = "random", ["gear_rarity"] = 3.0, ["gear_count"] = 1.0 },
+                    new Dictionary<string, object> { ["gold"] = 1500.0, ["keys"] = 5.0 }, new Dictionary<string, object> { ["weapon_keys"] = 5.0, ["shards"] = 2.0 },
+                    new Dictionary<string, object> { ["weapon"] = "sniper", ["rarity"] = 3.0 } } });
+            Screens.ShowLogin();
+            yield return Settle(0.4f);
+            yield return Shot(folder, "unity-login-reward");
+            Screens.ShowAdminTab(1);
+            yield return Settle(0.4f);
+            yield return Shot(folder, "unity-admin-login");
+            Profile.Login = null;
+            Screens.ShowAdminTab(0);
             // 意見回饋: the player's page and the admin list, with sample entries.
             Dictionary<string, object> Fb(int id, string who, string kind, string text, string status, string reply, int hoursAgo) => new Dictionary<string, object>
             {
@@ -903,6 +919,18 @@ namespace RiftWard.Client
             Screens.ShowFeedbackAdmin("open", false);
             yield return Settle(0.4f);
             yield return Shot(folder, "unity-feedback-admin");
+            Screens.ShowChat();
+            Screens.PlayerCard(new Dictionary<string, object> {
+                ["id"] = 9.0, ["username"] = "NightOwl", ["level"] = 27.0, ["title"] = "裂隙獵人", ["relation"] = "none",
+                ["missions"] = 214.0, ["victories"] = 168.0, ["kills"] = 18342.0, ["accuracy"] = 0.473, ["endless_best"] = 31.0,
+                ["achievement_tiers"] = 19.0, ["achievement_total"] = 30.0,
+                ["weapons"] = new List<object> { new Dictionary<string, object> { ["weapon"] = "sniper", ["rarity"] = 4.0 }, new Dictionary<string, object> { ["weapon"] = "rifle", ["rarity"] = 3.0 }, new Dictionary<string, object> { ["weapon"] = "minigun", ["rarity"] = 2.0 } },
+                ["gear"] = new List<object> {
+                    new Dictionary<string, object> { ["slot"] = "armor", ["rarity"] = 4.0, ["level"] = 5.0, ["limit"] = 2.0, ["set"] = "bulwark" },
+                    new Dictionary<string, object> { ["slot"] = "module", ["rarity"] = 3.0, ["level"] = 3.0, ["set"] = "assault" },
+                    new Dictionary<string, object> { ["slot"] = "boots", ["rarity"] = 2.0, ["set"] = "gale" } } });
+            yield return Settle(0.4f);
+            yield return Shot(folder, "unity-player-card");
             Profile.LimitedWeapon = ""; Profile.LimitedGuarantee = false;
             {
                 var rows = new List<Dictionary<string, object>>();
