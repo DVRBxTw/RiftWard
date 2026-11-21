@@ -141,13 +141,113 @@ namespace RiftWard.Client
         /// Sub-navigation inside the 裝備 tab.
         void GearTabs(RectTransform pad, string active)
         {
-            SubTabs(pad, new[] { "天賦與裝備", "武器" }, new Action[] { ShowCharacter, ShowArmory }, active == "character" ? 0 : 1);
+            SubTabs(pad, new[] { "天賦與裝備", "武器", "圖鑑" }, new Action[] { ShowCharacter, ShowArmory, () => ShowCodex() }, active == "character" ? 0 : active == "codex" ? 2 : 1);
+            if (active == "codex") return;
             var best = Ui.Button(pad, "一鍵裝備最強武器與裝備", EquipBest, 15, Palette.Ink, Palette.Amber, Palette.Amber);
-            best.GetComponent<RectTransform>().Place(new Vector2(0, 1), new Vector2(156 * 2 + 16, 0), new Vector2(240, 40), new Vector2(0, 1));
+            best.GetComponent<RectTransform>().Place(new Vector2(0, 1), new Vector2(156 * 3 + 16, 0), new Vector2(240, 40), new Vector2(0, 1));
             best.interactable = !equippingBest;
         }
 
         bool equippingBest;
+
+        // ---- 圖鑑: every weapon and gear slot at every rarity, lit once ever held.
+        Dictionary<string, object> codexData;
+        public Dictionary<string, object> CodexDataForCapture => codexData;
+        string codexPick = "w:rifle:1";
+
+        public void DemoCodex(Dictionary<string, object> data, string pick) { codexData = data; codexPick = pick; ShowCodex(false); }
+
+        public void ShowCodex(bool fetch = true)
+        {
+            if (fetch)
+                app.Api.Post("/api/codex", null, result =>
+                {
+                    if (Mode != "codex" || !result.Bool("ok")) return;
+                    codexData = result.Obj("codex");
+                    ShowCodex(false);
+                });
+            var r = Begin("codex");
+            var pad = Page(r, "gear");
+            pad.offsetMin = new Vector2(48, 36); pad.offsetMax = new Vector2(-48, -NavHeight - 28);
+            GearTabs(pad, "codex");
+            var weapons = codexData?.Obj("weapons");
+            var gear = codexData?.Obj("gear");
+            bool Has(string kind, string key, int rarity) =>
+                (kind == "w" ? weapons : gear)?.Arr(key)?.Any(o => o is double d && (int)d == rarity) == true;
+            int found = codexData?.Int("found") ?? 0, total = codexData?.Int("total") ?? 0;
+            Ui.Label(pad, codexData == null ? "載入中…" : $"已收集 {found} / {total}（{(total > 0 ? found * 100 / total : 0)}%）· 抽到或獲得過一次就會永久點亮", 13, Palette.Muted, TextAnchor.MiddleLeft)
+                .rectTransform.Place(new Vector2(0, 1), new Vector2(156 * 3 + 16, 0), new Vector2(560, 40), new Vector2(0, 1));
+
+            var left = Ui.Box(pad, Palette.Sheet, "Grid").rectTransform;
+            left.anchorMin = new Vector2(0, 0); left.anchorMax = new Vector2(0.62f, 1);
+            left.offsetMin = Vector2.zero; left.offsetMax = new Vector2(-10, -56);
+            TopRule(left, Palette.Amber);
+            float y = -18;
+            const float cellW = 92, cellH = 34, nameW = 120;
+            void Header(string text, string tally)
+            {
+                Ui.Label(left, text, 17, Palette.Bone, TextAnchor.MiddleLeft, true).rectTransform.Place(new Vector2(0, 1), new Vector2(24, y), new Vector2(200, 24), new Vector2(0, 1));
+                Ui.Label(left, tally, 12, Palette.Muted, TextAnchor.MiddleRight).rectTransform.Place(new Vector2(1, 1), new Vector2(-24, y), new Vector2(200, 24), new Vector2(1, 1));
+                y -= 28;
+                for (int ri = 0; ri < Gear.RarityNames.Length; ri++)
+                    Ui.Label(left, Gear.RarityNames[ri], 11, Gear.RarityColors[ri], TextAnchor.MiddleCenter).rectTransform
+                        .Place(new Vector2(0, 1), new Vector2(24 + nameW + ri * (cellW + 6), y), new Vector2(cellW, 16), new Vector2(0, 1));
+                y -= 20;
+            }
+            void Row(string kind, string key, string label)
+            {
+                Ui.Label(left, label, 14, Palette.Bone, TextAnchor.MiddleLeft).rectTransform.Place(new Vector2(0, 1), new Vector2(24, y), new Vector2(nameW, cellH), new Vector2(0, 1));
+                for (int ri = 0; ri < Gear.RarityNames.Length; ri++)
+                {
+                    int rarity = ri;
+                    string id = $"{kind}:{key}:{rarity}";
+                    bool have = Has(kind, key, rarity), on = codexPick == id;
+                    Color rc = Gear.RarityColors[rarity];
+                    var cell = Ui.Button(left, have ? "✓" : "?", () => { codexPick = id; ShowCodex(false); }, 15, have ? rc : Palette.Line,
+                        have ? new Color(rc.r, rc.g, rc.b, 0.16f) : new Color(1, 1, 1, 0.03f), on ? Palette.Bone : have ? rc : Palette.Line);
+                    cell.GetComponent<RectTransform>().Place(new Vector2(0, 1), new Vector2(24 + nameW + ri * (cellW + 6), y), new Vector2(cellW, cellH), new Vector2(0, 1));
+                }
+                y -= cellH + 5;
+            }
+            int Count(Dictionary<string, object> table) => table == null ? 0 : table.Values.Sum(v => (v as List<object>)?.Count ?? 0);
+            Header("武器圖鑑", $"{Count(weapons)} / {Defs.WeaponOrder.Length * 5}");
+            foreach (var w in Defs.WeaponOrder) Row("w", w, Defs.Weapons[w].Name);
+            y -= 10;
+            Header("裝備圖鑑", $"{Count(gear)} / {Gear.Slots.Length * 5}");
+            foreach (var g in Gear.Slots) Row("g", g, Gear.SlotNames[g]);
+
+            // Detail of the picked entry.
+            var parts = codexPick.Split(':');
+            string pk = parts[0], pkey = parts[1];
+            int prar = int.Parse(parts[2]);
+            bool owned = Has(pk, pkey, prar);
+            var right = Ui.Box(pad, Palette.Sheet, "Detail").rectTransform;
+            right.anchorMin = new Vector2(0.62f, 0); right.anchorMax = new Vector2(1, 1);
+            right.offsetMin = new Vector2(10, 0); right.offsetMax = new Vector2(0, -56);
+            TopRule(right, Gear.RarityColors[prar]);
+            var show = ModelPreview.Create(right, t => { if (pk == "w") Models.WeaponDisplay(t, pkey, prar); else Models.GearModel(t, pkey, prar); }, 512, 25f, 10f, true);
+            show.rectTransform.Place(new Vector2(0.5f, 1), new Vector2(0, -16), new Vector2(380, 250), new Vector2(0.5f, 1));
+            if (!owned) show.color = new Color(0.08f, 0.08f, 0.1f, 1f);   // a silhouette until collected
+            var d = Ui.VStack(right, 8);
+            d.anchorMin = new Vector2(0, 0); d.anchorMax = new Vector2(1, 1);
+            d.offsetMin = new Vector2(26, 20); d.offsetMax = new Vector2(-26, -280);
+            Caps(d, Gear.RarityNames[prar], Gear.RarityColors[prar]).Sized(16);
+            string title = pk == "w" ? Gear.WeaponName(pkey, prar) : $"{Gear.RarityNames[prar]} {Gear.SlotNames[pkey]}";
+            Ui.Label(d, title, 24, owned ? (Color)Gear.RarityColors[prar] : Palette.Muted, TextAnchor.UpperLeft, true).Sized(32);
+            Ui.Label(d, owned ? "✓ 已收集" : "尚未收集", 14, owned ? Palette.Teammate : Palette.Muted, TextAnchor.UpperLeft, true).Sized(20);
+            if (pk == "w")
+            {
+                var wd = Defs.Weapons[pkey];
+                Ui.Label(d, wd.Description, 13, Palette.Hex("c9c5bb")).Sized(54);
+                Ui.Label(d, $"基礎傷害 {wd.Damage * Defs.WeaponRarityMult[prar]:0.#}（稀有度 ×{Defs.WeaponRarityMult[prar]:0.##}）", 13, Palette.Bone).Sized(20);
+                Ui.Label(d, pkey == "minigun" ? "取得方式：限定補給" : pkey == "pistol" ? "取得方式：初始武器、武器補給" : "取得方式：武器補給", 12, Palette.Muted).Sized(18);
+            }
+            else
+            {
+                Ui.Label(d, $"主屬性：{Gear.SlotNames[pkey]}的專屬屬性，稀有度越高數值越高。稀世以上附帶副屬性與套裝。", 13, Palette.Hex("c9c5bb")).Sized(40);
+                Ui.Label(d, "取得方式：裝備補給", 12, Palette.Muted).Sized(18);
+            }
+        }
 
         /// Sustained damage per second of one weapon copy: what "strongest" means for 一鍵裝備.
         static float WeaponScore(string id, int rarity, Dictionary<string, int> levels)

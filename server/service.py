@@ -510,7 +510,7 @@ class Store:
                 db.execute("ALTER TABLE progress ADD COLUMN stats TEXT NOT NULL DEFAULT '{}'")
             for column, ddl in (("xp", "INTEGER NOT NULL DEFAULT 0"), ("keys", "INTEGER NOT NULL DEFAULT 0"), ("weapon_keys", "INTEGER NOT NULL DEFAULT 0"),
                                 ("talents", "TEXT NOT NULL DEFAULT '{}'"), ("gear", "TEXT NOT NULL DEFAULT '{}'"), ("pity", "TEXT NOT NULL DEFAULT '{}'"),
-                                ("cleared", "TEXT NOT NULL DEFAULT '[]'"), ("daily", "TEXT NOT NULL DEFAULT '{}'"), ("weekly", "TEXT NOT NULL DEFAULT '{}'"), ("grades", "TEXT NOT NULL DEFAULT '{}'"),
+                                ("cleared", "TEXT NOT NULL DEFAULT '[]'"), ("daily", "TEXT NOT NULL DEFAULT '{}'"), ("weekly", "TEXT NOT NULL DEFAULT '{}'"), ("grades", "TEXT NOT NULL DEFAULT '{}'"), ("codex", "TEXT NOT NULL DEFAULT '{}'"),
                                 ("achievements", "TEXT NOT NULL DEFAULT '{}'"), ("last_seen", "INTEGER NOT NULL DEFAULT 0"),
                                 ("shards", "INTEGER NOT NULL DEFAULT 0"), ("limited_guarantee", "INTEGER NOT NULL DEFAULT 0")):
                 if column not in columns:
@@ -1011,8 +1011,48 @@ class Store:
         with self.connect() as db:
             db.executemany("INSERT INTO gacha_log(account_id, created, pool, item, rarity, outcome) VALUES(?,?,?,?,?,?)",
                            [(account_id, now, pool, item, rarity, outcome) for item, rarity, outcome in entries])
+            pruning = db.execute("SELECT COUNT(*) FROM gacha_log WHERE account_id=?", (account_id,)).fetchone()[0] > self.GACHA_LOG_KEEP
+        if pruning:
+            self.codex(account_id)   # fold the oldest draws into the 圖鑑 before they are dropped
+        with self.connect() as db:
             db.execute("DELETE FROM gacha_log WHERE account_id=? AND id NOT IN (SELECT id FROM gacha_log WHERE account_id=? ORDER BY id DESC LIMIT ?)",
                        (account_id, account_id, self.GACHA_LOG_KEEP))
+
+    # ---- 圖鑑: every weapon and gear slot at every rarity this account has ever held. Kept as its own record
+    # (the draw log is pruned), merged with the draw log and whatever is owned right now.
+    def codex(self, account_id):
+        with self.lock:
+            with self.connect() as db:
+                row = db.execute("SELECT codex FROM progress WHERE account_id=?", (account_id,)).fetchone()
+                logged = db.execute("SELECT pool, item, rarity FROM gacha_log WHERE account_id=?", (account_id,)).fetchall()
+            try:
+                data = json.loads(row[0]) if row else {}
+            except (TypeError, ValueError):
+                data = {}
+            data = data if isinstance(data, dict) else {}
+            seen = {"weapons": {w: set() for w in WEAPON_PRICES}, "gear": {g: set() for g in GEAR_SLOTS}}
+            for kind in seen:
+                stored = data.get(kind) if isinstance(data.get(kind), dict) else {}
+                for key, rarities in stored.items():
+                    if key in seen[kind] and isinstance(rarities, list):
+                        seen[kind][key].update(r for r in rarities if isinstance(r, int) and 0 <= r < len(RARITIES))
+            for pool, item, rarity in logged:
+                kind = "gear" if pool == "gear" else "weapons"
+                if item in seen[kind] and 0 <= rarity < len(RARITIES):
+                    seen[kind][item].add(rarity)
+            profile = self.profile(account_id)
+            for weapon, copies in profile["loadout"]["copies"].items():
+                if weapon in seen["weapons"]:
+                    seen["weapons"][weapon].update(copies)
+            for item in profile["inventory"]:
+                if item["slot"] in seen["gear"]:
+                    seen["gear"][item["slot"]].add(item["rarity"])
+            out = {kind: {key: sorted(v) for key, v in table.items()} for kind, table in seen.items()}
+            if out != data:
+                with self.connect() as db:
+                    db.execute("UPDATE progress SET codex=? WHERE account_id=?", (json.dumps(out), account_id))
+            total = len(RARITIES) * (len(WEAPON_PRICES) + len(GEAR_SLOTS))
+            return dict(out, found=sum(len(v) for table in out.values() for v in table.values()), total=total)
 
     def gacha_history(self, account_id, pool=None, limit=200):
         """This account's draws, newest first. Only ever the caller's own rows."""
@@ -2602,6 +2642,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(400, {"ok": False, "error": str(exc)})
                 return
             self._json(200, {"ok": True, "reward": reward, "profile": result})
+        elif self.path == "/api/codex":
+            self._json(200, {"ok": True, "codex": store.codex(profile["id"])})
         elif self.path == "/api/weekly/claim":
             try:
                 reward, result = store.claim_weekly(profile["id"], data.get("task"))

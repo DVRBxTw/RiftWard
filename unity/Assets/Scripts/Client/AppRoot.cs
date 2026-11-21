@@ -802,6 +802,18 @@ namespace RiftWard.Client
             Screens.ShowArmory();
             yield return Settle(0.4f);
             yield return Shot(folder, "unity-armory");
+            {
+                List<object> R(params int[] r) => r.Select(x => (object)(double)x).ToList();
+                Screens.DemoCodex(new Dictionary<string, object> {
+                    ["weapons"] = new Dictionary<string, object> { ["pistol"] = R(0, 1, 2), ["rifle"] = R(0, 1, 2, 3), ["shotgun"] = R(1), ["sniper"] = R(1, 2, 4), ["saber"] = R(), ["minigun"] = R(3) },
+                    ["gear"] = new Dictionary<string, object> { ["armor"] = R(0, 1, 2, 3), ["module"] = R(0, 1, 2), ["boots"] = R(0, 1), ["chip"] = R(0, 2, 4) },
+                    ["found"] = 26.0, ["total"] = 50.0 }, "w:sniper:4");
+                yield return Settle(0.6f);
+                yield return Shot(folder, "unity-codex");
+                Screens.DemoCodex(Screens.CodexDataForCapture, "g:boots:3");
+                yield return Settle(0.5f);
+                yield return Shot(folder, "unity-codex-locked");
+            }
             Screens.ShowAdmin();
             yield return Settle(0.4f);
             yield return Shot(folder, "unity-admin");

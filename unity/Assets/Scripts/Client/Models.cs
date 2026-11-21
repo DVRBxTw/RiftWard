@@ -27,7 +27,7 @@ namespace RiftWard.Client
                     blob.transform.localScale = new Vector3(blob.transform.localScale.x, blob.transform.localScale.y * 0.6f, blob.transform.localScale.z);
                 }
                 foreach (float lat in new[] { 1.45f, -1.45f })
-                    Build.Sphere(t, OnSurface(lat, 0, 0.9f), 0.55f, Palette.Hex("f2f6ff"), 0.2f, false);                 // ice caps
+                    Build.Sphere(t, OnSurface(lat, 0, 0.84f), 0.42f, Palette.Hex("f2f6ff"), 0.2f, false);                 // ice caps
                 for (int i = 0; i < 8; i++)
                     Build.Sphere(t, OnSurface(Rand(-1.2f, 1.2f), Rand(0, Mathf.PI * 2), 0.98f), Rand(0.1f, 0.18f), new Color(1, 1, 1, 1), 0.4f, false);   // clouds
                 var air = Build.Sphere(t, Vector3.zero, R * 2.18f, Palette.Hex("9fd8ff"), 1.2f, false);

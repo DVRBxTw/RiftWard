@@ -887,6 +887,23 @@ class ServiceTests(unittest.TestCase):
             db.execute("UPDATE progress SET pity=? WHERE account_id=?", (json.dumps({"weapon_myth": 65}), account["profile"]["id"]))
         self.assertEqual(self.call("/api/me", {}, auth)[1]["profile"]["myth_rate"]["weapon"], 0.62)
 
+    def test_codex_remembers_what_was_ever_held(self):
+        account = self.register()
+        auth = {"Authorization": "Bearer " + account["token"]}
+        aid = account["profile"]["id"]
+        codex = self.call("/api/codex", {}, auth)[1]["codex"]
+        self.assertEqual(codex["total"], 5 * (len(service.WEAPON_PRICES) + len(service.GEAR_SLOTS)))
+        self.assertIn(0, codex["weapons"]["rifle"])           # the starting rifle
+        self.store.admin_grant("Beta_Test", 0, "sniper", rarity=2)   # the copy in use
+        self.store.admin_grant("Beta_Test", 0, "sniper", rarity=4)
+        found = self.call("/api/codex", {}, auth)[1]["codex"]
+        self.assertIn(4, found["weapons"]["sniper"])
+        # Salvaging the copy does not erase the entry.
+        lo = self.store.profile(aid)["loadout"]
+        self.store.salvage_weapon_copy(aid, "sniper", len(lo["copies"]["sniper"]) - 1, 4)
+        self.assertIn(4, self.call("/api/codex", {}, auth)[1]["codex"]["weapons"]["sniper"])
+        self.assertGreater(found["found"], codex["found"])
+
     def test_best_grade_per_stage(self):
         account = self.register()
         aid = account["profile"]["id"]
