@@ -37,6 +37,8 @@ namespace RiftWard.Sim
         BuffStacks = 23,
         /// [long stamp]: latency probe, sent about once a second; the server echoes it back as NetPong.
         NetPing = 24,
+        /// [bool join]: enter or leave the PvP (Free For All) matchmaking queue.
+        PvpQueue = 25,
         // server → client
         Welcome = 50, Error = 51, Lobby = 52, Deploy = 53, Snapshot = 54, Events = 55, BuffOffer = 56, Finish = 57, ProfileSync = 58, Notice = 59, BackHome = 60,
         /// [byte channel][int account id][string name][string title][string text][bool admin]
@@ -53,6 +55,8 @@ namespace RiftWard.Sim
         JoinRequestIn = 66,
         /// [long stamp]: echo of the client's NetPing, for the round-trip time shown in the corner.
         NetPong = 67,
+        /// [bool queued][int waiting][float seconds waited]: this player's PvP queue status (about once a second).
+        PvpStatus = 68,
     }
 
     /// Chat channels: everyone on the server, the player's room, server notices, and private messages.
@@ -100,6 +104,7 @@ namespace RiftWard.Sim
             int flags = (i.Fire ? 1 : 0) | (i.Dash ? 2 : 0) | (i.Jump ? 4 : 0) | (i.Descend ? 8 : 0) | (i.Reload ? 16 : 0) | (i.Skill ? 32 : 0) | (i.Interact ? 64 : 0) | (i.Block ? 128 : 0);
             w.Write((byte)flags);
             w.Write((byte)Mathf.Clamp(i.Slot, 0, 255));
+            w.Write((byte)(i.Ult ? 1 : 0));
         }
 
         public static PlayerInput ReadInput(this BinaryReader r)
@@ -109,6 +114,7 @@ namespace RiftWard.Sim
             i.Fire = (f & 1) != 0; i.Dash = (f & 2) != 0; i.Jump = (f & 4) != 0; i.Descend = (f & 8) != 0;
             i.Reload = (f & 16) != 0; i.Skill = (f & 32) != 0; i.Interact = (f & 64) != 0; i.Block = (f & 128) != 0;
             i.Slot = r.ReadByte();
+            i.Ult = (r.ReadByte() & 1) != 0;
             if (!float.IsFinite(i.Yaw) || !float.IsFinite(i.Pitch) || !float.IsFinite(i.Move.x) || !float.IsFinite(i.Move.y) ||
                 !float.IsFinite(i.Aim.x) || !float.IsFinite(i.Aim.y) || !float.IsFinite(i.Aim.z)) i = new PlayerInput { Seq = i.Seq };
             i.Move = Vector2.ClampMagnitude(i.Move, 1f);
@@ -143,6 +149,7 @@ namespace RiftWard.Sim
         {
             w.Write((byte)sim.State); w.Write(sim.Region); w.Write(sim.Wave); w.Write(sim.Kills); w.Write(sim.Elapsed);
             w.Write(sim.Level); w.Write(sim.Xp); w.Write(sim.XpNeed); w.Write(sim.BuffPending); w.Write((byte)sim.SuperPick);
+            w.Write(sim.Pvp); w.Write(sim.PvpTimeLeft);
             w.Write(full);
             w.Write((ushort)sim.Actors.Count);
             foreach (var a in sim.Actors.Values)
@@ -151,7 +158,7 @@ namespace RiftWard.Sim
                 w.Write(a.DashCooldown); w.Write(a.DashLeft); w.WriteQ(a.DashDirection); w.Write(a.Ack);
                 w.Write((short)a.Ammo); w.Write((short)a.Mag); w.Write(a.Reload); w.Write(a.ReloadTime); w.Write((byte)a.Slot);
                 w.Write((byte)Mathf.RoundToInt(Mathf.Clamp01(a.Spin) * 255)); w.Write((byte)Mathf.RoundToInt(Mathf.Clamp01(a.Heat) * 255)); w.Write(a.Overheat > 0f);
-                w.Write(a.SkillCooldown); w.Write(a.SkillMult); w.Write(a.Revive); w.Write(GameSim.EffectiveSpeed(a));
+                w.Write(a.SkillCooldown); w.Write(a.UltCooldown); w.Write(a.RespawnTimer); w.Write((short)a.StatKills); w.Write((short)a.StatDowns); w.Write(a.SkillMult); w.Write(a.Revive); w.Write(GameSim.EffectiveSpeed(a));
                 w.Write(a.IsAdmin && a.Admin.Fly); w.Write(a.Zoom);
                 if (full)
                 {
@@ -183,6 +190,7 @@ namespace RiftWard.Sim
             localSpeed = Defs.BaseSpeed; localFly = false;
             sim.State = (MissionState)r.ReadByte(); sim.Region = r.ReadInt32(); sim.Wave = r.ReadInt32(); sim.Kills = r.ReadInt32(); sim.Elapsed = r.ReadSingle();
             sim.Level = r.ReadInt32(); sim.Xp = r.ReadInt32(); sim.XpNeed = r.ReadInt32(); sim.BuffPending = r.ReadBoolean(); sim.SuperPick = r.ReadByte();
+            sim.Pvp = r.ReadBoolean(); sim.PvpTimeLeft = r.ReadSingle();
             bool full = r.ReadBoolean();
             int ack = 0;
             var seen = new HashSet<int>();
@@ -196,7 +204,7 @@ namespace RiftWard.Sim
                 a.DashCooldown = r.ReadSingle(); a.DashLeft = r.ReadSingle(); a.DashDirection = r.ReadQ(); a.Ack = r.ReadInt32();
                 a.Ammo = r.ReadInt16(); a.Mag = r.ReadInt16(); a.Reload = r.ReadSingle(); a.ReloadTime = r.ReadSingle(); a.Slot = r.ReadByte();
                 a.Spin = r.ReadByte() / 255f; a.Heat = r.ReadByte() / 255f; a.Overheat = r.ReadBoolean() ? 1f : 0f;
-                a.SkillCooldown = r.ReadSingle(); a.SkillMult = r.ReadSingle(); a.Revive = r.ReadSingle();
+                a.SkillCooldown = r.ReadSingle(); a.UltCooldown = r.ReadSingle(); a.RespawnTimer = r.ReadSingle(); a.StatKills = r.ReadInt16(); a.StatDowns = r.ReadInt16(); a.SkillMult = r.ReadSingle(); a.Revive = r.ReadSingle();
                 float speed = r.ReadSingle();
                 bool fly = r.ReadBoolean();
                 a.Zoom = r.ReadSingle();

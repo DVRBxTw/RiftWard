@@ -47,8 +47,8 @@ class ServiceTests(unittest.TestCase):
         with response:
             return response.status,json.loads(response.read())
 
-    def register(self):
-        code, response = self.call("/api/register",{"username":"Beta_Test","password":"test-password-8921"})
+    def register(self, username="Beta_Test"):
+        code, response = self.call("/api/register",{"username":username,"password":"test-password-8921"})
         self.assertEqual(code,201)
         return response
 
@@ -996,6 +996,31 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(daily["day"],service.daily_day())
         self.assertFalse(any(t["claimed"] or t["progress"] for t in daily["tasks"]))
         self.assertFalse(daily["bonus"]["claimed"])
+
+    def test_pvp_reward_and_weekly_leaderboard(self):
+        key = {"X-Server-Key":self.store.server_key}
+        accounts = [self.register("Pvp_%d" % i) for i in range(3)]
+        ids = [a["profile"]["id"] for a in accounts]
+        before = [a["profile"]["gold"] for a in accounts]
+        # A 3-player match: gold by placement scaled by 3/4.
+        for place, aid in enumerate(ids):
+            code, r = self.call("/api/server/pvp", {"account_id":aid,"place":place,"players":3,"kills":10-place*3,"deaths":place},key)
+            self.assertEqual(code,200)
+            self.assertEqual(r["gold"], round(service.PVP_GOLD[place]*3/4))
+            self.assertEqual(r["profile"]["gold"], before[place]+r["gold"])
+        # Bad input and player tokens are refused.
+        for bad in ({"place":3,"players":3}, {"place":0,"players":1}, {"place":0,"players":5}, {"place":True,"players":2}, {"place":0,"players":2,"kills":-1}):
+            body = {"account_id":ids[0],"kills":1,"deaths":0, **bad}
+            self.assertEqual(self.call("/api/server/pvp", body, key)[0], 400)
+        auth = {"Authorization":"Bearer "+accounts[1]["token"]}
+        self.assertNotEqual(self.call("/api/server/pvp", {"account_id":ids[1],"place":0,"players":2,"kills":1,"deaths":0}, auth)[0], 200)
+        # Leaderboard: wins first, then kills.
+        self.call("/api/server/pvp", {"account_id":ids[2],"place":0,"players":2,"kills":1,"deaths":0}, key)
+        board = self.call("/api/pvp/leaderboard", {}, auth)[1]
+        self.assertEqual([e["username"] for e in board["top"]], ["Pvp_0","Pvp_2","Pvp_1"])
+        self.assertEqual(board["top"][0]["wins"], 1)
+        self.assertEqual(board["me"]["rank"], 3)
+        self.assertEqual(board["me"]["matches"], 1)
 
     def test_claim_all_achievements(self):
         account = self.register()

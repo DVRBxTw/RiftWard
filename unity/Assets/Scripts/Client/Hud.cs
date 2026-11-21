@@ -14,11 +14,11 @@ namespace RiftWard.Client
         /// Name of the teammate the camera follows while you are down (null when not spectating).
         public string Spectating;
         public readonly Canvas Canvas;
-        readonly Text region, wave, stats, level, xpText, banner, combo, comboCaption, headTag, skillLabel, skillTime;
+        readonly Text region, wave, stats, level, xpText, banner, combo, comboCaption, headTag, skillLabel, skillTime, ultLabel, ultTime;
         readonly Text tierTag;
         readonly RectTransform tierBox;
         readonly Text shieldValue, shieldMax, dashLabel, dashTime, weaponName, weaponRarity, ammo, ammoMax, hint, revive, toast, bossName, lowAmmo;
-        readonly Ui.Bar xpBar, shieldBar, skillBar, dashBar, reloadBar, bossBar, heatBar;
+        readonly Ui.Bar xpBar, shieldBar, skillBar, dashBar, ultBar, reloadBar, bossBar, heatBar;
         readonly RectTransform bossRoot, toastPill, radar, radarDots, killFeed, damageLayer, hitRoot;
         readonly Image bossEnrage;
         readonly Text[] slotLabels = new Text[2];
@@ -183,20 +183,28 @@ namespace RiftWard.Client
             shieldBar.Root.Place(new Vector2(0, 1), new Vector2(18, -78), new Vector2(356, 7), new Vector2(0, 1));
             for (int i = 1; i < 10; i++)
                 Ui.Box(vitals, new Color(0.04f, 0.045f, 0.05f, 0.85f), "Seg").rectTransform.Place(new Vector2(0, 1), new Vector2(18 + 356f * i / 10f, -78), new Vector2(2, 7), new Vector2(0.5f, 1));
-            skillLabel = Mono(vitals, "Q  手榴彈", 15, Palette.Bone);
-            skillLabel.rectTransform.Place(new Vector2(0, 0), new Vector2(18, 26), new Vector2(110, 16), new Vector2(0, 0));
-            skillTime = Mono(vitals, "", 15, Palette.Hex("c9c5bb"));
+            // Three cooldowns side by side: Q grenade, Shift dash (wind wake), X ultimate (tornado).
+            skillLabel = Mono(vitals, "Q  手榴彈", 14, Palette.Bone);
+            skillLabel.rectTransform.Place(new Vector2(0, 0), new Vector2(18, 26), new Vector2(80, 16), new Vector2(0, 0));
+            skillTime = Mono(vitals, "", 13, Palette.Hex("c9c5bb"));
             skillTime.alignment = TextAnchor.LowerRight;
-            skillTime.rectTransform.Place(new Vector2(0, 0), new Vector2(186, 26), new Vector2(60, 16), new Vector2(1, 0));
+            skillTime.rectTransform.Place(new Vector2(0, 0), new Vector2(128, 26), new Vector2(40, 16), new Vector2(1, 0));
             skillBar = new Ui.Bar(vitals, new Color(1, 1, 1, 0.15f), Palette.Amber);
-            skillBar.Root.Place(new Vector2(0, 0), new Vector2(18, 16), new Vector2(168, 3), new Vector2(0, 0));
-            dashLabel = Mono(vitals, "Shift  衝刺", 15, Palette.Bone);
-            dashLabel.rectTransform.Place(new Vector2(0, 0), new Vector2(206, 26), new Vector2(110, 16), new Vector2(0, 0));
-            dashTime = Mono(vitals, "", 15, Palette.Hex("c9c5bb"));
+            skillBar.Root.Place(new Vector2(0, 0), new Vector2(18, 16), new Vector2(110, 3), new Vector2(0, 0));
+            dashLabel = Mono(vitals, "Shift  衝刺", 14, Palette.Bone);
+            dashLabel.rectTransform.Place(new Vector2(0, 0), new Vector2(140, 26), new Vector2(80, 16), new Vector2(0, 0));
+            dashTime = Mono(vitals, "", 13, Palette.Hex("c9c5bb"));
             dashTime.alignment = TextAnchor.LowerRight;
-            dashTime.rectTransform.Place(new Vector2(0, 0), new Vector2(374, 26), new Vector2(60, 16), new Vector2(1, 0));
+            dashTime.rectTransform.Place(new Vector2(0, 0), new Vector2(250, 26), new Vector2(40, 16), new Vector2(1, 0));
             dashBar = new Ui.Bar(vitals, new Color(1, 1, 1, 0.15f), Palette.Hex("82aaff"));
-            dashBar.Root.Place(new Vector2(0, 0), new Vector2(206, 16), new Vector2(168, 3), new Vector2(0, 0));
+            dashBar.Root.Place(new Vector2(0, 0), new Vector2(140, 16), new Vector2(110, 3), new Vector2(0, 0));
+            ultLabel = Mono(vitals, "X  龍捲風", 14, Palette.Bone);
+            ultLabel.rectTransform.Place(new Vector2(0, 0), new Vector2(262, 26), new Vector2(80, 16), new Vector2(0, 0));
+            ultTime = Mono(vitals, "", 13, Palette.Hex("c9c5bb"));
+            ultTime.alignment = TextAnchor.LowerRight;
+            ultTime.rectTransform.Place(new Vector2(0, 0), new Vector2(374, 26), new Vector2(40, 16), new Vector2(1, 0));
+            ultBar = new Ui.Bar(vitals, new Color(1, 1, 1, 0.15f), Palette.Hex("8ee6d0"));
+            ultBar.Root.Place(new Vector2(0, 0), new Vector2(262, 16), new Vector2(112, 3), new Vector2(0, 0));
 
             // ---- bottom-right weapon panel
             var weapon = Panel(root, new Vector2(1, 0), new Vector2(-28, 24), new Vector2(330, 132), new Vector2(1, 0), Palette.Amber);
@@ -460,7 +468,12 @@ namespace RiftWard.Client
             return disc = Sprite.Create(tex, new Rect(0, 0, n, n), new Vector2(0.5f, 0.5f));
         }
 
-        public void Announce(string text) { banner.text = text; bannerTimer = 2.2f; }
+        /// PvP kill lines ("\u2694A  擊殺  B") go to the kill feed; everything else is the centre banner.
+        public void Announce(string text)
+        {
+            if (text.StartsWith("\u2694")) { AddFeed(text.Substring(1), Palette.Danger); return; }
+            banner.text = text; bannerTimer = 2.2f;
+        }
 
         public void ResetTransient()
         {
@@ -544,6 +557,7 @@ namespace RiftWard.Client
         {
             Palette.Bone, new Color(0.45f, 0.85f, 1f), new Color(0.72f, 0.58f, 1f), new Color(0.6f, 1f, 0.8f), new Color(1f, 0.82f, 0.4f),
             new Color(1f, 0.6f, 0.35f), new Color(0.6f, 0.8f, 1f), new Color(1f, 0.72f, 0.3f), new Color(1f, 0.55f, 0.3f),
+            new Color(0.56f, 0.9f, 0.82f),
         };
         int skillNumbersFrame = -1, skillNumbersThisFrame;
 
@@ -671,7 +685,8 @@ namespace RiftWard.Client
             bool bossShown = bossRoot.gameObject.activeSelf;
             toastPill.anchoredPosition = new Vector2(0, top ? (bossShown ? -142 : -84) : 150);
 
-            region.text = Defs.Regions[sim.Region].Name;
+            region.text = sim.Pvp ? "PvP · Free For All" : Defs.Regions[sim.Region].Name;
+            if (sim.Pvp && tierBox.gameObject.activeSelf) tierBox.gameObject.SetActive(false);   // no difficulty in PvP
             if (Changed(tierTag, sim.Difficulty * 100 + sim.Region))
             {
                 var tier = Defs.Difficulty(sim.Difficulty);
@@ -683,13 +698,31 @@ namespace RiftWard.Client
                 outline.effectColor = tier.Accent; outline.effectDistance = new Vector2(1, -1);
                 tierBox.anchoredPosition = new Vector2(40 + region.preferredWidth + 10, -29);
             }
-            if (Changed(wave, sim.Wave)) wave.text = sim.Endless ? $"無盡 · 第 {sim.Wave} 波" : $"第 {sim.Wave} 波  / {Defs.WavesPerMission}";
-            if (Changed(stats, ((long)sim.Enemies.Count << 42) | ((long)sim.Kills << 21) | (long)(int)sim.Elapsed))
-                stats.text = $"剩餘 {sim.Enemies.Count:00}    擊破 {sim.Kills:00}    {(int)sim.Elapsed / 60:00}:{(int)sim.Elapsed % 60:00}";
+            if (sim.Pvp)
+            {
+                // PvP: time left, your score and your place.
+                int left = Mathf.CeilToInt(sim.PvpTimeLeft);
+                if (Changed(wave, 1000000 + left)) wave.text = $"剩餘  {left / 60}:{left % 60:00}";
+                wave.color = left <= 30 ? Palette.Danger : Palette.Bone;
+                var order = sim.Actors.Values.OrderByDescending(x => x.StatKills).ThenBy(x => x.StatDowns).ToList();
+                int place = local == null ? 0 : order.FindIndex(x => x.Id == local.Id) + 1;
+                // The first frames after deploying can arrive before this player's own actor does.
+                if (local != null && Changed(stats, ((long)local.StatKills << 42) | ((long)local.StatDowns << 21) | (long)(place * 16 + order.Count)))
+                    stats.text = $"擊殺 {local.StatKills}    死亡 {local.StatDowns}    第 {place} / {order.Count} 名";
+            }
+            else
+            {
+                wave.color = Palette.Bone;
+                if (Changed(wave, sim.Wave)) wave.text = sim.Endless ? $"無盡 · 第 {sim.Wave} 波" : $"第 {sim.Wave} 波  / {Defs.WavesPerMission}";
+                if (Changed(stats, ((long)sim.Enemies.Count << 42) | ((long)sim.Kills << 21) | (long)(int)sim.Elapsed))
+                    stats.text = $"剩餘 {sim.Enemies.Count:00}    擊破 {sim.Kills:00}    {(int)sim.Elapsed / 60:00}:{(int)sim.Elapsed % 60:00}";
+            }
             if (Changed(level, sim.Level)) level.text = $"LV {sim.Level:00}";
             if (Changed(xpText, ((long)sim.Xp << 42) | ((long)sim.XpNeed << 21) | (long)Mathf.RoundToInt(sim.LevelScale * 100)))
                 xpText.text = $"{sim.Xp} / {sim.XpNeed} XP · 敵人 ×{sim.LevelScale:0.00}";
             xpBar.Value = sim.XpNeed > 0 ? (float)sim.Xp / sim.XpNeed : 0;
+            // PvP has no in-mission levels: the XP strip is hidden.
+            xpBar.Root.gameObject.SetActive(!sim.Pvp); level.enabled = !sim.Pvp; xpText.enabled = !sim.Pvp;
 
             Enemy boss = null;
             foreach (var e in sim.Enemies.Values) if (e.Boss) { boss = e; break; }
@@ -773,6 +806,9 @@ namespace RiftWard.Client
                 dashBar.Value = 1f - Mathf.Clamp01(local.DashCooldown / Defs.DashCooldown);
                 if (Changed(dashTime, local.DashCooldown <= 0 ? -1 : Mathf.RoundToInt(local.DashCooldown * 10))) dashTime.text = local.DashCooldown <= 0 ? "就緒" : $"{local.DashCooldown:0.0}s";
                 dashTime.color = local.DashCooldown <= 0 ? Palette.Hex("82aaff") : Palette.Hex("c9c5bb");
+                ultBar.Value = 1f - Mathf.Clamp01(local.UltCooldown / Defs.UltCooldown);
+                if (Changed(ultTime, local.UltCooldown <= 0 ? -1 : Mathf.CeilToInt(local.UltCooldown))) ultTime.text = local.UltCooldown <= 0 ? "就緒" : $"{Mathf.CeilToInt(local.UltCooldown)}s";
+                ultTime.color = local.UltCooldown <= 0 ? Palette.Hex("8ee6d0") : Palette.Hex("c9c5bb");
 
                 var kit = local.Loadout.Equipped;
                 for (int i = 0; i < 2; i++)
@@ -815,7 +851,8 @@ namespace RiftWard.Client
                         : $"{Bindings.Name(Bindings.Action.Reload)} 換彈  ·  右鍵 瞄準  ·  {Bindings.Name(Bindings.Action.Inspect)} 檢視  ·  {Bindings.Name(Bindings.Action.View)} {(thirdPerson ? "第三人稱" : "第一人稱")}  ·  Esc 選單";
                 hintPlate.sizeDelta = new Vector2(hint.preferredWidth + 20f, 22f);   // the plate hugs the text
                 revive.text = "";
-                if (!local.Alive && sim.Actors.Count > 1)
+                if (sim.Pvp) { if (!local.Alive) revive.text = $"你被擊殺了 · {Mathf.CeilToInt(local.RespawnTimer)} 秒後復活"; }
+                else if (!local.Alive && sim.Actors.Count > 1)
                     revive.text = $"你已倒地 · 等待隊友按住 {Bindings.Name(Bindings.Action.Interact)} 救援  {Mathf.RoundToInt(100 * local.Revive / Defs.ReviveTime)}%"
                         + (Spectating != null ? $"\n旁觀中：{Spectating}  ·  左鍵切換隊友" : "");
                 else

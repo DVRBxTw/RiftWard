@@ -45,8 +45,22 @@ namespace RiftWard.Sim
 
         /// cleared[region] is the highest tier cleared there (-1 = none).
         /// 無盡模式 rides on the difficulty value sent through lobby / deploy messages as a flag bit.
-        public const int EndlessFlag = 0x100;
+        public const int EndlessFlag = 0x100, PvpFlag = 0x200;
         public static int PackTier(int tier, bool endless) => tier | (endless ? EndlessFlag : 0);
+        public static bool IsPvp(int packed) => (packed & PvpFlag) != 0;
+
+        /// PvP (Free For All): everyone fights everyone for PvpDuration seconds on the 翠風草原 arena; most kills wins
+        /// (fewer deaths breaks a tie). Stats are normalised: 普通 weapons at +0, no gear, talents or in-mission upgrades.
+        /// The dead come back after PvpRespawn seconds at the spawn point farthest from everyone else.
+        public const float PvpDuration = 300f, PvpRespawn = 3f, PvpHp = 150f;
+        public const int PvpMaxPlayers = 4, PvpMinPlayers = 2;
+        /// Auto queue: a match starts once PvpMaxPlayers are waiting, or PvpQueueWait seconds after the second joined.
+        public const float PvpQueueWait = 30f;
+        public static readonly Vector3[] PvpSpawns =
+        {
+            new Vector3(-15, 0, -15), new Vector3(15, 0, 15), new Vector3(15, 0, -15), new Vector3(-15, 0, 15),
+            new Vector3(0, 0, -17), new Vector3(0, 0, 17), new Vector3(-17, 0, 0), new Vector3(17, 0, 0),
+        };
         public static int TierOf(int packed) => packed & 0xff;
         public static bool IsEndless(int packed) => (packed & EndlessFlag) != 0;
         /// Endless opens in a region once it has been cleared on any difficulty.
@@ -60,7 +74,7 @@ namespace RiftWard.Sim
         /// XP needed to go from this account level to the next; mirrors level_for() in server/service.py.
         public static int AccountLevelNeed(int level) => 100 + 50 * level;
 
-        public const string Version = "0.7.40-unity.1";
+        public const string Version = "0.8.0-unity.1";
 
         // Player movement
         public const float EyeHeight = 1.65f;
@@ -245,7 +259,7 @@ namespace RiftWard.Sim
             new BuffDef("吸能模組", "每次擊殺恢復 {0} 生命（回復速度有上限）", 4),
             new BuffDef("爆裂彈頭", "擊殺時爆炸，造成 {0} 範圍傷害", 35),
             new BuffDef("僚機無人機", "無人機 +{0} 架，自動射擊附近敵人", 1),
-            new BuffDef("無人機火控", "無人機傷害 +{0}%", 35),
+            new BuffDef("無人機火控", "無人機傷害 +{0}%", 25),
             new BuffDef("無人機超頻", "無人機攻擊冷卻 -{0}%", 15),
             new BuffDef("肩載電漿砲", "電漿砲定時轟擊敵群；已裝備則傷害 +{0}%", 25),
             new BuffDef("電漿冷卻", "電漿砲冷卻 -{0}%", 15),
@@ -261,8 +275,17 @@ namespace RiftWard.Sim
         public const float ShieldPlateShare = 0.6f;
         /// A teammate idle this long (no movement, aim, fire or keys) is played by the computer until they return.
         /// What dealt a hit, for the on-screen skill damage numbers and the per-skill damage totals.
-        public const int SrcWeapon = 0, SrcDrone = 1, SrcPlasma = 2, SrcOrbit = 3, SrcMine = 4, SrcMissile = 5, SrcLightning = 6, SrcGrenade = 7, SrcBurst = 8;
-        public static readonly string[] SourceNames = { "武器", "僚機無人機", "肩載電漿砲", "旋轉刃盾", "感應地雷", "追蹤飛彈", "閃電鏈", "手榴彈", "爆裂彈頭" };
+        public const int SrcWeapon = 0, SrcDrone = 1, SrcPlasma = 2, SrcOrbit = 3, SrcMine = 4, SrcMissile = 5, SrcLightning = 6, SrcGrenade = 7, SrcBurst = 8, SrcTornado = 9;
+        public static readonly string[] SourceNames = { "武器", "僚機無人機", "肩載電漿砲", "旋轉刃盾", "感應地雷", "追蹤飛彈", "閃電鏈", "手榴彈", "爆裂彈頭", "龍捲風" };
+
+        /// 風之尾流: a dash leaves a wind wake along its path for WakeLife seconds; enemies that cross it move at
+        /// WakeSlow of their speed for WakeSlowTime seconds (refreshed while they stay in it).
+        public const float WakeLife = 3f, WakeRadius = 1.3f, WakeSlow = 0.45f, WakeSlowTime = 1.2f;
+        /// 大招 · 龍捲風 (X): a tornado heads for the nearest enemy (within UltRange), sweeping up everything it touches:
+        /// each enemy takes TornadoDamage once and is thrown TornadoLift metres up for TornadoAirTime seconds (no moving,
+        /// no shooting). Bosses take the damage but stay on the ground.
+        public const float UltCooldown = 30f, UltRange = 30f, TornadoSpeed = 7.5f, TornadoLife = 4f, TornadoRadius = 2.4f,
+            TornadoDamage = 110f, TornadoLift = 3.2f, TornadoAirTime = 1.4f;
         public const float AfkTakeover = 60f;
         /// Anti-burst: no single tick of damage takes more than HitCap of max life, and recent damage (a bucket that
         /// drains BurstDrain of max life per second) never exceeds BurstCap. From full life a player therefore loses
@@ -302,11 +325,16 @@ namespace RiftWard.Sim
         public static int BladeCount(int level) => level <= 0 ? 0 : Mathf.Min(5, 1 + level);
         public const int MaxDrones = 4;
         public const float GadgetSupport = 0.35f;
-        public const float DroneInterval = 1.1f, DroneDamage = 14f, DroneRange = 24f;
+        /// 無人機: a stronger base hit (was 14) so a few drones matter on 噩夢; each damage pick and the evolution add less
+        /// than before (+35% → +25%, x2 → x1.6), so a maxed swarm stays about where it was.
+        public const float DroneInterval = 1.1f, DroneDamage = 26f, DroneRange = 24f, DronePick = 0.25f, DroneEvolvedMult = 1.6f;
         /// 電漿砲 only takes half of the player's own damage bonus (it used to take all of it on top of its own
         /// picks, and a maxed one wiped whole 困難 waves in one salvo).
         public const float PlasmaOwnerDamageShare = 0.5f;
-        public const float PlasmaInterval = 6f, PlasmaDamage = 50f, PlasmaRadius = 4.2f, PlasmaRange = 30f;
+        /// 追蹤飛彈: damage per missile (was 30 + 8 x level), blast radius (was 2.2) and salvo interval.
+        public static float MissileDamage(int level) => 45f + 12f * level;
+        public const float MissileRadius = 3f, MissileInterval = 2.6f;
+        public const float PlasmaInterval = 6f, PlasmaDamage = 40f, PlasmaRadius = 3.6f, PlasmaRange = 30f;
 
         /// Buff codes pack the buff index and its rarity tier: code = index + 100 * tier.
         public static int BuffIndex(int code) => code % 100;

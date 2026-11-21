@@ -40,6 +40,8 @@ namespace RiftWard.Client
             public List<int> Friends = new List<int>();
             /// Send times of recent chat messages, for the rate limit.
             public readonly Queue<float> ChatTimes = new Queue<float>();
+            /// When this player joined the PvP queue (-1 = not queued).
+            public float QueuedAt = -1f;
             public int AccountId => Profile?.Id ?? 0;
             public string ChatName => Profile == null ? "" : Profile.Username;
         }
@@ -74,11 +76,16 @@ namespace RiftWard.Client
             public bool ForceFull = true;
             /// Members who already left the result sheet; the room returns to the lobby once all have.
             public readonly HashSet<int> Home = new HashSet<int>();
+            /// The running (or last) match is a PvP Free For All.
+            public bool Pvp;
         }
 
         const int MaxPlayers = 64, RoomSize = 4;
         const string CodeChars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
         readonly Dictionary<string, Room> rooms = new Dictionary<string, Room>();
+        /// PvP matchmaking queue (connection ids, oldest first).
+        readonly List<int> pvpQueue = new List<int>();
+        float pvpStatusTimer;
         readonly System.Random rng = new System.Random();
         TcpListener listener;
         readonly ConcurrentQueue<TcpClient> accepted = new ConcurrentQueue<TcpClient>();
@@ -173,6 +180,7 @@ namespace RiftWard.Client
                 ForgetGhost(gp);
             }
             foreach (var room in rooms.Values.ToList()) TickRoom(room);
+            TickPvpQueue();
             presenceTimer += Time.fixedDeltaTime;
             if (presenceTimer >= 2f)
             {
@@ -219,7 +227,7 @@ namespace RiftWard.Client
                     sim.Inputs[kv.Key] = new PlayerInput { Seq = sim.Inputs.TryGetValue(kv.Key, out var old) ? old.Seq : 0, Yaw = actor.Yaw, Slot = actor.Slot };
             // 掛機代打: idle for Defs.AfkTakeover seconds in a team mission, the computer plays for them; its level-up
             // picks are random.
-            if (room.Members.Count > 1)
+            if (room.Members.Count > 1 && !room.Pvp)
             {
                 var idle = new HashSet<int>(MembersOf(room).Where(kv => kv.Value.Bot).Select(kv => kv.Key));
                 foreach (var kv in MembersOf(room))
@@ -547,8 +555,30 @@ namespace RiftWard.Client
                             SendLobby(room);
                         }
                         break;
+                    case Msg.PvpQueue:
+                        bool join = r.ReadBoolean();
+                        pvpQueue.Remove(id);
+                        p.QueuedAt = -1f;
+                        if (join)
+                        {
+                            if (room != null && room.Mode == "playing") { Notice(p, "請先結束目前的任務再開始配對"); break; }
+                            LeaveRoom(p, false);
+                            pvpQueue.Add(id);
+                            p.QueuedAt = clock;
+                            SendSoloLobby(p);
+                        }
+                        SendPvpStatus(p);
+                        break;
                     case Msg.RequestDeploy:
                         int target = r.ReadInt32(), targetTier = r.ReadInt32();
+                        if (Defs.IsPvp(targetTier))
+                        {
+                            // Custom-room PvP: the leader starts a Free For All with everyone in the room.
+                            if (room == null || id != room.Leader || room.Mode != "lobby") { if (room == null) Notice(p, $"PvP 自訂房至少需要 {Defs.PvpMinPlayers} 人：先建立房間並邀請朋友，或使用自動配對"); break; }
+                            if (room.Members.Count < Defs.PvpMinPlayers) { Notice(p, $"PvP 至少需要 {Defs.PvpMinPlayers} 人"); break; }
+                            StartPvp(room);
+                            break;
+                        }
                         if (room == null) room = CreateRoom(p, true);
                         if (id != room.Leader) break;
                         if (room.Mode == "lobby") StartMission(room, target, targetTier);
@@ -905,6 +935,7 @@ namespace RiftWard.Client
             }
             room.Selected = region;
             room.Difficulty = Defs.PackTier(difficulty, endless);
+            room.Pvp = false;
             var sim = room.Sim = new GameSim();
             foreach (var kv in ready) AddToSim(sim, kv.Key, kv.Value);
             sim.StartMission(region, difficulty);
@@ -918,6 +949,128 @@ namespace RiftWard.Client
             Broadcast(room, Protocol.Frame(Msg.Deploy, w => { w.Write(region); w.Write(Defs.PackTier(difficulty, endless)); }));
             SendLobby(room);
             Debug.Log($"MISSION_START room={room.Code} region={region} difficulty={difficulty} players={ready.Count}");
+        }
+
+        // ------------------------------------------------------------ PvP
+
+        void SendPvpStatus(Player p)
+        {
+            float waited = p.QueuedAt < 0 ? 0f : clock - p.QueuedAt;
+            p.Conn.Send(Protocol.Frame(Msg.PvpStatus, w => { w.Write(p.QueuedAt >= 0); w.Write(pvpQueue.Count); w.Write(waited); }));
+        }
+
+        /// Matchmaking: drop players who left or went into a mission; start a match once PvpMaxPlayers wait, or
+        /// PvpQueueWait seconds after the second player joined.
+        void TickPvpQueue()
+        {
+            pvpQueue.RemoveAll(id => !players.TryGetValue(id, out var q) || q.Profile == null || q.Room != null && q.Room.Mode == "playing");
+            if (pvpQueue.Count >= Defs.PvpMinPlayers)
+            {
+                float secondJoined = players[pvpQueue[1]].QueuedAt;
+                if (pvpQueue.Count >= Defs.PvpMaxPlayers || clock - secondJoined >= Defs.PvpQueueWait)
+                {
+                    var picked = pvpQueue.Take(Defs.PvpMaxPlayers).ToList();
+                    pvpQueue.RemoveRange(0, picked.Count);
+                    var first = players[picked[0]];
+                    var room = CreateRoom(first, true);
+                    foreach (var pid in picked.Skip(1))
+                    {
+                        var q = players[pid];
+                        LeaveRoom(q, false);
+                        room.Members.Add(pid);
+                        q.Room = room;
+                    }
+                    foreach (var pid in picked) { players[pid].QueuedAt = -1f; SendPvpStatus(players[pid]); }
+                    Debug.Log($"PVP_MATCH room={room.Code} players={picked.Count}");
+                    StartPvp(room);
+                }
+            }
+            pvpStatusTimer += Time.fixedDeltaTime;
+            if (pvpStatusTimer >= 1f)
+            {
+                pvpStatusTimer = 0;
+                foreach (var id in pvpQueue) if (players.TryGetValue(id, out var q)) SendPvpStatus(q);
+            }
+        }
+
+        /// A Free For All with everyone in the room, stats normalised (see Defs.PvpDuration).
+        void StartPvp(Room room)
+        {
+            var ready = MembersOf(room).Where(kv => kv.Value.Profile != null).ToList();
+            if (ready.Count < Defs.PvpMinPlayers) return;
+            var sim = room.Sim = new GameSim();
+            foreach (var kv in ready)
+            {
+                var p = kv.Value;
+                // Normalised: the player's two equipped guns, 普通 and +0; no gear, talents or admin powers.
+                var lo = new Loadout { Owned = new List<string>(p.Profile.Loadout.Owned), Equipped = new List<string>(p.Profile.Loadout.Equipped) };
+                sim.AddActor(kv.Key, lo, false).Name = p.Profile.Username;
+                p.OfferSent = null; p.LastInput = clock; p.LastActive = clock; p.Bot = false; p.ReceivedMissionInput = false;
+            }
+            sim.StartPvp();
+            if (testFast) sim.PvpTimeLeft = 6f;   // integration test: a short match
+            room.Pvp = true;
+            room.Selected = 0;
+            room.Difficulty = 0;
+            room.Mode = "playing";
+            room.Finishing = false;
+            room.ForceFull = true;
+            room.SnapshotCount = 0;
+            room.FastWave = -1;
+            Broadcast(room, Protocol.Frame(Msg.Deploy, w => { w.Write(0); w.Write(Defs.PvpFlag); }));
+            SendLobby(room);
+            Debug.Log($"PVP_START room={room.Code} players={ready.Count}");
+        }
+
+        System.Collections.IEnumerator FinishPvp(Room room)
+        {
+            room.Finishing = true;
+            var sim = room.Sim;
+            var standings = sim.PvpStandings();
+            var team = standings.Select(a => new Menus.Contribution
+            {
+                Id = a.Id, Name = a.Name ?? "", Kills = a.StatKills, Damage = Mathf.RoundToInt(a.StatDamage), Shots = a.StatShots, Hits = a.StatHits,
+                Headshots = a.StatHeadshots, Downs = a.StatDowns,
+            }).ToList();
+            Broadcast(room, Protocol.Frame(Msg.Snapshot, w => Protocol.WriteSnapshot(w, sim)));
+            var gold = new Dictionary<int, int>();
+            foreach (var kv in MembersOf(room).Where(kv => kv.Value.Profile != null).ToList())
+            {
+                var p = kv.Value;
+                int place = standings.FindIndex(a => a.Id == kv.Key);
+                if (place < 0) continue;
+                var me = standings[place];
+                bool done = false;
+                api.Post("/api/server/pvp", new Dictionary<string, object>
+                {
+                    ["account_id"] = p.Profile.Id, ["place"] = place, ["players"] = standings.Count, ["kills"] = me.StatKills, ["deaths"] = me.StatDowns,
+                }, result =>
+                {
+                    if (result.Bool("ok")) { p.Profile = Profile.From(result.Obj("profile")) ?? p.Profile; gold[kv.Key] = result.Int("gold"); }
+                    done = true;
+                });
+                while (!done) yield return null;
+                p.Conn.Send(Protocol.Frame(Msg.ProfileSync));
+            }
+            room.Mode = "result";
+            room.Home.Clear();
+            foreach (var kv in MembersOf(room).Where(kv => kv.Value.Profile != null))
+            {
+                int place = standings.FindIndex(a => a.Id == kv.Key);
+                if (place < 0) continue;
+                var me = standings[place];
+                int g = gold.TryGetValue(kv.Key, out var v) ? v : 0;
+                kv.Value.Conn.Send(Protocol.Frame(Msg.Finish, w =>
+                {
+                    // PvP: "grade" carries the placement (1-based); kills and the record are this player's own.
+                    w.Write(true); w.Write(0); w.Write(me.StatKills); w.Write(sim.Elapsed); w.Write(g); w.Write((place + 1).ToString());
+                    w.Write(me.StatKills); w.Write(me.StatHeadshots); w.Write(me.StatShots); w.Write(me.StatHits);
+                    w.Write(Defs.PvpFlag);
+                    Menus.Contribution.Write(w, team);
+                }));
+            }
+            SendLobby(room);
+            Debug.Log($"PVP_RESULT room={room.Code} winner={standings.FirstOrDefault()?.Name}");
         }
 
         void AddToSim(GameSim sim, int id, Player p)
@@ -962,6 +1115,7 @@ namespace RiftWard.Client
 
         System.Collections.IEnumerator Finish(Room room)
         {
+            if (room.Pvp) { yield return FinishPvp(room); yield break; }
             room.Finishing = true;
             var sim = room.Sim;
             bool success = sim.State == MissionState.Victory;

@@ -56,6 +56,110 @@ namespace RiftWard.Client
 
         /// Top navigation shared by the lobby pages: brand, 關卡 / 商城 / 裝備 tabs, resources and account links.
         /// Returns the content area below the bar.
+        // ------------------------------------------------------------ PvP
+
+        List<Dictionary<string, object>> pvpTop;
+        Dictionary<string, object> pvpMe;
+        string pvpResets = "";
+
+        /// PvP (Free For All): the rules, auto matchmaking or a custom-room start, and this week's leaderboard.
+        public void ShowPvp(bool fetch = true)
+        {
+            var r = Begin("pvp");
+            var pad = Page(r, "home");
+            pad.offsetMin = new Vector2(48, 36); pad.offsetMax = new Vector2(-48, -NavHeight - 28);
+
+            var left = Ui.Box(pad, Palette.Sheet, "Pvp").rectTransform;
+            left.anchorMin = new Vector2(0, 0); left.anchorMax = new Vector2(0.5f, 1); left.offsetMin = Vector2.zero; left.offsetMax = new Vector2(-12, 0);
+            TopRule(left, Palette.Danger);
+            var s = Ui.VStack(left, 10);
+            s.Fill();
+            s.GetComponent<VerticalLayoutGroup>().padding = new RectOffset(32, 32, 26, 24);
+            Caps(s, "PVP  ·  FREE FOR ALL", Palette.Danger).Sized(16);
+            Ui.Label(s, "PvP 對戰", 34, Palette.Bone, TextAnchor.UpperLeft, true).Sized(44);
+            Ui.Label(s, $"最多 {Defs.PvpMaxPlayers} 人各自為戰，{(int)Defs.PvpDuration / 60} 分鐘內擊殺最多的人獲勝（同分比死亡數）。陣亡 {Defs.PvpRespawn:0} 秒後在遠離敵人的位置復活。", 14, Palette.Hex("d6d1c6")).Sized(44);
+            Ui.Label(s, "公平對戰：所有人使用普通稀有度、未強化的出擊武器，裝備、天賦與本場升級都不生效。手榴彈、衝刺尾流與龍捲風大招照常可用。", 13, Palette.Muted).Sized(40);
+            Ui.Label(s, "獎勵：依名次獲得少量金幣（4 人局 第 1 名 250 G），並列入每週 PvP 排行榜。", 13, Palette.Amber).Sized(22);
+            Ui.Rect(s, "Gap").Sized(6);
+            Widgets.Section(s, "自動配對").Sized(26);
+            if (app.PvpQueued)
+            {
+                int waited = Mathf.FloorToInt(app.PvpWaited);
+                string need = app.PvpWaiting >= Defs.PvpMinPlayers ? $"人數已足夠，{Mathf.Max(0, (int)Defs.PvpQueueWait - waited)} 秒內開始（滿 {Defs.PvpMaxPlayers} 人立即開始）" : "等待其他玩家加入…";
+                Ui.Label(s, $"配對中  {waited / 60}:{waited % 60:00}  ·  佇列 {app.PvpWaiting} 人\n{need}", 15, Palette.Bone).Sized(44);
+                Ui.Button(s, "取消配對", () => app.QueuePvp(false), 17).Sized(50);
+            }
+            else
+            {
+                Ui.Label(s, "與線上其他玩家配對。滿 4 人立即開始；有 2 人以上時最多等待 30 秒。", 13, Palette.Muted).Sized(22);
+                var go = PrimaryButton(s, "開始配對", () => app.QueuePvp(true), 18);
+                go.Sized(54);
+                go.interactable = app.Net.Welcomed && !(app.InRoom && app.PartySize > 1);
+                if (app.InRoom && app.PartySize > 1) Ui.Label(s, "你在多人房間中：可以直接用下方「房內開打」，或先離開房間再配對。", 12, Palette.Muted).Sized(18);
+            }
+            Widgets.Section(s, "自訂房").Sized(26);
+            if (app.InRoom)
+            {
+                bool can = app.IsLeader && app.PartySize >= Defs.PvpMinPlayers;
+                Ui.Label(s, $"房號 {app.RoomCode} · {app.PartySize} / {Defs.PvpMaxPlayers} 人 · {(app.IsLeader ? "你是隊長" : "等待隊長開始")}", 14, Palette.Bone).Sized(22);
+                var start = Ui.Button(s, can ? "房內開打 PvP" : app.IsLeader ? $"至少需要 {Defs.PvpMinPlayers} 人" : "只有隊長可以開始", app.StartPvpRoom, 16, Palette.Danger, null, Palette.Danger);
+                start.Sized(46);
+                start.interactable = can;
+            }
+            else Ui.Label(s, "在「關卡」頁建立或加入房間、邀請朋友，回到這裡由隊長按「房內開打」。", 13, Palette.Muted).Sized(36);
+            Ui.Rect(s, "Spacer").gameObject.AddComponent<LayoutElement>().flexibleHeight = 1;
+            Ui.Button(s, "←  返回關卡", app.ShowHome, 14, Palette.Muted).Sized(36);
+
+            // Right: this week's leaderboard.
+            var right = Ui.Box(pad, Palette.Sheet, "Board").rectTransform;
+            right.anchorMin = new Vector2(0.5f, 0); right.anchorMax = new Vector2(1, 1); right.offsetMin = new Vector2(12, 0); right.offsetMax = Vector2.zero;
+            TopRule(right, Palette.Amber);
+            var b = Ui.VStack(right, 6);
+            b.Fill();
+            b.GetComponent<VerticalLayoutGroup>().padding = new RectOffset(32, 32, 26, 24);
+            Caps(b, "WEEKLY LEADERBOARD", Palette.Amber).Sized(16);
+            Ui.Label(b, "每週 PvP 排行榜", 26, Palette.Bone, TextAnchor.UpperLeft, true).Sized(36);
+            Ui.Label(b, "依勝場排序，同分比擊殺。" + pvpResets, 13, Palette.Muted).Sized(20);
+            var head = Ui.Rect(b, "Head").Sized(24);
+            BoardRow(head, "名次", "玩家", "勝場", "擊殺", "死亡", "場次", Palette.Muted);
+            if (pvpTop == null) Ui.Label(b, "載入中…", 14, Palette.Muted).Sized(24);
+            else if (pvpTop.Count == 0) Ui.Label(b, "本週還沒有人完成 PvP 對戰，來當第一個！", 14, Palette.Muted).Sized(24);
+            else foreach (var e in pvpTop.Take(12))
+                    BoardRow(Ui.Rect(b, "Row").Sized(26), e.Int("rank").ToString(), e.Str("username"), e.Int("wins").ToString(), e.Int("kills").ToString(), e.Int("deaths").ToString(), e.Int("matches").ToString(),
+                        e.Str("username") == app.Profile?.Username ? Palette.Amber : e.Int("rank") <= 3 ? Palette.Bone : Palette.Hex("c9c5bb"));
+            Ui.Rect(b, "Spacer").gameObject.AddComponent<LayoutElement>().flexibleHeight = 1;
+            Ui.Box(b, Palette.Line, "Rule").Sized(1);
+            BoardRow(Ui.Rect(b, "Me").Sized(28), pvpMe != null ? pvpMe.Int("rank").ToString() : "—", "你", pvpMe?.Int("wins").ToString() ?? "0",
+                pvpMe?.Int("kills").ToString() ?? "0", pvpMe?.Int("deaths").ToString() ?? "0", pvpMe?.Int("matches").ToString() ?? "0", Palette.Amber);
+
+            if (fetch && app.Profile != null)
+                app.Api.Post("/api/pvp/leaderboard", null, result =>
+                {
+                    if (!result.Bool("ok")) return;
+                    pvpTop = (result.Arr("top") ?? new List<object>()).OfType<Dictionary<string, object>>().ToList();
+                    pvpMe = result.Obj("me");
+                    int left2 = result.Int("resets_in");
+                    pvpResets = left2 > 0 ? $"  {left2 / 86400} 天 {left2 % 86400 / 3600} 小時後重置。" : "";
+                    if (Mode == "pvp") ShowPvp(false);
+                });
+        }
+
+        /// Automated screenshots only: the PvP page with a sample leaderboard.
+        public void DemoPvp(List<Dictionary<string, object>> top, Dictionary<string, object> me) { pvpTop = top; pvpMe = me; pvpResets = "  3 天 5 小時後重置。"; ShowPvp(false); }
+
+        static void BoardRow(RectTransform row, string rank, string name, string wins, string kills, string deaths, string matches, Color color)
+        {
+            var cols = new[] { (rank, 0f, 0.1f, TextAnchor.MiddleLeft), (name, 0.1f, 0.52f, TextAnchor.MiddleLeft), (wins, 0.52f, 0.64f, TextAnchor.MiddleRight),
+                (kills, 0.64f, 0.76f, TextAnchor.MiddleRight), (deaths, 0.76f, 0.88f, TextAnchor.MiddleRight), (matches, 0.88f, 1f, TextAnchor.MiddleRight) };
+            foreach (var (text, x0, x1, align) in cols)
+            {
+                var t = Ui.Label(row, text, 14, color, align);
+                t.supportRichText = false;
+                t.rectTransform.anchorMin = new Vector2(x0, 0); t.rectTransform.anchorMax = new Vector2(x1, 1);
+                t.rectTransform.offsetMin = t.rectTransform.offsetMax = Vector2.zero;
+            }
+        }
+
         RectTransform Page(RectTransform r, string tab)
         {
             var p = app.Profile;
@@ -577,6 +681,31 @@ namespace RiftWard.Client
             var pass = Widgets.Input(stack, "8–72 個字元", true, 72).Sized(48);
             var confirmLabel = Caps(stack, "確認密碼").Sized(18);
             var confirm = Widgets.Input(stack, "再次輸入密碼", true, 72).Sized(48);
+            // Eye button in the password fields: shows or hides what was typed (both fields together).
+            bool showPassword = false;
+            var eyes = new List<Image>();
+            void PaintPasswords()
+            {
+                foreach (var f in new[] { pass, confirm })
+                {
+                    f.contentType = showPassword ? InputField.ContentType.Standard : InputField.ContentType.Password;
+                    f.ForceLabelUpdate();
+                }
+                foreach (var eye in eyes) eye.sprite = Icons.EyeSprite(showPassword);
+            }
+            foreach (var f in new[] { pass, confirm })
+            {
+                f.textComponent.rectTransform.offsetMax = new Vector2(-52, 0);
+                f.placeholder.rectTransform.offsetMax = new Vector2(-52, 0);
+                var eyeButton = Ui.Button(f.transform, "", () => { showPassword = !showPassword; PaintPasswords(); }, 13, Palette.Muted,
+                    new Color(0, 0, 0, 0), new Color(0, 0, 0, 0));
+                eyeButton.GetComponent<RectTransform>().Place(new Vector2(1, 0.5f), new Vector2(-6, 0), new Vector2(40, 40), new Vector2(1, 0.5f));
+                var icon = Icons.Eye(eyeButton.transform, 22, false);
+                icon.color = Palette.Muted;
+                icon.rectTransform.Place(new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(22, 22));
+                eyes.Add(icon);
+            }
+
             var status = Ui.Label(stack, notice, 14, Palette.Danger).Sized(36);
             Button submit = null, toggle = null;
             void Paint()
@@ -609,6 +738,16 @@ namespace RiftWard.Client
             }).Sized(52);
             toggle = Ui.Button(stack, "", () => { registering = !registering; status.text = ""; Paint(); }, 15).Sized(44);
             Caps(stack, "帳號伺服器  " + app.Api.BaseUrl).Sized(18);
+            // Leave the game from the sign-in screen too; it asks once, like the top bar's button.
+            Button quit = null;
+            float armedAt = -9f;
+            quit = Ui.Button(sheet, "離開遊戲", () =>
+            {
+                if (Time.unscaledTime - armedAt > 3f) { armedAt = Time.unscaledTime; quit.SetCaption("確定離開？"); quit.GetComponentInChildren<Text>().color = Palette.Danger; return; }
+                app.Quit();
+            }, 14, Palette.Muted, new Color(0, 0, 0, 0), new Color(0, 0, 0, 0));
+            quit.GetComponent<RectTransform>().Place(new Vector2(1, 1), new Vector2(-24, -22), new Vector2(100, 30), new Vector2(1, 1));
+            quit.gameObject.AddComponent<RevertCaption>().Arm(() => Time.unscaledTime - armedAt > 3f, "離開遊戲", Palette.Muted);
             Paint();
             if (lastUser != "") pass.ActivateInputField();
         }
@@ -844,7 +983,9 @@ namespace RiftWard.Client
             deploy.interactable = app.CanDeploy;
             Ui.DefaultButton = deploy;   // Enter deploys
             Ui.Rect(stack, "Gap").Sized(8);
-            Ui.Button(stack, chapter == 0 ? "故事與教學" : "第二章劇情回顧", () => { if (chapter == 0) ShowStory(0); else ShowPages(ChapterTwo, 0, "返回基地", app.ShowHome); }, 14, Palette.Muted).Sized(36);
+            var extras = Ui.HStack(stack, 8).Sized(36);
+            Ui.Button(extras, chapter == 0 ? "故事與教學" : "第二章劇情回顧", () => { if (chapter == 0) ShowStory(0); else ShowPages(ChapterTwo, 0, "返回基地", app.ShowHome); }, 14, Palette.Muted);
+            if (app.Net.Welcomed || PreviewRoom) Ui.Button(extras, "PvP 對戰  →", () => ShowPvp(), 14, Palette.Danger, null, Palette.Danger);
             if (app.Net.Welcomed || PreviewRoom)
             {
                 Ui.Rect(stack, "Gap").Sized(10);

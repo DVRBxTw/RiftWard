@@ -114,6 +114,15 @@ namespace RiftWard.Client
         }
 
         public void CreateRoom() { if (Net.Welcomed) Net.Send(Msg.CreateRoom); }
+
+        // ---- PvP (Free For All)
+        public bool PvpQueued { get; private set; }
+        public int PvpWaiting { get; private set; }
+        float pvpWaitedAt;
+        public float PvpWaited => PvpQueued ? Time.unscaledTime - pvpWaitedAt : 0f;
+        public void QueuePvp(bool join) { if (Net.Welcomed) Net.Send(Msg.PvpQueue, w => w.Write(join)); }
+        /// Custom room: the leader starts a Free For All with everyone in the room.
+        public void StartPvpRoom() { if (Net.Welcomed) Net.Send(Msg.RequestDeploy, w => { w.Write(0); w.Write(Defs.PvpFlag); }); }
         public void JoinRoom(string code) { if (Net.Welcomed && !string.IsNullOrWhiteSpace(code)) Net.Send(Msg.JoinRoom, w => w.Write(code.Trim().ToUpperInvariant())); }
         public void LeaveRoom() { if (Net.Welcomed) Net.Send(Msg.LeaveRoom); }
         int leaderId = -1, partySize, gamePort = Protocol.DefaultPort;
@@ -236,7 +245,7 @@ namespace RiftWard.Client
                     if (reconnecting) Reconnected(resumed);
                     Debug.Log("UNITY_CLIENT_WELCOME id=" + Net.LocalId);
                     if (!netTest) ShowWaitingFriendRequests();
-                    if (netTest) { JoinRoom("TEST"); SendChat(ChatChannel.World, "net-test hello " + Net.LocalId); }
+                    if (netTest) { if (TestSetting("RIFTWARD_TEST_PVP", 0) == 1) QueuePvp(true); else JoinRoom("TEST"); SendChat(ChatChannel.World, "net-test hello " + Net.LocalId); }
                     break;
                 case Msg.Lobby:
                     SelectedRegion = r.ReadInt32();
@@ -254,7 +263,7 @@ namespace RiftWard.Client
                     if (Screens.Mode == "home" || Screens.Mode == "connecting") ShowHome();
                     // A teammate dropped while the menu was open: now alone, reopen it so it really freezes the mission.
                     if (inNetMission && partySize <= 1 && Client.Menus.PauseOpenUnfrozen) { Client.Menus.ClosePause(); Client.Menus.OpenPause(); }
-                    if (netTest && leaderId == Net.LocalId && partySize >= TestSetting("RIFTWARD_TEST_PLAYERS", 2) && lobbyMode == "lobby" && !inNetMission && !testDone)
+                    if (netTest && TestSetting("RIFTWARD_TEST_PVP", 0) == 0 && leaderId == Net.LocalId && partySize >= TestSetting("RIFTWARD_TEST_PLAYERS", 2) && lobbyMode == "lobby" && !inNetMission && !testDone)
                         Net.Send(Msg.RequestDeploy, w => { w.Write(TestSetting("RIFTWARD_TEST_REGION", 0) + testRounds); w.Write(0); });
                     break;
                 case Msg.Deploy:
@@ -267,11 +276,14 @@ namespace RiftWard.Client
                     inNetMission = true;
                     Client.StartNetworked(region, difficulty, Net.LocalId, Net);
                     Client.Sim.Endless = Defs.IsEndless(packedTier);
+                    Client.Sim.Pvp = Defs.IsPvp(packedTier);
+                    if (Client.Sim.Pvp) { PvpQueued = false; Overlay.Toast("PvP 開始！5 分鐘內擊殺最多的人獲勝"); }
                     Chat.Show(true);
                     Overlay.HideInvite();
                     PushAdmin();
                     Debug.Log($"UNITY_CLIENT_DEPLOY region={region} difficulty={difficulty}");
-                    if (netTest) testPicks = 0;
+                    // Chat is live-only: say hello again once everyone is in, so the last client to connect hears the others.
+                    if (netTest) { testPicks = 0; SendChat(ChatChannel.World, "net-test deploy " + Net.LocalId); }
                     break;
                 case Msg.Snapshot: Client.ApplySnapshot(r); break;
                 case Msg.Events: Client.ApplyEvents(r); break;
@@ -301,6 +313,15 @@ namespace RiftWard.Client
                     var record = new[] { r.ReadInt32(), r.ReadInt32(), r.ReadInt32(), r.ReadInt32() };
                     int finishedTier = r.ReadInt32();
                     var team = Menus.Contribution.Read(r);
+                    if (Defs.IsPvp(finishedTier))
+                    {
+                        Client.MarkFinished(true);
+                        int.TryParse(grade, out int pvpPlace);
+                        Client.Menus.ShowPvpResult(pvpPlace, team.Count, record, team.Find(c => c.Id == Net.LocalId)?.Downs ?? 0, gold, (Profile?.Gold ?? 0) + gold, team);
+                        RefreshMe();
+                        if (netTest) StartCoroutine(TestPvpFinish(pvpPlace, team.Count, gold));
+                        break;
+                    }
                     Client.MarkFinished(success);
                     int finishedWave = Client.Sim?.Wave ?? 0;
                     var progress = Profile == null ? null : new Menus.ResultProgress
@@ -317,6 +338,11 @@ namespace RiftWard.Client
                     if (netTest) StartCoroutine(TestFinish(success, gold));
                     break;
                 case Msg.ProfileSync: RefreshMe(); break;
+                case Msg.PvpStatus:
+                    PvpQueued = r.ReadBoolean(); PvpWaiting = r.ReadInt32();
+                    pvpWaitedAt = Time.unscaledTime - r.ReadSingle();
+                    if (Screens.Mode == "pvp") Screens.ShowPvp(false);
+                    break;
                 case Msg.Notice:
                     homeStatus = r.ReadString();
                     if (Screens.Mode == "home") ShowHome();
@@ -377,6 +403,17 @@ namespace RiftWard.Client
         bool testDone;
 
         static int TestSetting(string name, int fallback) => int.TryParse(Environment.GetEnvironmentVariable(name), out var n) ? n : fallback;
+
+        IEnumerator TestPvpFinish(int place, int players, int gold)
+        {
+            yield return new WaitForSecondsRealtime(1.5f);
+            Debug.Log(place >= 1 && place <= players && players == TestSetting("RIFTWARD_TEST_PLAYERS", 2) && gold > 0
+                ? $"UNITY_CLIENT_PVP_PASS place={place} players={players} gold={gold}" : $"UNITY_CLIENT_FAIL pvp place={place} players={players} gold={gold} chats={testChats}");
+            testDone = true;
+            Net.Send(Msg.RequestHome);
+            yield return new WaitForSecondsRealtime(10f);
+            Application.Quit(1);
+        }
 
         IEnumerator TestFinish(bool success, int gold)
         {
@@ -851,6 +888,14 @@ namespace RiftWard.Client
             ShowHome();
             yield return Settle(0.8f);
             yield return Shot(folder, "unity-home");
+            {
+                Dictionary<string, object> Row(int rank, string name, int wins, int kills, int deaths, int matches) =>
+                    new Dictionary<string, object> { ["rank"] = (double)rank, ["username"] = name, ["wins"] = (double)wins, ["kills"] = (double)kills, ["deaths"] = (double)deaths, ["matches"] = (double)matches };
+                Screens.DemoPvp(new List<Dictionary<string, object>> { Row(1, "NightOwl", 9, 142, 61, 14), Row(2, "Kairo_77", 7, 118, 70, 15), Row(3, Profile.Username, 5, 96, 58, 11), Row(4, "Sean", 2, 51, 66, 9) }, Row(3, Profile.Username, 5, 96, 58, 11));
+                yield return Settle(0.4f);
+                yield return Shot(folder, "unity-pvp");
+                ShowHome();
+            }
             netStatus.ShowReconnecting(2, ReconnectDelays.Length, "伺服器沒有回應", 3f);
             yield return Settle(0.3f);
             yield return Shot(folder, "unity-net-reconnect");
@@ -1297,6 +1342,17 @@ namespace RiftWard.Client
             sim.Fire(Client.LocalId, sim.Enemies.Values.First().Position + Vector3.up * Defs.HeadHeight);
             yield return Settle(0.05f);
             yield return Shot(folder, "unity-combat");
+            // Wind: a dash wake on the ground ahead and a tornado sweeping into the line of enemies.
+            {
+                var wake = sim.SpawnBullet(new Vector3(me.Position.x - 1.5f, 0.05f, me.Position.z + 2f), new Vector3(1, 0, 1).normalized * Defs.DashDistance, 0, BulletKind.Wake);
+                wake.Life = Defs.WakeLife;
+                foreach (var e in sim.Enemies.Values) e.Hp = e.MaxHp = 99999;
+                var first = sim.Enemies.Values.First();
+                var twister = sim.SpawnBullet(new Vector3(me.Position.x, 0, me.Position.z + 3f), Vector3.forward * Defs.TornadoSpeed, 100, BulletKind.Tornado);
+                twister.Owner = Client.LocalId; twister.Target = first.Id; twister.Life = Defs.TornadoLife;
+                yield return Settle(1.1f);
+                yield return Shot(folder, "unity-wind");
+            }
             // Middle-mouse pings: a teammate's mark on the med kit plus your own spot on the ground.
             Client.Pings.Add(2, "Sean", me.Position + new Vector3(1.5f, 0, 4), 1);
             Client.Pings.Add(Client.LocalId, "", me.Position + new Vector3(-4f, 0, 14), 0);
@@ -1484,6 +1540,25 @@ namespace RiftWard.Client
             yield return Settle(0.2f);
             yield return Shot(folder, "unity-result");
             Client.Menus.HideAll();
+            {
+                // PvP HUD (clock, score, kill feed) and the PvP result sheet.
+                var foeA = sim.AddActor(11, new Loadout()); foeA.Name = "NightOwl"; foeA.Position = me.Position + new Vector3(-3, 0, 12);
+                var foeB = sim.AddActor(12, new Loadout()); foeB.Name = "Kairo_77"; foeB.Position = me.Position + new Vector3(4, 0, 15);
+                sim.Pvp = true; sim.PvpTimeLeft = 187f;
+                me.StatKills = 6; me.StatDowns = 2; foeA.StatKills = 8; foeA.StatDowns = 3; foeB.StatKills = 3; foeB.StatDowns = 5;
+                Client.Hud.Announce("⚔DVRBXTW  擊殺  Kairo_77");
+                Client.Hud.Announce("⚔NightOwl  擊殺  DVRBXTW");
+                yield return Settle(0.4f);
+                yield return Shot(folder, "unity-pvp-hud");
+                Client.Menus.ShowPvpResult(2, 3, new[] { 6, 2, 88, 41 }, 2, 140, 2120, new List<Menus.Contribution> {
+                    new Menus.Contribution { Id = 11, Name = "NightOwl", Kills = 8, Damage = 2410, Shots = 120, Hits = 61, Headshots = 5, Downs = 3 },
+                    new Menus.Contribution { Id = Client.LocalId, Name = "DVRBXTW", Kills = 6, Damage = 1980, Shots = 88, Hits = 41, Headshots = 2, Downs = 2 },
+                    new Menus.Contribution { Id = 12, Name = "Kairo_77", Kills = 3, Damage = 1120, Shots = 95, Hits = 30, Headshots = 1, Downs = 5 } });
+                yield return Settle(0.3f);
+                yield return Shot(folder, "unity-pvp-result");
+                Client.Menus.HideAll();
+                sim.Pvp = false; sim.RemoveActor(11); sim.RemoveActor(12);
+            }
             Client.SetThirdPerson(true);
             yield return Settle(0.3f);
             yield return Shot(folder, "unity-third-0");

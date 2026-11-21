@@ -24,6 +24,33 @@ namespace RiftWard.Client
             return Place(parent, sprite, size);
         }
 
+        static Sprite eyeOpen, eyeShut;
+
+        /// Show / hide password: an eye outline with a pupil; crossed out while the text is hidden.
+        public static Image Eye(Transform parent, float size, bool open) => Place(parent, EyeSprite(open), size);
+
+        public static Sprite EyeSprite(bool open)
+        {
+            if (open) return eyeOpen != null ? eyeOpen : eyeOpen = Make((x, y) => EyePixel(x, y, false));
+            return eyeShut != null ? eyeShut : eyeShut = Make((x, y) => EyePixel(x, y, true));
+        }
+
+        static Color EyePixel(float x, float y, bool crossed)
+        {
+            float lid(float s) => Mathf.Abs(y) - 0.5f * s * (1f - x * x / (s * s));   // almond: < 0 inside
+            float outer = lid(0.95f), inner = lid(0.78f);
+            float a = 0f;
+            if (outer < 0f && inner > -0.02f) a = 1f;                                 // outline
+            if (x * x + y * y < 0.26f * 0.26f) a = 1f;                                 // pupil
+            if (crossed)
+            {
+                float d = Mathf.Abs(y + x) / 1.414f;                                   // the "\" diagonal
+                if (d < 0.11f && Mathf.Abs(x) < 0.8f) a = 1f;
+                else if (d < 0.2f && Mathf.Abs(x) < 0.85f) a = 0f;                     // a gap around the slash
+            }
+            return new Color(1, 1, 1, a);
+        }
+
         static Sprite shard;
 
         /// Rift shard: a faceted cyan crystal.

@@ -50,6 +50,10 @@ OVERLOAD_MIN_RARITY = 3
 PIERCE_MIN_RARITY = 4  # 穿透: bullets pass through enemies; 神話 guns only, one-time unlock per copy
 PIERCE_SHARDS = 5
 PIERCE_GOLD = 20000
+# PvP (Free For All): gold by placement for a full 4-player match, scaled down for smaller ones (players / 4) so two
+# accounts cannot farm it; no keys or XP. Results also feed the weekly PvP leaderboard (most wins, then kills).
+PVP_GOLD = [250, 180, 120, 80]
+PVP_MAX_PLAYERS = 4
 MAX_REWARD = 12000   # mirrors GameSim.MaxMissionGold (地獄 multiplies the gold of a cleared mission)
 
 # Difficulty tiers (普通, 困難, 噩夢, 地獄); mirrors Defs.Difficulties in the game client.
@@ -494,6 +498,11 @@ class Store:
                 CREATE TABLE IF NOT EXISTS login_claims (
                     account_id INTEGER NOT NULL, event_id INTEGER NOT NULL, claimed INTEGER NOT NULL DEFAULT 0,
                     last_day TEXT NOT NULL DEFAULT '', PRIMARY KEY(account_id, event_id)
+                );
+                CREATE TABLE IF NOT EXISTS pvp_weekly (
+                    week TEXT NOT NULL, account_id INTEGER NOT NULL, matches INTEGER NOT NULL DEFAULT 0,
+                    wins INTEGER NOT NULL DEFAULT 0, kills INTEGER NOT NULL DEFAULT 0, deaths INTEGER NOT NULL DEFAULT 0,
+                    PRIMARY KEY(week, account_id)
                 );
                 CREATE TABLE IF NOT EXISTS settings (
                     key TEXT PRIMARY KEY, value TEXT NOT NULL
@@ -1585,6 +1594,43 @@ class Store:
             "kills": values["kills"], "headshots": values["headshots"], "missions": 1, "waves": values["wave"], "victories": 1 if victory else 0,
             "bosses": values["boss_kills"], "hard": 1 if victory and tier >= 1 else 0, "s_grades": 1 if victory and grade == "S" else 0})
 
+    @_locked
+    def record_pvp(self, account_id, place, players, kills, deaths):
+        """One player's Free For All result from the game server: placement gold and the weekly PvP record."""
+        def whole(v, lo, hi, what):
+            if isinstance(v, bool) or not isinstance(v, int) or not lo <= v <= hi:
+                raise ValueError(f"{what}不合法")
+            return v
+        players = whole(players, 2, PVP_MAX_PLAYERS, "人數")
+        place = whole(place, 0, players - 1, "名次")
+        kills = whole(kills, 0, 500, "擊殺數")
+        deaths = whole(deaths, 0, 500, "死亡數")
+        if self.profile(account_id) is None:
+            raise ValueError("找不到帳號")
+        gold = int(round(PVP_GOLD[place] * players / PVP_MAX_PLAYERS))
+        week = weekly_week()
+        with self.connect() as db:
+            db.execute("UPDATE progress SET gold=gold+? WHERE account_id=?", (gold, account_id))
+            db.execute("INSERT INTO pvp_weekly(week, account_id) VALUES(?,?) ON CONFLICT(week, account_id) DO NOTHING", (week, account_id))
+            db.execute("UPDATE pvp_weekly SET matches=matches+1, wins=wins+?, kills=kills+?, deaths=deaths+? WHERE week=? AND account_id=?",
+                       (1 if place == 0 else 0, kills, deaths, week, account_id))
+        return gold, self.profile(account_id)
+
+    def pvp_leaderboard(self, account_id=None, limit=20):
+        """This week's PvP standings: most wins, then most kills, then fewest deaths."""
+        week = weekly_week()
+        with self.connect() as db:
+            rows = db.execute("SELECT a.id, a.username, w.matches, w.wins, w.kills, w.deaths FROM pvp_weekly w JOIN accounts a ON a.id=w.account_id "
+                              "WHERE w.week=? ORDER BY w.wins DESC, w.kills DESC, w.deaths ASC, a.username ASC", (week,)).fetchall()
+        banned = self._banned_ids() if hasattr(self, "_banned_ids") else set()
+        board = [dict(r) for r in rows if r["id"] not in banned]
+        for i, entry in enumerate(board):
+            entry["rank"] = i + 1
+        keys = ("rank", "username", "matches", "wins", "kills", "deaths")
+        mine = next((e for e in board if e["id"] == account_id), None)
+        return {"week": week, "resets_in": weekly_resets_in(), "top": [{k: e[k] for k in keys} for e in board[:limit]],
+                "me": {k: mine[k] for k in keys} if mine else None}
+
     def endless_leaderboard(self, account_id=None, limit=20):
         """Best endless wave per player, highest first; banned accounts are left out."""
         with self.connect() as db:
@@ -2604,6 +2650,14 @@ class Handler(BaseHTTPRequestHandler):
                     return
                 self._json(200, {"ok": True})
                 return
+            if self.path == "/api/server/pvp":
+                try:
+                    gold, profile = store.record_pvp(data.get("account_id"), data.get("place"), data.get("players"), data.get("kills"), data.get("deaths"))
+                except ValueError as exc:
+                    self._json(400, {"ok": False, "error": str(exc)})
+                    return
+                self._json(200, {"ok": True, "gold": gold, "profile": profile})
+                return
             if self.path == "/api/server/progress":
                 try:
                     profile = store.complete_mission(data.get("account_id"), data.get("mission"), data.get("difficulty", 0))
@@ -2685,6 +2739,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(400, {"ok": False, "error": str(exc)})
                 return
             self._json(200, {"ok": True, "profile": store.profile(pid), **extra})
+        elif self.path == "/api/pvp/leaderboard":
+            self._json(200, {"ok": True, **store.pvp_leaderboard(profile["id"])})
         elif self.path == "/api/endless/leaderboard":
             self._json(200, {"ok": True, **store.endless_leaderboard(profile["id"])})
         elif self.path == "/api/gacha/history":

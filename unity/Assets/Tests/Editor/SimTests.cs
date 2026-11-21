@@ -28,6 +28,91 @@ namespace RiftWard.Tests
         }
 
         [Test]
+        public void PvpPlayersShootEachOtherRespawnAndTheClockDecides()
+        {
+            var sim = new GameSim(5);
+            var lo = new Loadout { Owned = new System.Collections.Generic.List<string> { "pistol", "sniper" }, Equipped = new System.Collections.Generic.List<string> { "sniper", "pistol" } };
+            var a = sim.AddActor(1, lo); a.Name = "A";
+            var b = sim.AddActor(2, new Loadout()); b.Name = "B";
+            sim.StartPvp();
+            Assert.IsTrue(sim.Pvp);
+            Assert.AreEqual(0, sim.Enemies.Count);
+            Assert.AreEqual(Defs.PvpHp, b.MaxHp);
+            // Face to face, 10 m apart, nothing in between.
+            a.Position = new Vector3(0, 0, -5); b.Position = new Vector3(0, 0, 5);
+            for (int i = 0; i < 100; i++) sim.Tick(0.02f);   // no waves ever spawn
+            Assert.AreEqual(0, sim.Enemies.Count);
+            var bodyShot = b.Position + Vector3.up * 1.1f;
+            sim.Fire(1, bodyShot);
+            Assert.AreEqual(Defs.PvpHp - a.Damage, b.Hp, 0.01f, "body shot, no burst cap in PvP");
+            // A headshot finishes them: kill and death counted, kill feed line, respawn timer.
+            a.FireCooldown = 0;
+            sim.Fire(1, b.Position + Vector3.up * Defs.EyeHeight);
+            Assert.IsFalse(b.Alive);
+            Assert.AreEqual(1, a.StatKills);
+            Assert.AreEqual(1, b.StatDowns);
+            Assert.IsTrue(sim.Announcements.Any(t => t.Contains("擊殺")));
+            for (int i = 0; i < Mathf.CeilToInt(Defs.PvpRespawn / 0.02f) + 5; i++) sim.Tick(0.02f);
+            Assert.IsTrue(b.Alive, "back after PvpRespawn");
+            Assert.AreEqual(b.MaxHp, b.Hp);
+            Assert.AreEqual(1, b.StatDowns, "a respawn is not another death");
+            Assert.AreEqual(MissionState.Playing, sim.State);
+            // Standings and the end of the clock.
+            Assert.AreEqual(1, sim.PvpStandings()[0].Id);
+            sim.PvpTimeLeft = 0.01f;
+            sim.Tick(0.02f);
+            Assert.AreEqual(MissionState.Victory, sim.State);
+        }
+
+        [Test]
+        public void DashLeavesAWindWakeThatSlowsEnemies()
+        {
+            var sim = NewMission(); sim.Enemies.Clear(); sim.WaveDelay = 999;
+            var a = sim.Actors[1];
+            sim.Inputs[1] = new PlayerInput { Move = new Vector2(0, 1), Dash = true };
+            sim.Tick(0.02f);
+            var wake = sim.Bullets.Values.Single(b => b.Kind == BulletKind.Wake);
+            Assert.AreEqual(Defs.DashDistance, wake.Velocity.magnitude, 0.01f);
+            // An enemy standing on the path is slowed; one far to the side is not.
+            var onPath = PlaceEnemy(sim, new Vector3(0, 0, -2f));
+            var aside = PlaceEnemy(sim, new Vector3(8f, 0, 0));
+            onPath.Position = wake.Position + wake.Velocity * 0.5f; onPath.Position.y = 0;
+            sim.Inputs[1] = new PlayerInput();
+            sim.Tick(0.02f);
+            Assert.Greater(onPath.SlowTime, 0f);
+            Assert.AreEqual(0f, aside.SlowTime);
+            for (int i = 0; i < 200; i++) sim.Tick(0.02f);
+            Assert.IsFalse(sim.Bullets.Values.Any(b => b.Kind == BulletKind.Wake), "the wake fades after WakeLife");
+        }
+
+        [Test]
+        public void TornadoThrowsEnemiesUpAndHurtsThem()
+        {
+            var sim = NewMission(); sim.Enemies.Clear(); sim.WaveDelay = 999;
+            var a = sim.Actors[1];
+            var e = PlaceEnemy(sim, new Vector3(0, 0, 6f), 5000);
+            e.Shoots = true;
+            sim.Inputs[1] = new PlayerInput { Ult = true };
+            sim.Tick(0.02f);
+            Assert.AreEqual(Defs.UltCooldown, a.UltCooldown, 0.05f);
+            Assert.AreEqual(1, sim.Bullets.Values.Count(b => b.Kind == BulletKind.Tornado));
+            sim.Inputs[1] = new PlayerInput();
+            for (int i = 0; i < 60 && e.AirTime <= 0; i++) sim.Tick(0.02f);
+            Assert.Greater(e.AirTime, 0f, "the tornado reaches the enemy and throws it");
+            Assert.Less(e.Hp, 5000f);
+            sim.Tick(0.3f);
+            Assert.Greater(e.Position.y, 0.5f, "airborne");
+            float hp = e.Hp;
+            for (int i = 0; i < 40; i++) sim.Tick(0.02f);
+            Assert.AreEqual(hp, e.Hp, 0.01f, "each enemy is hit once per tornado");
+            // Nothing in range: X does nothing and spends no cooldown.
+            var empty = NewMission(); empty.Enemies.Clear(); empty.WaveDelay = 999;
+            empty.Inputs[1] = new PlayerInput { Ult = true };
+            empty.Tick(0.02f);
+            Assert.AreEqual(0f, empty.Actors[1].UltCooldown);
+        }
+
+        [Test]
         public void HeavyHitsAreCappedSoNobodyIsOneShot()
         {
             var sim = NewMission();
@@ -559,8 +644,7 @@ namespace RiftWard.Tests
             boss.Boss = true; boss.Wave = 10;
             sim.Fire(1, boss.Position + Vector3.up * 1.28f * boss.Scale);
             Assert.IsFalse(sim.Enemies.ContainsKey(boss.Id));
-            var chest = sim.Pickups.Values.Single(p => p.Kind == PickupKind.SuperChest);
-            sim.Actors[1].Position = chest.Position;
+            Assert.IsFalse(sim.Pickups.Values.Any(p => p.Kind == PickupKind.SuperChest), "the chest opens at once, nothing on the ground");
             int picks = 0;
             for (int i = 0; i < 300 && picks < Defs.SuperChestPicks; i++)
             {
@@ -1196,7 +1280,7 @@ namespace RiftWard.Tests
             var missiles = sim.Bullets.Values.Where(b => b.Kind == BulletKind.Missile).ToArray();
             Assert.AreEqual(5, missiles.Length);
             Assert.IsTrue(missiles.All(b => b.Target == e.Id));
-            Assert.AreEqual(70 * (1 + 4 * Defs.GadgetSupport), missiles.Sum(b => b.Damage), 0.01f);
+            Assert.AreEqual(Defs.MissileDamage(5) * (1 + 4 * Defs.GadgetSupport), missiles.Sum(b => b.Damage), 0.01f);
         }
 
         [Test]

@@ -238,21 +238,21 @@ namespace RiftWard.Client
         static string Compact(int v) => v >= 1000000 ? $"{v / 1000000f:0.0}M" : v >= 10000 ? $"{v / 1000f:0.0}k" : v.ToString();
 
         /// Side panel beside the result sheet: every player's damage share, kills, accuracy and revives, the top damage as MVP.
-        void ContributionPanel(RectTransform root, List<Contribution> team, float height, int localId)
+        void ContributionPanel(RectTransform root, List<Contribution> team, float height, int localId, bool pvp = false)
         {
             var panel = Sheet(root, Palette.Teammate, new Vector2(420, height));
             panel.anchoredPosition = new Vector2(310 + 8, 0);
             var st = Ui.VStack(panel, 10);
             st.Fill();
             st.GetComponent<VerticalLayoutGroup>().padding = new RectOffset(28, 28, 32, 28);
-            Ui.Label(st, "TEAM CONTRIBUTION", 13, Palette.Teammate).Sized(18);
-            Ui.Label(st, "隊伍貢獻", 30, Palette.Bone, TextAnchor.UpperLeft, true).Sized(40);
+            Ui.Label(st, pvp ? "STANDINGS" : "TEAM CONTRIBUTION", 13, Palette.Teammate).Sized(18);
+            Ui.Label(st, pvp ? "對戰排名" : "隊伍貢獻", 30, Palette.Bone, TextAnchor.UpperLeft, true).Sized(40);
             int total = Mathf.Max(1, team.Sum(c => c.Damage));
-            var sorted = team.OrderByDescending(c => c.Damage).ThenByDescending(c => c.Kills).ToList();
+            var sorted = pvp ? team.ToList() : team.OrderByDescending(c => c.Damage).ThenByDescending(c => c.Kills).ToList();   // PvP: already in standing order
             for (int i = 0; i < sorted.Count; i++)
             {
                 var c = sorted[i];
-                bool me = c.Id == localId, mvp = i == 0 && c.Damage > 0;
+                bool me = c.Id == localId, mvp = i == 0 && (pvp || c.Damage > 0);
                 float share = (float)c.Damage / total;
                 Color color = me ? Palette.Player : Art.TeamColors[Mathf.Abs(c.Id) % Art.TeamColors.Length];
                 var row = Ui.Box(st, me ? new Color(Palette.Amber.r, Palette.Amber.g, Palette.Amber.b, 0.07f) : new Color(1, 1, 1, 0.03f), "Player").Sized(96);
@@ -261,7 +261,7 @@ namespace RiftWard.Client
                 Ui.Label(row.transform, name + (me ? "（你）" : ""), 17, me ? Palette.Amber : Palette.Bone, TextAnchor.UpperLeft, true).rectTransform
                     .Place(new Vector2(0, 1), new Vector2(16, -10), new Vector2(250, 24), new Vector2(0, 1));
                 if (mvp)
-                    Ui.Label(row.transform, "MVP", 14, Palette.Amber, TextAnchor.UpperRight, true).rectTransform.Place(new Vector2(1, 1), new Vector2(-14, -12), new Vector2(60, 20), new Vector2(1, 1));
+                    Ui.Label(row.transform, pvp ? "冠軍" : "MVP", 14, Palette.Amber, TextAnchor.UpperRight, true).rectTransform.Place(new Vector2(1, 1), new Vector2(-14, -12), new Vector2(60, 20), new Vector2(1, 1));
                 Ui.Label(row.transform, $"總傷害  {Compact(c.Damage)}", 14, Palette.Hex("d6d1c6"), TextAnchor.UpperLeft).rectTransform
                     .Place(new Vector2(0, 1), new Vector2(16, -38), new Vector2(200, 20), new Vector2(0, 1));
                 Ui.Label(row.transform, $"{share * 100f:0}%", 14, color, TextAnchor.UpperRight, true).rectTransform
@@ -270,7 +270,7 @@ namespace RiftWard.Client
                 bar.Place(new Vector2(0, 1), new Vector2(16, -62), new Vector2(332, 4), new Vector2(0, 1));
                 var fill = Ui.Box(bar, color, "Fill").rectTransform;
                 fill.anchorMin = Vector2.zero; fill.anchorMax = new Vector2(Mathf.Clamp01(share), 1); fill.offsetMin = fill.offsetMax = Vector2.zero;
-                Ui.Label(row.transform, $"擊殺 {c.Kills}   爆頭 {c.Headshots}   命中率 {c.Accuracy:0}%   救援 {c.Revives}   倒地 {c.Downs}", 13, Palette.Muted, TextAnchor.UpperLeft).rectTransform
+                Ui.Label(row.transform, (pvp ? $"擊殺 {c.Kills}   死亡 {c.Downs}   爆頭 {c.Headshots}   命中率 {c.Accuracy:0}%" : $"擊殺 {c.Kills}   爆頭 {c.Headshots}   命中率 {c.Accuracy:0}%   救援 {c.Revives}   倒地 {c.Downs}"), 13, Palette.Muted, TextAnchor.UpperLeft).rectTransform
                     .Place(new Vector2(0, 1), new Vector2(16, -72), new Vector2(340, 18), new Vector2(0, 1));
             }
         }
@@ -334,6 +334,38 @@ namespace RiftWard.Client
             {
                 sheet.anchoredPosition = new Vector2(-218, 0);
                 ContributionPanel(root, team, Mathf.Max(sheet.sizeDelta.y, 150 + team.Count * 106), client.LocalId);
+            }
+        }
+
+        /// PvP result: placement, this player's line, the placement gold and everyone's standings beside it.
+        public void ShowPvpResult(int place, int players, int[] record, int deaths, int gold, int totalGold, List<Contribution> team)
+        {
+            HideAll();
+            GameClient.LockCursor(false);
+            var root = Scrim(canvas.transform, 0.9f);
+            result = root.gameObject;
+            bool won = place == 1;
+            var sheet = Sheet(root, won ? Palette.Amber : Palette.Danger, new Vector2(600, 420));
+            var stack = Ui.VStack(sheet, 14);
+            stack.Fill();
+            stack.GetComponent<VerticalLayoutGroup>().padding = new RectOffset(36, 36, 32, 32);
+            Ui.Label(stack, "PVP  ·  FREE FOR ALL", 13, won ? Palette.Amber : Palette.Danger).Sized(18);
+            Ui.Label(stack, place > 0 ? $"第 {place} 名" : "對戰結束", 52, won ? Palette.Amber : Palette.Bone, TextAnchor.UpperLeft, true).Sized(64);
+            Ui.Label(stack, won ? "勝利！你是本場擊殺最多的玩家。" : $"共 {players} 名玩家參戰。", 18, Palette.Hex("d6d1c6")).Sized(26);
+            if (record != null)
+            {
+                float accuracy = record[2] > 0 ? 100f * record[3] / record[2] : 0f;
+                Ui.Label(stack, $"擊殺  {record[0]}      死亡  {deaths}      爆頭  {record[1]}      命中率  {accuracy:0}%", 17, Palette.Bone).Sized(26);
+            }
+            Ui.Label(stack, $"獲得金幣  +{gold} G      持有  {totalGold} G", 20, Palette.Amber).Sized(28);
+            Ui.Label(stack, "本場結果已列入每週 PvP 排行榜。", 14, Palette.Muted).Sized(20);
+            Ui.Rect(stack, "Spacer").gameObject.AddComponent<LayoutElement>().flexibleHeight = 1;
+            var row = Ui.HStack(stack, 10).Sized(52);
+            Ui.Button(row, "返回主頁", () => { HideAll(); LeaveRequested?.Invoke(); }, 18, Palette.Amber, null, Palette.Amber);
+            if (team != null && team.Count >= 2)
+            {
+                sheet.anchoredPosition = new Vector2(-218, 0);
+                ContributionPanel(root, team, Mathf.Max(sheet.sizeDelta.y, 150 + team.Count * 106), client.LocalId, true);
             }
         }
 

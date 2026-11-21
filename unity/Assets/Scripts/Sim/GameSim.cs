@@ -28,6 +28,9 @@ namespace RiftWard.Sim
         public int Difficulty;
         public int Wave;
         public float WaveDelay = 1.8f;
+        /// PvP (Free For All): no waves; players fight each other until the clock runs out.
+        public bool Pvp;
+        public float PvpTimeLeft;
         public float Elapsed;
         public int Kills;
         public bool EnemyVariety = true;
@@ -87,7 +90,7 @@ namespace RiftWard.Sim
             a.Speed = Defs.BaseSpeed; a.DamageMult = 1; a.RateMult = 1; a.ReloadMult = 1; a.SkillMult = 1; a.SkillCdFactor = 1;
             a.Spin = 0; a.Heat = 0; a.Overheat = 0;
             a.MagBonus = 0; a.Regen = 0; a.Armor = 0; a.GearDefense = 0; a.Critical = 0; a.Lifesteal = 0; a.Explode = 0; a.HealBudget = 0; System.Array.Clear(a.BuffStacks, 0, a.BuffStacks.Length);
-            a.SkillCooldown = 0; a.Revive = 0; a.Slot = 0; a.Reload = 0; a.Burst = 0; System.Array.Clear(a.SkillDamage, 0, a.SkillDamage.Length);
+            a.SkillCooldown = 0; a.Revive = 0; a.Slot = 0; a.Reload = 0; a.Burst = 0; a.UltCooldown = 0; a.RespawnTimer = 0; a.SlowTime = 0; System.Array.Clear(a.SkillDamage, 0, a.SkillDamage.Length);
             a.StatKills = 0; a.StatHeadshots = 0; a.StatShots = 0; a.StatHits = 0; a.StatDamage = 0;
             for (int i = 0; i < a.MeleeHitTimes.Length; i++) a.MeleeHitTimes[i] = -9f;
             a.StatDowns = 0; a.StatRevives = 0; a.StatBossKills = 0; a.StatEliteKills = 0; a.WasAlive = true; a.AimFlags = 0;
@@ -103,7 +106,7 @@ namespace RiftWard.Sim
         {
             Region = Mathf.Clamp(region, 0, Defs.Regions.Length - 1);
             Difficulty = Mathf.Clamp(difficulty, 0, Defs.Difficulties.Length - 1);
-            Enemies.Clear(); Bullets.Clear(); Pickups.Clear(); Inputs.Clear(); BuffOffers.Clear();
+            Enemies.Clear(); Bullets.Clear(); Pickups.Clear(); Inputs.Clear(); BuffOffers.Clear(); tornadoHits.Clear(); Pvp = false;
             Wave = 0; WaveDelay = 1.8f; Elapsed = 0; Kills = 0;
             Level = 1; Xp = 0; XpNeed = Defs.XpForLevel(1); PendingLevels = 0; BuffPending = false; SuperRounds = 0; SuperPick = 0;
             WaveGrades.Clear(); waveScores.Clear(); waveWeights.Clear(); waveGraded = true; waveDamage = 0;
@@ -213,7 +216,7 @@ namespace RiftWard.Sim
             RefreshWeapon(a);
         }
 
-        public static float EffectiveSpeed(Actor a) => a.Speed * (a.IsAdmin ? a.Admin.Speed : 1f) * (a.Blocking ? Defs.BlockSpeed : 1f);
+        public static float EffectiveSpeed(Actor a) => a.Speed * (a.IsAdmin ? a.Admin.Speed : 1f) * (a.Blocking ? Defs.BlockSpeed : 1f) * (a.SlowTime > 0 ? Defs.WakeSlow : 1f);
         bool Flying(Actor a) => a.IsAdmin && a.Admin.Fly;
 
         // ------------------------------------------------------------ movement (shared with client prediction)
@@ -392,6 +395,11 @@ namespace RiftWard.Sim
                 return;
             }
             Elapsed += dt;
+            if (Pvp)
+            {
+                PvpTimeLeft = Mathf.Max(0, PvpTimeLeft - dt);
+                if (PvpTimeLeft <= 0) { State = MissionState.Victory; return; }
+            }
             foreach (var a in Actors.Values) a.Burst = Mathf.Max(0f, a.Burst - Defs.BurstDrain * dt);
             var hpBefore = new Dictionary<int, float>();
             foreach (var a in Actors.Values) hpBefore[a.Id] = a.Hp;
@@ -402,7 +410,10 @@ namespace RiftWard.Sim
                 Inputs.TryGetValue(a.Id, out var input);
                 a.Pitch = input.Pitch;
                 a.PerkHaste = Mathf.Max(0, a.PerkHaste - dt);
+                bool dashing = a.DashLeft > 0;
+                Vector3 dashFrom = a.Position;
                 MoveActor(a, input, dt);
+                if (!dashing && a.DashLeft > 0 && a.Alive) SpawnWake(a, dashFrom);
                 a.Ack = input.Seq;
                 if (!a.Alive) { a.Blocking = false; a.Aiming = false; continue; }
                 if (a.Melee)
@@ -444,13 +455,13 @@ namespace RiftWard.Sim
                 }
             }
             var alive = Actors.Values.Where(a => a.Alive).ToList();
-            if (alive.Count == 0 && Actors.Count > 0)
+            if (alive.Count == 0 && Actors.Count > 0 && !Pvp)
             {
                 State = MissionState.Defeat;
                 return;
             }
             UpdateEnemies(alive, dt);
-            if (Enemies.Count == 0)
+            if (Enemies.Count == 0 && !Pvp)
             {
                 // Nobody left to shoot: hostile rounds still in the air vanish, so a cleared wave never downs anyone
                 // (a dead boss's last volley used to be able to wipe the team and turn a win into a defeat).
@@ -495,7 +506,7 @@ namespace RiftWard.Sim
         {
             foreach (var a in Actors.Values)
             {
-                if (baseline.TryGetValue(a.Id, out var before) && a.Hp < before && before > 0)
+                if (baseline.TryGetValue(a.Id, out var before) && a.Hp < before && before > 0 && !Pvp)
                 {
                     float loss = (before - a.Hp) * (1f - a.Armor) * (1f - a.GearDefense);
                     // Both armour passes of a tick share the baseline, so the per-hit cap covers the whole tick.
@@ -560,6 +571,15 @@ namespace RiftWard.Sim
         {
             foreach (var e in Enemies.Values)
             {
+                e.SlowTime = Mathf.Max(0, e.SlowTime - dt);
+                if (e.AirTime > 0)
+                {
+                    // Thrown up by the tornado: rise and fall on an arc, helpless until it lands.
+                    e.AirTime = Mathf.Max(0, e.AirTime - dt);
+                    float t = 1f - e.AirTime / Defs.TornadoAirTime;
+                    e.Position.y = e.AirTime > 0 ? Defs.TornadoLift * 4f * t * (1f - t) : 0f;
+                    continue;
+                }
                 Actor target = null;
                 float distance = float.MaxValue;
                 foreach (var a in alive)
@@ -572,9 +592,10 @@ namespace RiftWard.Sim
                 toward.y = 0;
                 if (toward.sqrMagnitude > 0.0001f) e.Yaw = Mathf.Atan2(toward.x, toward.z);
                 Vector3 dir = toward.normalized;
-                float speed = e.Kind == Defs.KindGuard ? (e.State == 1 ? 0.15f : e.State == 3 ? Defs.GuardChargeSpeed : 1f) * e.Speed : e.Speed;
+                float slow = e.SlowTime > 0 ? Defs.WakeSlow : 1f;   // caught in a wind wake
+                float speed = (e.Kind == Defs.KindGuard ? (e.State == 1 ? 0.15f : e.State == 3 ? Defs.GuardChargeSpeed : 1f) * e.Speed : e.Speed) * slow;
                 if (distance > e.Keep || e.State == 3 && e.Kind == Defs.KindGuard) e.Position += dir * speed * dt;
-                else if (distance < e.Keep - 2f) e.Position -= dir * e.Speed * 0.6f * dt;
+                else if (distance < e.Keep - 2f) e.Position -= dir * e.Speed * slow * 0.6f * dt;
                 e.Position = PushOutOfCover(e.Position, e.Boss ? 1f : 0.5f);
                 e.Position.x = Mathf.Clamp(e.Position.x, -Defs.ArenaHalf, Defs.ArenaHalf);
                 e.Position.z = Mathf.Clamp(e.Position.z, -Defs.ArenaHalf, Defs.ArenaHalf);
@@ -801,6 +822,7 @@ namespace RiftWard.Sim
                 float spread = a.Spread * (a.Aiming ? (a.Pellets > 1 ? Defs.AimSpreadPellets : Defs.AimSpread) : 1f);
                 if (spread > 0 && !(a.IsAdmin && a.Admin.AutoAim))
                     dir = (aim + new Vector3(Rand(-spread, spread), Rand(-spread, spread) * 0.7f, Rand(-spread, spread))).normalized;
+                if (Pvp) { PvpRay(a, origin, dir, damage); continue; }
                 // 穿透: the same ray goes on past each enemy it hits, weaker each time; walls still stop it.
                 HashSet<Enemy> passed = null;
                 float dmg = damage;
@@ -936,6 +958,27 @@ namespace RiftWard.Sim
                 if (to.sqrMagnitude > 0.01f && RayBlock(eye, to.normalized, to.magnitude) < to.magnitude - 0.1f) continue;
                 targets.Add((e, d));
             }
+            if (Pvp)
+            {
+                // PvP: the blade hits other players in the same arc (nearest first, same cleave).
+                int struck = 0;
+                foreach (var o in Actors.Values.Where(o => o.Id != a.Id && o.Alive).OrderBy(o => (o.Position - a.Position).sqrMagnitude))
+                {
+                    var flat = new Vector3(o.Position.x - a.Position.x, 0, o.Position.z - a.Position.z);
+                    float d = flat.magnitude;
+                    if (struck >= Defs.MeleeCleave || d > a.Range + 0.45f || (d > 0.3f && Vector3.Angle(flat, forward) > Defs.MeleeHalfArc)) continue;
+                    var chest = o.Position + Vector3.up;
+                    var to = chest - eye;
+                    if (to.sqrMagnitude > 0.01f && RayBlock(eye, to.normalized, to.magnitude) < to.magnitude - 0.1f) continue;
+                    float dealt = damage * (struck == 0 ? 1f : Defs.MeleeCleaveFalloff) * BlockedBy(o, to);
+                    struck++;
+                    bool killed = DamagePlayer(a, o, dealt);
+                    Shots.Add(new ShotEvent { Shooter = a.Id, Origin = eye, End = chest, Hit = true, Dealt = dealt, Killed = killed });
+                }
+                if (struck > 0) a.StatHits++;
+                else Shots.Add(new ShotEvent { Shooter = a.Id, Origin = eye, End = eye + forward * a.Range, Hit = false });
+                return;
+            }
             targets.Sort((x, y) => x.d.CompareTo(y.d));
             int hits = 0;
             foreach (var (e, _) in targets)
@@ -992,9 +1035,9 @@ namespace RiftWard.Sim
             if (e.Elite) SpawnPickup(e.Position + new Vector3(0.8f, 0, 0), PickupKind.Chest);
             if (e.Boss && (Endless || e.Wave < Defs.WavesPerMission))
             {
-                SpawnPickup(e.Position + new Vector3(-1f, 0, 0.6f), PickupKind.SuperChest);
-                Pickups[nextPickup - 1].Life = 90f;
-                Announcements.Add("BOSS 掉落超級寶箱！");
+                // The super chest opens at once for the whole team: nobody has to walk over to it.
+                SuperRounds += Defs.SuperChestPicks;
+                Announcements.Add($"BOSS 擊破！超級寶箱：全隊獲得 {Defs.SuperChestPicks} 次強化");
             }
             if (e.Kind == Defs.KindSplitter)
                 for (int i = 0; i < 2 && Enemies.Count < EnemyLimit; i++)
@@ -1044,7 +1087,7 @@ namespace RiftWard.Sim
                         if (!Enemies.ContainsKey(e.Id)) continue;
                         Vector3 origin = a.Position + Defs.DroneOffset(i, a.Drones, Elapsed);
                         Vector3 end = e.Position + Vector3.up * 1.1f * e.Scale;
-                        float dealt = Defs.DroneDamage * scale * a.DroneDamageMult * a.DamageMult * (a.DroneEvolved ? 2f : 1f) * (i < targets.Count ? 1f : Defs.GadgetSupport);
+                        float dealt = Defs.DroneDamage * scale * a.DroneDamageMult * a.DamageMult * (a.DroneEvolved ? Defs.DroneEvolvedMult : 1f) * (i < targets.Count ? 1f : Defs.GadgetSupport);
                         Credit(a, e, dealt, Defs.SrcDrone);
                         e.Hp -= dealt;
                         bool killed = e.Hp <= 0;
@@ -1117,13 +1160,13 @@ namespace RiftWard.Sim
                 if (a.MissileLevel > 0 && (a.MissileTimer -= dt) <= 0)
                 {
                     var targets = Enemies.Values.Where(e => (e.Position - a.Position).sqrMagnitude < 900f).OrderBy(e => (e.Position - a.Position).sqrMagnitude).Take(Mathf.Min(5, a.MissileLevel)).ToList();
-                    a.MissileTimer = targets.Count == 0 ? 0.3f : 2.6f;
+                    a.MissileTimer = targets.Count == 0 ? 0.3f : Defs.MissileInterval;
                     for (int i = 0; i < Mathf.Min(5, a.MissileLevel) && targets.Count > 0; i++)
                     {
                         float side = (i - (Mathf.Min(5, a.MissileLevel) - 1) / 2f) * 2.5f;
                         var missile = new Bullet { Id = nextBullet++, Kind = BulletKind.Missile, Owner = a.Id, Target = targets[i % targets.Count].Id, Life = 4f,
                             Position = a.Position + Vector3.up * 2f, Velocity = new Vector3(Mathf.Cos(a.Yaw) * side, 7f, -Mathf.Sin(a.Yaw) * side),
-                            Damage = (30f + 8f * a.MissileLevel) * scale * a.DamageMult * (i < targets.Count ? 1f : Defs.GadgetSupport) };
+                            Damage = Defs.MissileDamage(a.MissileLevel) * scale * a.DamageMult * (i < targets.Count ? 1f : Defs.GadgetSupport) };
                         Bullets[missile.Id] = missile;
                     }
                 }
@@ -1180,7 +1223,7 @@ namespace RiftWard.Sim
                         if (aim.magnitude < 0.8f + 0.5f * target.Scale)
                         {
                             Bullets.Remove(b.Id);
-                            Explode(b.Position, 2.2f, b.Damage, b.Owner, new Color32(0xff, 0x8a, 0x3d, 255), null, Defs.SrcMissile);
+                            Explode(b.Position, Defs.MissileRadius, b.Damage, b.Owner, new Color32(0xff, 0x8a, 0x3d, 255), null, Defs.SrcMissile);
                             continue;
                         }
                     }
@@ -1237,6 +1280,12 @@ namespace RiftWard.Sim
                 e.Hp -= dealt;
                 if (e.Hp <= 0) KillEnemy(e, owner);
             }
+            if (Pvp && Actors.TryGetValue(creditTo == -2 ? owner : creditTo, out var thrower))
+                foreach (var o in Actors.Values.Where(o => o.Id != thrower.Id && o.Alive).ToList())
+                {
+                    float d = Vector3.Distance(o.Position + Vector3.up, position);
+                    if (d < radius) DamagePlayer(thrower, o, damage * (1f - 0.5f * d / radius));
+                }
             Explosions.Add(new ExplosionEvent { Position = position, Radius = radius, Color = color });
         }
 
@@ -1248,7 +1297,7 @@ namespace RiftWard.Sim
             foreach (var e in Enemies.Values.ToList())
             {
                 if (alive.Count == 0 || Bullets.Count >= Defs.MaxBullets) break;
-                if (!e.Shoots) continue;
+                if (!e.Shoots || e.AirTime > 0) continue;
                 e.ShotCooldown -= dt;
                 if (e.ShotCooldown > 0) continue;
                 Actor target = null;
@@ -1294,6 +1343,8 @@ namespace RiftWard.Sim
             foreach (var b in Bullets.Values.ToList())
             {
                 if (b.Kind == BulletKind.Grenade || b.Kind == BulletKind.Mine || b.Kind == BulletKind.Missile) continue;
+                if (b.Kind == BulletKind.Wake) { UpdateWake(b, dt); continue; }
+                if (b.Kind == BulletKind.Tornado) { UpdateTornado(b, dt); continue; }
                 if (b.Kind == BulletKind.Slam)
                 {
                     b.Life -= dt;
@@ -1549,6 +1600,13 @@ namespace RiftWard.Sim
                 if (a.IsAdmin && a.Admin.InfiniteAmmo && a.Alive) { a.Ammo = a.Mag; a.Reload = 0; }
                 if (a.WasAlive && !a.Alive) a.StatDowns++;
                 a.WasAlive = a.Alive;
+                a.SlowTime = Mathf.Max(0, a.SlowTime - dt);
+                if (!a.Alive && Pvp)
+                {
+                    a.RespawnTimer = Mathf.Max(0, a.RespawnTimer - dt);
+                    if (a.RespawnTimer <= 0) RespawnPvp(a);
+                    continue;
+                }
                 if (!a.Alive)
                 {
                     bool Helping(Actor o) => o.Id != a.Id && o.Alive && Vector3.Distance(o.Position, a.Position) < 2.4f &&
@@ -1564,6 +1622,8 @@ namespace RiftWard.Sim
                 }
                 a.Revive = 0;
                 SwitchWeapon(a, input.Slot);
+                a.UltCooldown = Mathf.Max(0, a.UltCooldown - dt);
+                if (input.Ult && a.UltCooldown <= 0) CastTornado(a);
                 if (input.Skill && a.SkillCooldown <= 0)
                 {
                     a.SkillCooldown = Defs.SkillCooldown * a.SkillMult;
@@ -1575,6 +1635,212 @@ namespace RiftWard.Sim
                     g.Life = 1.8f;
                 }
             }
+        }
+
+        // ------------------------------------------------------------ wind: dash wake and the tornado ultimate
+
+        readonly Dictionary<int, HashSet<int>> tornadoHits = new Dictionary<int, HashSet<int>>();
+
+        void SpawnWake(Actor a, Vector3 from)
+        {
+            if (a.DashDirection.sqrMagnitude < 0.01f) return;
+            var wake = SpawnBullet(new Vector3(from.x, 0.05f, from.z), a.DashDirection * Defs.DashDistance, 0, BulletKind.Wake);
+            wake.Owner = a.Id;
+            wake.Life = Defs.WakeLife;
+        }
+
+        void UpdateWake(Bullet b, float dt)
+        {
+            b.Life -= dt;
+            if (b.Life <= 0) { Bullets.Remove(b.Id); return; }
+            var from = new Vector2(b.Position.x, b.Position.z);
+            var path = new Vector2(b.Velocity.x, b.Velocity.z);
+            float length = path.magnitude;
+            if (length < 0.01f) return;
+            var along = path / length;
+            foreach (var e in Enemies.Values)
+            {
+                var p = new Vector2(e.Position.x, e.Position.z) - from;
+                float t = Mathf.Clamp(Vector2.Dot(p, along), 0, length);
+                if ((p - along * t).magnitude < Defs.WakeRadius + 0.3f * e.Scale) e.SlowTime = Defs.WakeSlowTime;
+            }
+            if (Pvp)
+                foreach (var o in Actors.Values)
+                {
+                    if (o.Id == b.Owner || !o.Alive) continue;
+                    var p = new Vector2(o.Position.x, o.Position.z) - from;
+                    float t = Mathf.Clamp(Vector2.Dot(p, along), 0, length);
+                    if ((p - along * t).magnitude < Defs.WakeRadius) o.SlowTime = Defs.WakeSlowTime;
+                }
+        }
+
+        /// The tornado heads for the nearest enemy in range; nothing in range, nothing is cast (no cooldown spent).
+        void CastTornado(Actor a)
+        {
+            Enemy target = null;
+            float best = Defs.UltRange;
+            foreach (var e in Enemies.Values)
+            {
+                float d = Vector3.Distance(e.Position, a.Position);
+                if (e.Hp > 0 && d < best) { best = d; target = e; }
+            }
+            Vector3? aimAt = target?.Position;
+            if (Pvp)
+            {
+                var foe = Actors.Values.Where(o => o.Id != a.Id && o.Alive && Vector3.Distance(o.Position, a.Position) < Defs.UltRange)
+                    .OrderBy(o => (o.Position - a.Position).sqrMagnitude).FirstOrDefault();
+                aimAt = foe?.Position;
+            }
+            if (aimAt == null) return;
+            a.UltCooldown = Defs.UltCooldown;
+            var to = aimAt.Value - a.Position; to.y = 0;
+            var dir = to.sqrMagnitude > 0.01f ? to.normalized : new Vector3(Mathf.Sin(a.Yaw), 0, Mathf.Cos(a.Yaw));
+            var tornado = SpawnBullet(new Vector3(a.Position.x, 0, a.Position.z) + dir * 1.2f, dir * Defs.TornadoSpeed,
+                Defs.TornadoDamage * (1f + 0.15f * Region) * a.DamageMult * a.SkillDamageMult, BulletKind.Tornado);
+            tornado.Owner = a.Id;
+            tornado.Target = target?.Id ?? -1;
+            tornado.Life = Defs.TornadoLife;
+            tornadoHits[tornado.Id] = new HashSet<int>();
+            Announcements.Add("龍捲風！");
+        }
+
+        void UpdateTornado(Bullet b, float dt)
+        {
+            b.Life -= dt;
+            if (b.Life <= 0) { Bullets.Remove(b.Id); tornadoHits.Remove(b.Id); return; }
+            if (!tornadoHits.TryGetValue(b.Id, out var hit)) tornadoHits[b.Id] = hit = new HashSet<int>();
+            // Steer toward its target; once that one is thrown (or gone), the nearest enemy not yet swept up.
+            if (!Enemies.TryGetValue(b.Target, out var target) || hit.Contains(target.Id))
+            {
+                target = Enemies.Values.Where(e => !hit.Contains(e.Id)).OrderBy(e => (e.Position - b.Position).sqrMagnitude).FirstOrDefault();
+                b.Target = target?.Id ?? -1;
+            }
+            if (target != null)
+            {
+                var to = target.Position - b.Position; to.y = 0;
+                if (to.sqrMagnitude > 0.01f) b.Velocity = Vector3.Lerp(b.Velocity, to.normalized * Defs.TornadoSpeed, Mathf.Min(1f, dt * 3f));
+            }
+            Actors.TryGetValue(b.Owner, out var owner);
+            if (Pvp)
+            {
+                // PvP: chase the nearest opponent not yet caught; a caught player is hurt once and slowed.
+                var foe = Actors.Values.Where(o => o.Id != b.Owner && o.Alive && !hit.Contains(1000000 + o.Id))
+                    .OrderBy(o => (o.Position - b.Position).sqrMagnitude).FirstOrDefault();
+                if (foe != null)
+                {
+                    var toFoe = foe.Position - b.Position; toFoe.y = 0;
+                    if (toFoe.sqrMagnitude > 0.01f) b.Velocity = Vector3.Lerp(b.Velocity, toFoe.normalized * Defs.TornadoSpeed, Mathf.Min(1f, dt * 3f));
+                }
+                b.Position += b.Velocity * dt;
+                foreach (var o in Actors.Values.Where(o => o.Id != b.Owner && o.Alive && !hit.Contains(1000000 + o.Id)).ToList())
+                {
+                    if (new Vector2(o.Position.x - b.Position.x, o.Position.z - b.Position.z).magnitude > Defs.TornadoRadius) continue;
+                    hit.Add(1000000 + o.Id);
+                    o.SlowTime = Defs.TornadoAirTime;
+                    if (owner != null) DamagePlayer(owner, o, b.Damage);
+                }
+                return;
+            }
+            b.Position += b.Velocity * dt;
+            b.Position.x = Mathf.Clamp(b.Position.x, -Defs.ArenaHalf, Defs.ArenaHalf);
+            b.Position.z = Mathf.Clamp(b.Position.z, -Defs.ArenaHalf, Defs.ArenaHalf);
+            foreach (var e in Enemies.Values.ToList())
+            {
+                if (e.Hp <= 0 || hit.Contains(e.Id)) continue;
+                if (new Vector2(e.Position.x - b.Position.x, e.Position.z - b.Position.z).magnitude > Defs.TornadoRadius + 0.4f * e.Scale) continue;
+                hit.Add(e.Id);
+                if (!e.Boss) e.AirTime = Defs.TornadoAirTime;
+                Credit(owner, e, b.Damage, Defs.SrcTornado);
+                e.Hp -= b.Damage;
+                if (e.Hp <= 0) KillEnemy(e, b.Owner);
+            }
+        }
+
+        // ------------------------------------------------------------ PvP
+
+        /// Starts a Free For All on the 翠風草原 arena: no waves, everyone spread over the spawn points.
+        public void StartPvp()
+        {
+            StartMission(0, 0);
+            Pvp = true;
+            PvpTimeLeft = Defs.PvpDuration;
+            WaveDelay = float.MaxValue;
+            int i = 0;
+            foreach (var a in Actors.Values)
+            {
+                a.MaxHp = a.Hp = Defs.PvpHp;
+                a.Position = Defs.PvpSpawns[i++ % Defs.PvpSpawns.Length];
+            }
+        }
+
+        /// Standings: most kills first, then fewest deaths, then most damage.
+        public List<Actor> PvpStandings() =>
+            Actors.Values.OrderByDescending(a => a.StatKills).ThenBy(a => a.StatDowns).ThenByDescending(a => a.StatDamage).ToList();
+
+        void RespawnPvp(Actor a)
+        {
+            Vector3 best = Defs.PvpSpawns[0];
+            float bestDistance = -1;
+            foreach (var spawn in Defs.PvpSpawns)
+            {
+                float nearest = float.MaxValue;
+                foreach (var o in Actors.Values) if (o.Id != a.Id && o.Alive) nearest = Mathf.Min(nearest, Vector3.Distance(o.Position, spawn));
+                if (nearest > bestDistance) { bestDistance = nearest; best = spawn; }
+            }
+            a.Position = best;
+            a.Hp = a.MaxHp; a.WasAlive = true; a.Reload = 0; a.SlowTime = 0;
+            a.AmmoByWeapon.Clear();
+            a.Ammo = a.Mag;
+        }
+
+        /// One player hurting another. Returns true when it was the killing blow (kill and death are counted, the
+        /// victim starts the respawn timer and everyone sees it in the kill feed).
+        bool DamagePlayer(Actor attacker, Actor victim, float amount)
+        {
+            if (!victim.Alive || amount <= 0 || attacker.Id == victim.Id) return false;
+            float landed = Mathf.Min(amount, victim.Hp);
+            victim.Hp -= amount;
+            attacker.StatDamage += landed;
+            if (victim.Hp > 0) return false;
+            victim.Hp = 0;
+            attacker.StatKills++;
+            victim.StatDowns++;
+            victim.WasAlive = false;
+            victim.RespawnTimer = Defs.PvpRespawn;
+            Announcements.Add($"\u2694{attacker.Name}  擊殺  {victim.Name}");
+            return true;
+        }
+
+        /// A PvP shot: the nearest player along the ray (head, chest or legs), stopped by walls.
+        void PvpRay(Actor a, Vector3 origin, Vector3 dir, float damage)
+        {
+            float nearest = RayBlock(origin, dir, Defs.ShotRange);
+            Actor best = null;
+            bool head = false;
+            foreach (var o in Actors.Values)
+            {
+                if (o.Id == a.Id || !o.Alive) continue;
+                void Test(Vector3 center, float radius, bool isHead)
+                {
+                    float along = Vector3.Dot(center - origin, dir);
+                    if (along <= 0 || along >= nearest || Vector3.Distance(center, origin + dir * along) >= radius) return;
+                    nearest = along; best = o; head = isHead;
+                }
+                Test(o.Position + Vector3.up * Defs.EyeHeight, 0.27f, true);
+                Test(o.Position + Vector3.up * 1.1f, 0.42f, false);
+                Test(o.Position + Vector3.up * 0.5f, 0.36f, false);
+            }
+            Vector3 end = origin + dir * nearest;
+            float dealt = 0;
+            bool killed = false;
+            if (best != null)
+            {
+                a.StatHits++;
+                if (head) a.StatHeadshots++;
+                dealt = damage * (head ? a.HeadMultiplier : 1f) * BlockedBy(best, dir);
+                killed = DamagePlayer(a, best, dealt);
+            }
+            Shots.Add(new ShotEvent { Shooter = a.Id, Origin = origin, End = end, Hit = best != null, Head = head, Dealt = dealt, Killed = killed });
         }
 
         // ------------------------------------------------------------ pickups
@@ -1760,7 +2026,7 @@ namespace RiftWard.Sim
                 case 8: a.Lifesteal = Mathf.Min(Defs.MaxLifesteal, a.Lifesteal + Mathf.Round(4 * m)); break;
                 case 9: a.Explode += Mathf.Round(35 * m); break;
                 case Defs.BuffDrone: a.Drones = Mathf.Min(Defs.MaxDrones, a.Drones + steps); break;
-                case Defs.BuffDroneDamage: a.DroneDamageMult += 0.35f * m; break;
+                case Defs.BuffDroneDamage: a.DroneDamageMult += Defs.DronePick * m; break;
                 case Defs.BuffDroneRate: a.DroneRateMult = Mathf.Max(0.3f, a.DroneRateMult * (1f - 0.15f * m)); break;
                 case Defs.BuffPlasma:
                     if (a.Plasma) a.PlasmaDamageMult += 0.25f * m;

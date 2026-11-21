@@ -11,6 +11,8 @@ namespace RiftWard.Sim
         public float Yaw, Pitch;
         public Vector3 Aim;
         public bool Fire, Dash, Jump, Descend, Reload, Skill, Interact;
+        /// 大招 (X): cast the tornado.
+        public bool Ult;
         /// Melee weapons: guard against bullets from the front (right mouse).
         public bool Block;
         public int Slot;
@@ -70,7 +72,11 @@ namespace RiftWard.Sim
     public sealed class Actor
     {
         /// Damage dealt this mission per source (Defs.Src*), overkill excluded.
-        public readonly float[] SkillDamage = new float[9];
+        public readonly float[] SkillDamage = new float[10];
+        /// Seconds until the ultimate (龍捲風) is ready.
+        public float UltCooldown;
+        /// PvP: seconds until a dead player comes back, and a wind wake slowing them.
+        public float RespawnTimer, SlowTime;
         /// Recent damage as a share of max life, draining at Defs.BurstDrain per second (see Defs.BurstCap).
         public float Burst;
         public int Id;
@@ -178,6 +184,8 @@ namespace RiftWard.Sim
         public float SlamCooldown = 4f;
         /// Emperor: blink and summon timers and the rotating angle of his spiral barrage.
         public float BlinkCooldown = 6f, SummonCooldown = 9f, SpiralAngle, SpiralCooldown;
+        /// 風之尾流 slow left, and 龍捲風 air time left (lifted enemies neither move nor shoot).
+        public float SlowTime, AirTime;
 
         /// Direction the enemy faces (towards its target).
         public Vector3 Facing => new Vector3(Mathf.Sin(Yaw), 0f, Mathf.Cos(Yaw));
@@ -187,7 +195,8 @@ namespace RiftWard.Sim
         public bool ShieldBroken;
     }
 
-    public enum BulletKind { Enemy = 0, Sniper = 1, Grenade = 2, Mine = 3, Missile = 4, Slam = 5 }
+    /// Wake: a dash's wind trail (Position = start, Velocity = the whole path). Tornado: the ultimate.
+    public enum BulletKind { Enemy = 0, Sniper = 1, Grenade = 2, Mine = 3, Missile = 4, Slam = 5, Wake = 6, Tornado = 7 }
 
     public sealed class Bullet
     {

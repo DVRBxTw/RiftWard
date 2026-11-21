@@ -1488,6 +1488,48 @@ namespace RiftWard.Client
                 foreach (var c in mark.GetComponentsInChildren<Collider>()) Object.Destroy(c);
                 return mark.gameObject;
             }
+            if (kind == BulletKind.Wake)
+            {
+                // 風之尾流: pale wind streaks along the dash path (+Z, DashDistance long) that drift and fade away.
+                var wake = new GameObject("Wake").transform;
+                var rng = new System.Random();
+                for (int i = 0; i < 9; i++)
+                {
+                    float x = ((float)rng.NextDouble() - 0.5f) * 1.6f, z = (float)rng.NextDouble() * Defs.DashDistance;
+                    var streak = Build.Cube(wake, new Vector3(x, 0.25f + (float)rng.NextDouble() * 1.1f, z),
+                        new Vector3(0.05f, 0.04f, 0.9f + (float)rng.NextDouble() * 1.2f), Palette.Hex("d8f6ff"), 2.2f, false);
+                    streak.GetComponent<MeshRenderer>().sharedMaterial = Build.Mat(Palette.Hex("c8f0ff"), 2.2f, 0.45f);
+                }
+                var floor = Build.Cube(wake, new Vector3(0, 0.02f, Defs.DashDistance / 2f), new Vector3(Defs.WakeRadius * 1.6f, 0.01f, Defs.DashDistance), Palette.Hex("9fe3ff"), 1f, false);
+                floor.GetComponent<MeshRenderer>().sharedMaterial = Build.Mat(Palette.Hex("9fe3ff"), 1f, 0.12f);
+                wake.gameObject.AddComponent<WindWake>();
+                foreach (var c in wake.GetComponentsInChildren<Collider>()) Object.Destroy(c);
+                return wake.gameObject;
+            }
+            if (kind == BulletKind.Tornado)
+            {
+                // 龍捲風: a spinning funnel of translucent rings, narrow at the ground and wide at the top.
+                var tornado = new GameObject("Tornado").transform;
+                var funnel = new GameObject("Funnel").transform;
+                funnel.SetParent(tornado, false);
+                for (int i = 0; i < 9; i++)
+                {
+                    float t = i / 8f;
+                    var ring = Build.Cylinder(funnel, new Vector3(Mathf.Sin(i * 1.3f) * 0.15f, 0.3f + t * 4.2f, Mathf.Cos(i * 1.3f) * 0.15f),
+                        0.7f + t * 3.6f, 0.28f, Palette.Hex("dff7ff"));
+                    ring.GetComponent<MeshRenderer>().sharedMaterial = Build.Mat(Palette.Hex("cdeefa"), 1.4f, 0.22f + 0.12f * (1f - t));
+                }
+                for (int i = 0; i < 6; i++)
+                {
+                    float a = i * Mathf.PI / 3f;
+                    var debris = Build.Cube(funnel, new Vector3(Mathf.Cos(a) * 1.2f, 1f + i * 0.5f, Mathf.Sin(a) * 1.2f), new Vector3(0.12f, 0.12f, 0.12f), Palette.Hex("8a7a5c"), 0, false);
+                    debris.transform.localRotation = Quaternion.Euler(i * 37f, i * 53f, 0);
+                }
+                var spin = funnel.gameObject.AddComponent<Spinner>();
+                spin.Axis = Vector3.up; spin.Speed = 540f;
+                foreach (var c in tornado.GetComponentsInChildren<Collider>()) Object.Destroy(c);
+                return tornado.gameObject;
+            }
             if (kind == BulletKind.Mine)
             {
                 // Proximity mine: armoured disc, hazard ring, sensor prongs and a blinking arm light.

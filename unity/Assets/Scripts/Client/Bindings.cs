@@ -8,7 +8,7 @@ namespace RiftWard.Client
     /// Rebindable controls, saved on this computer. Mouse buttons (fire / aim) and Esc stay fixed.
     public static class Bindings
     {
-        public enum Action { Forward, Back, Left, Right, Jump, Dash, Descend, Reload, Skill, Interact, View, Slot1, Slot2, Chat, Inspect, Ping, Upgrades, NetStats }
+        public enum Action { Forward, Back, Left, Right, Jump, Dash, Descend, Reload, Skill, Interact, View, Slot1, Slot2, Chat, Inspect, Ping, Upgrades, NetStats, Ult }
 
         static readonly (Action action, string label, KeyCode key)[] Defaults =
         {
@@ -19,6 +19,8 @@ namespace RiftWard.Client
             (Action.Chat, "聊天", KeyCode.Return), (Action.Inspect, "檢視武器", KeyCode.F),
             (Action.Ping, "標點 / 標點輪盤", KeyCode.Mouse2),
             (Action.Upgrades, "本場升級（按住）", KeyCode.Tab), (Action.NetStats, "快速開關 延遲 / FPS", KeyCode.F3),
+            // Same order as Action: keys[] is indexed by the enum value.
+            (Action.Ult, "大招（龍捲風）", KeyCode.X),
         };
 
         static readonly KeyCode[] keys = new KeyCode[Defaults.Length];

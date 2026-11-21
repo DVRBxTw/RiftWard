@@ -18,6 +18,7 @@ def free_port(kind):
 
 def main():
     exe = Path(sys.argv[1])
+    pvp = "--pvp" in sys.argv   # four clients queue for PvP, get matched, play a short Free For All and go home
     with tempfile.TemporaryDirectory() as temp:
         temp = Path(temp)
         releases = temp / "releases"
@@ -35,7 +36,7 @@ def main():
         env = dict(os.environ, RIFTWARD_SERVER_DATA=str(temp / "data"), RIFTWARD_API_HOST="127.0.0.1", RIFTWARD_API_PORT=str(api.server_port),
                    RIFTWARD_GAME_PORT=str(game_port), RIFTWARD_BIND="127.0.0.1", RIFTWARD_TEST_FAST="1",
                    RIFTWARD_TEST_API_HOST="127.0.0.1", RIFTWARD_TEST_API_PORT=str(api.server_port), RIFTWARD_TEST_GAME_PORT=str(game_port),
-                   RIFTWARD_TEST_PLAYERS="4", RIFTWARD_TEST_ROUNDS="2", RIFTWARD_TEST_REGION="2")
+                   RIFTWARD_TEST_PLAYERS="4", RIFTWARD_TEST_ROUNDS="2", RIFTWARD_TEST_REGION="2", RIFTWARD_TEST_PVP="1" if pvp else "0")
         logs = [temp / "server.log"]
         procs = [subprocess.Popen([str(exe), "-batchmode", "-nographics", "-server", "-logFile", str(logs[0])], env=env)]
         deadline = time.time() + 30
@@ -57,13 +58,17 @@ def main():
             except subprocess.TimeoutExpired:
                 p.kill()
             text = logs[i].read_text(errors="replace") if logs[i].exists() else ""
-            interesting = [l for l in text.splitlines() if "UNITY_CLIENT" in l or "Exception" in l]
+            lines = text.splitlines()
+            # Each exception with the few stack lines after it, so a failure can be located from this output alone.
+            interesting = [l for n, l in enumerate(lines) if "UNITY_CLIENT" in l or "Exception" in l
+                           or any("Exception" in lines[k] for k in range(max(0, n - 8), n)) and l.strip() != ""]
             print(f"CLIENT {i}:", *interesting, sep="\n  ")
-            if text.count("UNITY_CLIENT_PASS") != 2 or "UNITY_CLIENT_RETURN_PASS" not in text or "UNITY_CLIENT_FAIL" in text:
+            passed = ("UNITY_CLIENT_PVP_PASS" in text) if pvp else (text.count("UNITY_CLIENT_PASS") == 2)
+            if not passed or "UNITY_CLIENT_RETURN_PASS" not in text or "UNITY_CLIENT_FAIL" in text:
                 failed.append(i)
         procs[0].kill()
         server_text = logs[0].read_text(errors="replace")
-        print("SERVER:", *[l for l in server_text.splitlines() if any(k in l for k in ("SERVER_READY", "VERIFIED", "MISSION", "RETURNED", "Exception", "error"))], sep="\n  ")
+        print("SERVER:", *[l for l in server_text.splitlines() if any(k in l for k in ("SERVER_READY", "VERIFIED", "MISSION", "RETURNED", "PVP_", "Exception", "error"))], sep="\n  ")
         api.shutdown()
         api.server_close()
         for acct in store.list_players():

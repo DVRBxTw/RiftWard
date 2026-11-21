@@ -452,6 +452,7 @@ namespace RiftWard.Client
                 Reload = active && Bindings.Held(Bindings.Action.Reload),
                 Skill = active && Bindings.Held(Bindings.Action.Skill),
                 Interact = active && Bindings.Held(Bindings.Action.Interact),
+                Ult = active && Bindings.Held(Bindings.Action.Ult),
                 // Right mouse: guard with a blade, aim down sights with a gun (the sim tightens spread and slows the walk).
                 Block = me != null && (active && Input.GetMouseButton(1) || AimForCapture && !me.Melee),
                 Slot = desiredSlot,
