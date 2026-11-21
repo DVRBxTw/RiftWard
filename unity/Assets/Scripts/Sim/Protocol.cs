@@ -270,6 +270,8 @@ namespace RiftWard.Sim
             foreach (var e in sim.Explosions) { w.Write(e.Position); w.Write(e.Radius); w.Write(e.Color.r); w.Write(e.Color.g); w.Write(e.Color.b); w.Write(e.Heal); }
             w.Write(sim.Announcements.Count);
             foreach (var a in sim.Announcements) w.Write(a);
+            w.Write(sim.Damages.Count);
+            foreach (var d in sim.Damages) { w.Write(d.Owner); w.Write((byte)d.Source); w.Write(d.Position); w.Write(d.Dealt); w.Write(d.Killed); }
         }
 
         public static void ReadEvents(BinaryReader r, GameSim sim)
@@ -282,6 +284,9 @@ namespace RiftWard.Sim
                 sim.Explosions.Add(new ExplosionEvent { Position = r.ReadVector3(), Radius = r.ReadSingle(), Color = new Color32(r.ReadByte(), r.ReadByte(), r.ReadByte(), 255), Heal = r.ReadBoolean() });
             n = r.ReadInt32();
             for (int i = 0; i < n; i++) sim.Announcements.Add(r.ReadString());
+            n = r.ReadInt32();
+            for (int i = 0; i < n; i++)
+                sim.Damages.Add(new DamageEvent { Owner = r.ReadInt32(), Source = r.ReadByte(), Position = r.ReadVector3(), Dealt = r.ReadSingle(), Killed = r.ReadBoolean() });
         }
     }
 }

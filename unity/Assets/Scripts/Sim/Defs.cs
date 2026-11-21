@@ -60,7 +60,7 @@ namespace RiftWard.Sim
         /// XP needed to go from this account level to the next; mirrors level_for() in server/service.py.
         public static int AccountLevelNeed(int level) => 100 + 50 * level;
 
-        public const string Version = "0.7.38-unity.1";
+        public const string Version = "0.7.39-unity.1";
 
         // Player movement
         public const float EyeHeight = 1.65f;
@@ -247,7 +247,7 @@ namespace RiftWard.Sim
             new BuffDef("僚機無人機", "無人機 +{0} 架，自動射擊附近敵人", 1),
             new BuffDef("無人機火控", "無人機傷害 +{0}%", 35),
             new BuffDef("無人機超頻", "無人機攻擊冷卻 -{0}%", 15),
-            new BuffDef("肩載電漿砲", "電漿砲定時轟擊敵群；已裝備則傷害 +{0}%", 40),
+            new BuffDef("肩載電漿砲", "電漿砲定時轟擊敵群；已裝備則傷害 +{0}%", 25),
             new BuffDef("電漿冷卻", "電漿砲冷卻 -{0}%", 15),
             new BuffDef("旋轉刃盾", "環繞刃片 Lv +{0}：刃片數與傷害提升", 1),
             new BuffDef("感應地雷", "定時在腳下佈雷 Lv +{0}", 1),
@@ -260,6 +260,9 @@ namespace RiftWard.Sim
         /// 盾兵 front plate: soaks this share of the soldier's max life before it shatters; it blocks 75% of a frontal hit.
         public const float ShieldPlateShare = 0.6f;
         /// A teammate idle this long (no movement, aim, fire or keys) is played by the computer until they return.
+        /// What dealt a hit, for the on-screen skill damage numbers and the per-skill damage totals.
+        public const int SrcWeapon = 0, SrcDrone = 1, SrcPlasma = 2, SrcOrbit = 3, SrcMine = 4, SrcMissile = 5, SrcLightning = 6, SrcGrenade = 7, SrcBurst = 8;
+        public static readonly string[] SourceNames = { "武器", "僚機無人機", "肩載電漿砲", "旋轉刃盾", "感應地雷", "追蹤飛彈", "閃電鏈", "手榴彈", "爆裂彈頭" };
         public const float AfkTakeover = 60f;
         /// Anti-burst: no single tick of damage takes more than HitCap of max life, and recent damage (a bucket that
         /// drains BurstDrain of max life per second) never exceeds BurstCap. From full life a player therefore loses
@@ -292,11 +295,18 @@ namespace RiftWard.Sim
             return new Vector3(Mathf.Cos(angle) * 2.4f, 1.0f, Mathf.Sin(angle) * 2.4f);
         }
 
+        /// 旋轉刃盾 damage per blade hit and how often the blades strike (was 10 + 6 x level every 0.35 s: at most
+        /// ~28 damage a second on 普通 even with enemies on top of you).
+        public const float OrbitInterval = 0.3f;
+        public static float OrbitDamage(int level) => 16f + 9f * level;
         public static int BladeCount(int level) => level <= 0 ? 0 : Mathf.Min(5, 1 + level);
         public const int MaxDrones = 4;
         public const float GadgetSupport = 0.35f;
         public const float DroneInterval = 1.1f, DroneDamage = 14f, DroneRange = 24f;
-        public const float PlasmaInterval = 6f, PlasmaDamage = 70f, PlasmaRadius = 4.2f, PlasmaRange = 30f;
+        /// 電漿砲 only takes half of the player's own damage bonus (it used to take all of it on top of its own
+        /// picks, and a maxed one wiped whole 困難 waves in one salvo).
+        public const float PlasmaOwnerDamageShare = 0.5f;
+        public const float PlasmaInterval = 6f, PlasmaDamage = 50f, PlasmaRadius = 4.2f, PlasmaRange = 30f;
 
         /// Buff codes pack the buff index and its rarity tier: code = index + 100 * tier.
         public static int BuffIndex(int code) => code % 100;

@@ -1207,7 +1207,7 @@ namespace RiftWard.Tests
             e.Scale = 10; e.Speed = 0;
             sim.Actors[1].OrbitLevel = 5;
             sim.Tick(1f / 60);
-            Assert.AreEqual(50, 10000 - e.Hp, 0.01f, "40 primary + 10 overlapping blade");
+            Assert.AreEqual(Defs.OrbitDamage(5) * 1.25f, 10000 - e.Hp, 0.01f, "one full blade + a quarter from the overlapping one");
         }
 
         [Test]
@@ -1279,7 +1279,8 @@ namespace RiftWard.Tests
             PlaceEnemy(sim, new Vector3(0.01f, 0, 8), 10000);
             var a = sim.Actors[1]; a.Plasma = true; a.PlasmaEvolved = true; a.PlasmaTimer = 0;
             sim.Tick(1f / 60);
-            Assert.That(10000 - first.Hp, Is.InRange(104f, 106f), "70 primary and about 35 overlap");
+            float hit = Defs.PlasmaDamage;
+            Assert.That(10000 - first.Hp, Is.InRange(hit * 1.5f - 1f, hit * 1.5f + 1f), "a full primary hit and about half of it from the overlap");
         }
 
         [Test]

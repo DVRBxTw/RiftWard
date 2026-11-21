@@ -502,10 +502,12 @@ namespace RiftWard.Client
             if (localKill) Sfx.Play("kill", 0.5f);
             foreach (var ex in Sim.Explosions) ExplosionEffect(ex);
             foreach (var text in Sim.Announcements) Hud.Announce(text);
+            foreach (var d in Sim.Damages) if (d.Owner == LocalId) Hud.OnSkillDamage(d, Camera);
             DashSounds();
             Sim.Shots.Clear();
             Sim.Explosions.Clear();
             Sim.Announcements.Clear();
+            Sim.Damages.Clear();
             if (Sim.BuffPending && Sim.BuffOffers.TryGetValue(LocalId, out var offer) && offer != null) Menus.ShowBuffs(offer, Sim.Level, Sim.SuperPick);
             else if (!Sim.BuffPending) Menus.HideBuffs();
         }

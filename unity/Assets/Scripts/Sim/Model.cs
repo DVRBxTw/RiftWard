@@ -69,6 +69,8 @@ namespace RiftWard.Sim
 
     public sealed class Actor
     {
+        /// Damage dealt this mission per source (Defs.Src*), overkill excluded.
+        public readonly float[] SkillDamage = new float[9];
         /// Recent damage as a share of max life, draining at Defs.BurstDrain per second (see Defs.BurstCap).
         public float Burst;
         public int Id;
@@ -217,6 +219,15 @@ namespace RiftWard.Sim
         /// This hit came from a round that had already passed through an enemy (穿透).
         public bool Pierced;
         public float Dealt;
+    }
+
+    /// A hit from a skill or gadget (not the gun): shown as a damage number to its owner.
+    public struct DamageEvent
+    {
+        public int Owner, Source;
+        public Vector3 Position;
+        public float Dealt;
+        public bool Killed;
     }
 
     public struct ExplosionEvent

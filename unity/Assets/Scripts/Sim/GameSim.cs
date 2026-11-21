@@ -19,6 +19,7 @@ namespace RiftWard.Sim
 
         public readonly List<ShotEvent> Shots = new List<ShotEvent>();
         public readonly List<ExplosionEvent> Explosions = new List<ExplosionEvent>();
+        public readonly List<DamageEvent> Damages = new List<DamageEvent>();
         public readonly List<string> Announcements = new List<string>();
 
         public MissionState State = MissionState.Idle;
@@ -86,7 +87,7 @@ namespace RiftWard.Sim
             a.Speed = Defs.BaseSpeed; a.DamageMult = 1; a.RateMult = 1; a.ReloadMult = 1; a.SkillMult = 1; a.SkillCdFactor = 1;
             a.Spin = 0; a.Heat = 0; a.Overheat = 0;
             a.MagBonus = 0; a.Regen = 0; a.Armor = 0; a.GearDefense = 0; a.Critical = 0; a.Lifesteal = 0; a.Explode = 0; a.HealBudget = 0; System.Array.Clear(a.BuffStacks, 0, a.BuffStacks.Length);
-            a.SkillCooldown = 0; a.Revive = 0; a.Slot = 0; a.Reload = 0; a.Burst = 0;
+            a.SkillCooldown = 0; a.Revive = 0; a.Slot = 0; a.Reload = 0; a.Burst = 0; System.Array.Clear(a.SkillDamage, 0, a.SkillDamage.Length);
             a.StatKills = 0; a.StatHeadshots = 0; a.StatShots = 0; a.StatHits = 0; a.StatDamage = 0;
             for (int i = 0; i < a.MeleeHitTimes.Length; i++) a.MeleeHitTimes[i] = -9f;
             a.StatDowns = 0; a.StatRevives = 0; a.StatBossKills = 0; a.StatEliteKills = 0; a.WasAlive = true; a.AimFlags = 0;
@@ -1012,7 +1013,7 @@ namespace RiftWard.Sim
             {
                 a.StatKills++;
                 if (a.Lifesteal > 0) Heal(a, a.Lifesteal);
-                if (a.Explode > 0) Explode(e.Position + Vector3.up, 3.2f, a.Explode, -1, new Color32(0xff, 0xb3, 0x47, 255));
+                if (a.Explode > 0) Explode(e.Position + Vector3.up, 3.2f, a.Explode, -1, new Color32(0xff, 0xb3, 0x47, 255), null, Defs.SrcBurst, a.Id);   // owner -1: no chain blasts
             }
             if (e.Boss) SpawnPickup(e.Position, PickupKind.Health);
             else if (Rand01() < Defs.PickupChance) SpawnPickup(e.Position, Rand01() < 0.4f ? PickupKind.Health : PickupKind.Ammo);
@@ -1044,7 +1045,7 @@ namespace RiftWard.Sim
                         Vector3 origin = a.Position + Defs.DroneOffset(i, a.Drones, Elapsed);
                         Vector3 end = e.Position + Vector3.up * 1.1f * e.Scale;
                         float dealt = Defs.DroneDamage * scale * a.DroneDamageMult * a.DamageMult * (a.DroneEvolved ? 2f : 1f) * (i < targets.Count ? 1f : Defs.GadgetSupport);
-                        Credit(a, e, dealt);
+                        Credit(a, e, dealt, Defs.SrcDrone);
                         e.Hp -= dealt;
                         bool killed = e.Hp <= 0;
                         if (killed) KillEnemy(e, a.Id);
@@ -1065,7 +1066,7 @@ namespace RiftWard.Sim
                     {
                         Vector3 at = target.Position + Vector3.up;
                         Shots.Add(new ShotEvent { Shooter = GadgetShooter(a.Id, GadgetPlasma), Origin = a.Position + new Vector3(0, 2.0f, 0), End = at, Hit = true });
-                        Explode(at, radius, Defs.PlasmaDamage * scale * a.PlasmaDamageMult * a.DamageMult, a.Id, new Color32(0x9b, 0x7b, 0xff, 255), plasmaHits);
+                        Explode(at, radius, Defs.PlasmaDamage * scale * a.PlasmaDamageMult * (1f + Defs.PlasmaOwnerDamageShare * (a.DamageMult - 1f)), a.Id, new Color32(0x9b, 0x7b, 0xff, 255), plasmaHits, Defs.SrcPlasma);
                     }
                 }
             }
@@ -1080,9 +1081,9 @@ namespace RiftWard.Sim
                 // Orbiting blades: damage everything they sweep through on a short tick.
                 if (a.OrbitLevel > 0 && (a.OrbitTimer -= dt) <= 0)
                 {
-                    a.OrbitTimer = 0.35f;
+                    a.OrbitTimer = Defs.OrbitInterval;
                     int n = Defs.BladeCount(a.OrbitLevel);
-                    float damage = (10f + 6f * a.OrbitLevel) * scale * a.DamageMult;
+                    float damage = Defs.OrbitDamage(a.OrbitLevel) * scale * a.DamageMult;
                     var bladeHits = new Dictionary<int, int>();
                     for (int i = 0; i < n; i++)
                     {
@@ -1095,7 +1096,7 @@ namespace RiftWard.Sim
                             if (count >= 2) continue;
                             bladeHits[e.Id] = count + 1;
                             float dealt = damage * (count == 0 ? 1f : 0.25f);
-                            Credit(a, e, dealt);
+                            Credit(a, e, dealt, Defs.SrcOrbit);
                             e.Hp -= dealt;
                             if (e.Hp <= 0) KillEnemy(e, a.Id);
                         }
@@ -1140,7 +1141,7 @@ namespace RiftWard.Sim
                     {
                         hit.Add(current.Id);
                         Vector3 to = current.Position + Vector3.up * current.Scale;
-                        Credit(a, current, damage);
+                        Credit(a, current, damage, Defs.SrcLightning);
                         current.Hp -= damage;
                         bool killed = current.Hp <= 0;
                         Shots.Add(new ShotEvent { Shooter = GadgetShooter(a.Id, GadgetLightning), Origin = from, End = to, Hit = true, Dealt = damage, Killed = killed });
@@ -1161,7 +1162,7 @@ namespace RiftWard.Sim
                     if (trigger != null || b.Life <= 0)
                     {
                         Bullets.Remove(b.Id);
-                        if (trigger != null) Explode(b.Position + Vector3.up * 0.5f, 3.5f, b.Damage, b.Owner, new Color32(0xff, 0xd1, 0x66, 255));
+                        if (trigger != null) Explode(b.Position + Vector3.up * 0.5f, 3.5f, b.Damage, b.Owner, new Color32(0xff, 0xd1, 0x66, 255), null, Defs.SrcMine);
                     }
                 }
                 else if (b.Kind == BulletKind.Missile)
@@ -1179,7 +1180,7 @@ namespace RiftWard.Sim
                         if (aim.magnitude < 0.8f + 0.5f * target.Scale)
                         {
                             Bullets.Remove(b.Id);
-                            Explode(b.Position, 2.2f, b.Damage, b.Owner, new Color32(0xff, 0x8a, 0x3d, 255));
+                            Explode(b.Position, 2.2f, b.Damage, b.Owner, new Color32(0xff, 0x8a, 0x3d, 255), null, Defs.SrcMissile);
                             continue;
                         }
                     }
@@ -1213,12 +1214,17 @@ namespace RiftWard.Sim
         }
 
         /// Adds damage to a player's contribution, counting only the health the enemy actually had left.
-        static void Credit(Actor a, Enemy e, float amount)
+        void Credit(Actor a, Enemy e, float amount, int source = Defs.SrcWeapon)
         {
-            if (a != null && e.Hp > 0) a.StatDamage += Mathf.Min(amount, e.Hp);
+            if (a == null || e.Hp <= 0) return;
+            float landed = Mathf.Min(amount, e.Hp);
+            a.StatDamage += landed;
+            a.SkillDamage[Mathf.Clamp(source, 0, a.SkillDamage.Length - 1)] += landed;
+            if (source != Defs.SrcWeapon && amount > 0)
+                Damages.Add(new DamageEvent { Owner = a.Id, Source = source, Position = e.Position + Vector3.up * (1.6f * e.Scale), Dealt = amount, Killed = amount >= e.Hp });
         }
 
-        void Explode(Vector3 position, float radius, float damage, int owner, Color32 color, HashSet<int> previousHits = null)
+        void Explode(Vector3 position, float radius, float damage, int owner, Color32 color, HashSet<int> previousHits = null, int source = Defs.SrcWeapon, int creditTo = -2)
         {
             foreach (var e in Enemies.Values.ToList())
             {
@@ -1227,7 +1233,7 @@ namespace RiftWard.Sim
                 if (d >= radius) continue;
                 float dealt = damage * (1f - 0.5f * d / radius);
                 if (previousHits != null && !previousHits.Add(e.Id)) dealt *= 0.5f;
-                if (Actors.TryGetValue(owner, out var credited)) Credit(credited, e, dealt);
+                if (Actors.TryGetValue(creditTo == -2 ? owner : creditTo, out var credited)) Credit(credited, e, dealt, source);
                 e.Hp -= dealt;
                 if (e.Hp <= 0) KillEnemy(e, owner);
             }
@@ -1330,7 +1336,7 @@ namespace RiftWard.Sim
                     bool known = Actors.TryGetValue(b.Owner, out var owner);
                     float mult = known ? owner.DamageMult * owner.SkillDamageMult : 1f;
                     float radius = Defs.GrenadeRadius * (known ? owner.SkillRadiusMult : 1f);
-                    Explode(b.Position + Vector3.up * 0.5f, radius, Defs.GrenadeDamage * (1f + 0.15f * Region) * mult, b.Owner, new Color32(0xff, 0xb3, 0x47, 255));
+                    Explode(b.Position + Vector3.up * 0.5f, radius, Defs.GrenadeDamage * (1f + 0.15f * Region) * mult, b.Owner, new Color32(0xff, 0xb3, 0x47, 255), null, Defs.SrcGrenade);
                 }
             }
         }
@@ -1757,7 +1763,7 @@ namespace RiftWard.Sim
                 case Defs.BuffDroneDamage: a.DroneDamageMult += 0.35f * m; break;
                 case Defs.BuffDroneRate: a.DroneRateMult = Mathf.Max(0.3f, a.DroneRateMult * (1f - 0.15f * m)); break;
                 case Defs.BuffPlasma:
-                    if (a.Plasma) a.PlasmaDamageMult += 0.4f * m;
+                    if (a.Plasma) a.PlasmaDamageMult += 0.25f * m;
                     else { a.Plasma = true; a.PlasmaTimer = 1.5f; }
                     break;
                 case Defs.BuffPlasmaRate: a.PlasmaRateMult = Mathf.Max(0.3f, a.PlasmaRateMult * (1f - 0.15f * m)); break;

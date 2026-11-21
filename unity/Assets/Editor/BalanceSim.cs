@@ -102,6 +102,50 @@ public static class BalanceSim
         Debug.Log("BURST REPORT\n" + report);
     }
 
+    /// 電漿砲: plays 困難 with the 中前期 profile and, at waves 5/10/15/20, compares the weakest regular enemy's life
+    /// with what a maxed plasma salvo deals at its centre (4 damage picks of each rarity, the profile's damage bonus
+    /// plus three rare 超載彈芯), with the live formula and the proposal.
+    public static void RunPlasma()
+    {
+        var p = Profiles[2];
+        var sim = new GameSim(4242);
+        var lo = new Loadout { Owned = new List<string> { "pistol", p.Weapon }, Equipped = new List<string> { p.Weapon, "pistol" } };
+        lo.Rarity[p.Weapon] = p.Rarity;
+        lo.Levels[p.Weapon] = new Dictionary<string, int> { ["damage"] = p.Level, ["mag"] = p.Level, ["reload"] = p.Level };
+        sim.AddActor(1, lo);
+        sim.StartMission(Region, 1);
+        sim.ApplyProfileBonus(1, p.Hp, p.Damage, p.Speed, p.Reload, p.Crit, p.HpPct, p.Def);
+        var a = sim.Actors[1];
+        a.Hp = a.MaxHp = 99999f;   // only the enemy life curve matters here
+        var rng = new System.Random(1);
+        var report = new StringBuilder("困難，中前期，第 2 關。中心傷害 / 該波最弱一般敵人的血量（≥100% = 一砲秒殺）\n");
+        float gearDamage = 1f + p.Damage / 100f, buffDamage = 1f + 3 * 0.2f * 1.6f;
+        int seq = 0, logged = 0;
+        int[] marks = { 5, 10, 15, 20 };
+        while (sim.State == MissionState.Playing && logged < marks.Length && sim.Elapsed < Cap)
+        {
+            if (sim.BuffPending) { if (sim.BuffOffers.TryGetValue(1, out var picks)) sim.ChooseBuff(1, picks[rng.Next(picks.Length)]); else sim.Tick(Dt); continue; }
+            a.Hp = a.MaxHp;
+            sim.Inputs[1] = sim.BotInput(a, ++seq);
+            sim.Tick(Dt);
+            if (sim.Wave == marks[logged] && sim.Enemies.Count > 0)
+            {
+                float weakest = sim.Enemies.Values.Where(e => !e.Boss && !e.Elite && e.Kind == Defs.KindGrunt).Select(e => e.MaxHp).DefaultIfEmpty(0).Min();
+                float scale = 1f + 0.15f * Region, mult = gearDamage * buffDamage;
+                report.AppendLine($"  第 {sim.Wave} 波（等級 {sim.Level}）一般敵人血量 {weakest:0}");
+                foreach (var (name, m) in new[] { ("普通", 1f), ("稀有", 1.6f), ("傳說", 2.5f) })
+                {
+                    float live = Defs.PlasmaDamage * scale * (1f + 4 * 0.4f * m) * mult;
+                    float proposal = 50f * scale * (1f + 4 * 0.25f * m) * (1f + 0.5f * (mult - 1f));
+                    report.AppendLine($"    {name}強化×4：現行 {live:0}（{live / weakest:P0}） → 提案 {proposal:0}（{proposal / weakest:P0}）");
+                }
+                logged++;
+            }
+        }
+        string path = Path.GetFullPath(Path.Combine(Application.dataPath, "..", "..", "build", "balance-plasma.txt"));
+        File.WriteAllText(path, report.ToString(), new UTF8Encoding(false));
+    }
+
     static DifficultyDef With(DifficultyDef d, float hp, float damage, int extra) =>
         new DifficultyDef(d.Name, d.Code, d.Summary, hp, damage, extra, d.Gold, d.Xp, d.Accent);
 

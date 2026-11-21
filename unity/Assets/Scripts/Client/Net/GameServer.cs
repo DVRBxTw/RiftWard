@@ -248,11 +248,11 @@ namespace RiftWard.Client
             // snapshot, but do not start combat until every remaining actor has sent their first input.
             if (MembersOf(room).Where(kv => sim.Actors.ContainsKey(kv.Key)).All(kv => kv.Value.ReceivedMissionInput))
                 sim.Tick(Time.fixedDeltaTime);
-            if (sim.Shots.Count + sim.Explosions.Count + sim.Announcements.Count > 0)
+            if (sim.Shots.Count + sim.Explosions.Count + sim.Announcements.Count + sim.Damages.Count > 0)
             {
                 var events = Protocol.Frame(Msg.Events, w => Protocol.WriteEvents(w, sim));
                 Broadcast(room, events);
-                sim.Shots.Clear(); sim.Explosions.Clear(); sim.Announcements.Clear();
+                sim.Shots.Clear(); sim.Explosions.Clear(); sim.Announcements.Clear(); sim.Damages.Clear();
             }
             foreach (var kv in MembersOf(room))
             {

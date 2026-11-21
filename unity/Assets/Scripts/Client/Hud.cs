@@ -29,6 +29,11 @@ namespace RiftWard.Client
         readonly List<(Text text, Vector3 world, float life)> floaters = new List<(Text, Vector3, float)>();
         readonly List<(RectTransform row, Text text, float life)> feed = new List<(RectTransform, Text, float)>();
         readonly List<(Image arc, float life)> damageArcs = new List<(Image, float)>();
+        /// 敵人接近: one red marker per 30° sector around the crosshair, for enemies close by that are off screen
+        /// (or right on top of you); brighter and bigger the closer they are.
+        const int ProximitySectors = 12;
+        const float ProximityRange = 9f, ProximityPoint = 3f, ProximityRadius = 175f;
+        readonly Image[] proximity = new Image[ProximitySectors];
         readonly List<Image> dots = new List<Image>();
         readonly Dictionary<int, int> lastEnemies = new Dictionary<int, int>();
         readonly HashSet<int> seen = new HashSet<int>();
@@ -154,6 +159,17 @@ namespace RiftWard.Client
             lowAmmo.alignment = TextAnchor.UpperCenter;
             lowAmmo.rectTransform.Place(new Vector2(0.5f, 0.5f), new Vector2(0, -60), new Vector2(300, 20), new Vector2(0.5f, 1));
             damageLayer = Ui.Rect(root, "Damage").Place(new Vector2(0.5f, 0.5f), Vector2.zero, Vector2.zero);
+            for (int i = 0; i < ProximitySectors; i++)
+            {
+                var mark = Ui.Box(damageLayer, Palette.Danger, "Proximity");
+                mark.raycastTarget = false;
+                mark.rectTransform.pivot = new Vector2(0.5f, 0.5f);
+                float angle = i * Mathf.PI * 2f / ProximitySectors;
+                mark.rectTransform.anchoredPosition = new Vector2(Mathf.Sin(angle), Mathf.Cos(angle)) * ProximityRadius;
+                mark.rectTransform.localRotation = Quaternion.Euler(0, 0, -angle * Mathf.Rad2Deg);
+                mark.enabled = false;
+                proximity[i] = mark;
+            }
 
             // ---- bottom-left vitals panel
             var vitals = Panel(root, new Vector2(0, 0), new Vector2(28, 24), new Vector2(392, 132), new Vector2(0, 0), Palette.Bone);
@@ -456,6 +472,7 @@ namespace RiftWard.Client
             feed.Clear();
             foreach (var d in damageArcs) Object.Destroy(d.arc.gameObject);
             damageArcs.Clear();
+            foreach (var m in proximity) if (m != null) m.enabled = false;
             lastEnemies.Clear();
         }
 
@@ -490,6 +507,59 @@ namespace RiftWard.Client
             label.rectTransform.Fill().offsetMax = new Vector2(-10, 0);
             feed.Insert(0, (row, label, 4f));
             while (feed.Count > 4) { Object.Destroy(feed[feed.Count - 1].row.gameObject); feed.RemoveAt(feed.Count - 1); }
+        }
+
+        void UpdateProximity(GameSim sim, Actor local, Vector3 fwd, Vector3 right, Camera camera)
+        {
+            var nearest = new float[ProximitySectors];
+            for (int i = 0; i < ProximitySectors; i++) nearest[i] = float.MaxValue;
+            if (local.Alive && sim.State == MissionState.Playing)
+                foreach (var e in sim.Enemies.Values)
+                {
+                    if (e.Hp <= 0) continue;
+                    var w = e.Position - local.Position; w.y = 0;
+                    float d = w.magnitude;
+                    if (d > ProximityRange) continue;
+                    // Enemies you can already see are left alone, unless they are right on top of you.
+                    Vector3 vp = camera.WorldToViewportPoint(e.Position + Vector3.up * e.Scale);
+                    bool onScreen = vp.z > 0 && vp.x > 0.08f && vp.x < 0.92f && vp.y > 0.08f && vp.y < 0.92f;
+                    if (onScreen && d > ProximityPoint) continue;
+                    float angle = Mathf.Atan2(Vector3.Dot(w, right), Vector3.Dot(w, fwd));
+                    int sector = Mathf.RoundToInt(Mathf.Repeat(angle, Mathf.PI * 2f) / (Mathf.PI * 2f) * ProximitySectors) % ProximitySectors;
+                    nearest[sector] = Mathf.Min(nearest[sector], d);
+                }
+            for (int i = 0; i < ProximitySectors; i++)
+            {
+                var mark = proximity[i];
+                if (nearest[i] == float.MaxValue) { mark.enabled = false; continue; }
+                float close = 1f - Mathf.Clamp01((nearest[i] - 1f) / (ProximityRange - 1f));
+                float pulse = nearest[i] < ProximityPoint ? 0.15f * Mathf.Sin(Time.time * 14f) : 0f;
+                mark.enabled = true;
+                mark.rectTransform.sizeDelta = new Vector2(Mathf.Lerp(34f, 78f, close), Mathf.Lerp(5f, 11f, close));
+                mark.color = new Color(Palette.Danger.r, Palette.Danger.g, Palette.Danger.b, Mathf.Clamp01(Mathf.Lerp(0.3f, 0.9f, close) + pulse));
+            }
+        }
+
+        static readonly Color[] SourceColors =
+        {
+            Palette.Bone, new Color(0.45f, 0.85f, 1f), new Color(0.72f, 0.58f, 1f), new Color(0.6f, 1f, 0.8f), new Color(1f, 0.82f, 0.4f),
+            new Color(1f, 0.6f, 0.35f), new Color(0.6f, 0.8f, 1f), new Color(1f, 0.72f, 0.3f), new Color(1f, 0.55f, 0.3f),
+        };
+        int skillNumbersFrame = -1, skillNumbersThisFrame;
+
+        /// A skill or gadget hit by this player: a smaller number in the skill's colour, kills in bold.
+        public void OnSkillDamage(DamageEvent hit, Camera camera)
+        {
+            if (hit.Dealt < 0.5f) return;
+            // A blast through a packed wave can land dozens of hits at once; keep the screen readable.
+            if (Time.frameCount != skillNumbersFrame) { skillNumbersFrame = Time.frameCount; skillNumbersThisFrame = 0; }
+            if (++skillNumbersThisFrame > 14) return;
+            var color = SourceColors[Mathf.Clamp(hit.Source, 0, SourceColors.Length - 1)];
+            var t = Mono(floaterLayer, Mathf.RoundToInt(hit.Dealt).ToString(), hit.Killed ? 17 : 13, color);
+            t.alignment = TextAnchor.MiddleCenter;
+            t.fontStyle = hit.Killed ? FontStyle.Bold : FontStyle.Normal;
+            t.rectTransform.sizeDelta = new Vector2(80, 26);
+            floaters.Add((t, hit.Position + new Vector3(Random.Range(-0.35f, 0.35f), Random.Range(0f, 0.3f), Random.Range(-0.35f, 0.35f)), 0.7f));
         }
 
         void AddDamageArc(float angle)
@@ -686,6 +756,7 @@ namespace RiftWard.Client
                     arc.color = new Color(Palette.Danger.r, Palette.Danger.g, Palette.Danger.b, life);
                     damageArcs[i] = (arc, life);
                 }
+                UpdateProximity(sim, local, fwd, right, camera);
 
                 bool low = local.Alive && local.Hp <= local.MaxHp * 0.3f;
                 float alpha = low ? 0.45f + 0.25f * Mathf.Sin(Time.time * 6) : Mathf.Clamp01(damageFlash * 1.8f);
