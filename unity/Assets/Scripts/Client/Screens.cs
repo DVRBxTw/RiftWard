@@ -559,7 +559,7 @@ namespace RiftWard.Client
         {
             var r = Begin("account");
             bool registering = !login;
-            var sheet = Ui.Box(r, Palette.Sheet, "Sheet").rectTransform.Place(new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(520, 600));
+            var sheet = Ui.Box(r, Palette.Sheet, "Sheet").rectTransform.Place(new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(520, 640));
             Ui.Box(sheet, Palette.Amber, "Rule").rectTransform.Place(new Vector2(0.5f, 1), Vector2.zero, new Vector2(520, 2), new Vector2(0.5f, 1));
             var stack = Ui.VStack(sheet, 10);
             stack.Fill();
@@ -1719,12 +1719,12 @@ namespace RiftWard.Client
             guide.anchorMin = new Vector2(0.64f, 0); guide.anchorMax = new Vector2(1, 1);
             guide.offsetMin = new Vector2(12, 0); guide.offsetMax = new Vector2(0, -60);
             TopRule(guide, Palette.Amber);
-            var g = Ui.VStack(guide, 10);
+            // Sized to fit a 1280 x 800 canvas: four tiers plus six regions used to run off the bottom of the screen.
+            var g = Ui.VStack(guide, 6);
             g.Fill();
-            g.GetComponent<VerticalLayoutGroup>().padding = new RectOffset(28, 28, 24, 22);
-            Caps(g, "DIFFICULTY", Palette.Amber).Sized(16);
-            Ui.Label(g, "難度與通關紀錄", 24, Palette.Bone, TextAnchor.UpperLeft, true).Sized(32);
-            Ui.Label(g, "在區域通關後，該區域會開放下一級難度。難度越高，金幣與經驗越多。", 13, Palette.Muted).Sized(38);
+            g.GetComponent<VerticalLayoutGroup>().padding = new RectOffset(28, 28, 20, 16);
+            Ui.Label(g, "難度與通關紀錄", 22, Palette.Bone, TextAnchor.UpperLeft, true).Sized(30);
+            Ui.Label(g, "區域通關後開放下一級難度，難度越高金幣與經驗越多。", 12, Palette.Muted).Sized(18);
             foreach (var def in Defs.Difficulties)
             {
                 var row = Ui.Rect(g, "Tier").Sized(58);
@@ -2688,8 +2688,8 @@ namespace RiftWard.Client
             pad.offsetMin = new Vector2(48, 36); pad.offsetMax = new Vector2(-48, -NavHeight - 28);
             float tabsEnd = MissionTabs(pad, 2);
             int done = p.Achievements.Sum(a => a.Claimed), total = p.Achievements.Count * 3;
-            Ui.Label(pad, $"已完成 {done} / {total} 階 · 每階都有獎勵，部分成就的金階附贈稱號", 13, Palette.Muted, TextAnchor.MiddleLeft)
-                .rectTransform.Place(new Vector2(0, 1), new Vector2(tabsEnd, 0), new Vector2(420, 40), new Vector2(0, 1));
+            Ui.Label(pad, $"已完成 {done} / {total} 階", 13, Palette.Muted, TextAnchor.MiddleLeft)
+                .rectTransform.Place(new Vector2(0, 1), new Vector2(tabsEnd, 0), new Vector2(130, 40), new Vector2(0, 1));
 
             // Worn title and the button that changes it, top right.
             var titleBox = Ui.Rect(pad, "Title").Place(new Vector2(1, 1), Vector2.zero, new Vector2(330, 40), new Vector2(1, 1));
@@ -2698,13 +2698,14 @@ namespace RiftWard.Client
                 .rectTransform.Place(new Vector2(0, 0.5f), new Vector2(62, 0), new Vector2(140, 40), new Vector2(0, 0.5f));
             Ui.Button(titleBox, "更換稱號", ShowTitlePicker, 14, Palette.Amber, new Color(0, 0, 0, 0), Palette.Amber)
                 .GetComponent<RectTransform>().Place(new Vector2(1, 0.5f), Vector2.zero, new Vector2(110, 36), new Vector2(1, 0.5f));
-            achievementStatus = Ui.Label(pad, "", 14, Palette.Amber, TextAnchor.MiddleRight);
-            achievementStatus.rectTransform.Place(new Vector2(1, 1), new Vector2(-346, 0), new Vector2(360, 40), new Vector2(1, 1));
+            // Status sits in the gap under the header row, so it never covers the title or the claim-all button.
+            achievementStatus = Ui.Label(pad, "", 13, Palette.Amber, TextAnchor.MiddleRight);
+            achievementStatus.rectTransform.Place(new Vector2(1, 1), new Vector2(0, -40), new Vector2(620, 20), new Vector2(1, 1));
             // 一鍵領取: every reached tier at once, shown only while something is waiting.
             int ready = p.Achievements.Count(a => a.CanClaim);
             if (ready > 0)
                 PrimaryButton(pad, $"一鍵領取（{ready}）", ClaimAllAchievements, 14).GetComponent<RectTransform>()
-                    .Place(new Vector2(0, 1), new Vector2(tabsEnd + 430, -2), new Vector2(130, 36), new Vector2(0, 1));
+                    .Place(new Vector2(0, 1), new Vector2(tabsEnd + 140, -2), new Vector2(130, 36), new Vector2(0, 1));
 
             if (p.Achievements.Count == 0)
             {

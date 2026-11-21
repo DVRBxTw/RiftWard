@@ -1521,6 +1521,7 @@ class Store:
             data = {}
         return {k: v for k, v in data.items() if v in GRADE_ORDER} if isinstance(data, dict) else {}
 
+    @_locked
     def record_stats(self, account_id: int, stats):
         """Adds one mission's combat record (reported by the game server) to lifetime stats."""
         if not isinstance(stats, dict):
@@ -2621,12 +2622,15 @@ class Handler(BaseHTTPRequestHandler):
             if self.path in ("/api/server/reward", "/api/server/profile"):
                 try:
                     if self.path.endswith("reward"):
-                        if "stats" in data:
-                            store.verify_reward(data.get("account_id"), data.get("gold"), data.get("stats"))
-                            store.record_stats(data.get("account_id"), data.get("stats"))
-                            st = data["stats"]
-                            store.add_xp(data.get("account_id"), mission_xp(st))
-                        profile = store.reward(data.get("account_id"), data.get("gold"))
+                        # One mission result is applied as a unit: no player action (a daily claim, a salvage) can
+                        # interleave between its stats, XP and gold and overwrite one of them.
+                        with store.lock:
+                            if "stats" in data:
+                                store.verify_reward(data.get("account_id"), data.get("gold"), data.get("stats"))
+                                store.record_stats(data.get("account_id"), data.get("stats"))
+                                st = data["stats"]
+                                store.add_xp(data.get("account_id"), mission_xp(st))
+                            profile = store.reward(data.get("account_id"), data.get("gold"))
                     else:
                         account_id = data.get("account_id")
                         if isinstance(account_id, float) and account_id.is_integer():

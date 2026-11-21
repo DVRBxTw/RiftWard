@@ -131,8 +131,13 @@ namespace RiftWard.Client
         public static string ItemName(string slot, int rarity) =>
             ItemNames.TryGetValue(slot, out var names) ? names[Mathf.Clamp(rarity, 0, names.Length - 1)] : slot;
 
-        public static string WeaponName(string weapon, int rarity) =>
-            $"{WeaponPrefix[Mathf.Clamp(rarity, 0, WeaponPrefix.Length - 1)]} {(Defs.Weapons.TryGetValue(weapon, out var w) ? w.Name : weapon)}";
+        public static string WeaponName(string weapon, int rarity)
+        {
+            string prefix = WeaponPrefix[Mathf.Clamp(rarity, 0, WeaponPrefix.Length - 1)];
+            string name = Defs.Weapons.TryGetValue(weapon, out var w) ? w.Name : weapon;
+            // "P-9 制式手槍" already says 制式: no "制式 P-9 制式手槍".
+            return name.Contains(prefix) ? name : $"{prefix} {name}";
+        }
 
         public static string StatText(string key, float value) => key switch
         {
