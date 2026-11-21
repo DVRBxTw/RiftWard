@@ -40,6 +40,9 @@ namespace RiftWard.Client
             public List<int> Friends = new List<int>();
             /// Send times of recent chat messages, for the rate limit.
             public readonly Queue<float> ChatTimes = new Queue<float>();
+            /// One-shot keys (Q, Shift, X) seen since the last tick: a short tap can arrive and be overwritten by the next
+            /// input before the sim runs, so they are held here until a tick has used them.
+            public bool TapSkill, TapDash, TapUlt;
             /// When this player joined the PvP queue (-1 = not queued).
             public float QueuedAt = -1f;
             public int AccountId => Profile?.Id ?? 0;
@@ -255,7 +258,17 @@ namespace RiftWard.Client
             // Loading the world can take longer on a four-player deployment. Keep publishing the initial
             // snapshot, but do not start combat until every remaining actor has sent their first input.
             if (MembersOf(room).Where(kv => sim.Actors.ContainsKey(kv.Key)).All(kv => kv.Value.ReceivedMissionInput))
+            {
                 sim.Tick(Time.fixedDeltaTime);
+                // The tick has seen this frame's taps: clear them on the players and on the stored inputs.
+                foreach (var kv in MembersOf(room))
+                {
+                    var m = kv.Value;
+                    if (!(m.TapSkill || m.TapDash || m.TapUlt)) continue;
+                    m.TapSkill = m.TapDash = m.TapUlt = false;
+                    if (sim.Inputs.TryGetValue(kv.Key, out var used)) { used.Skill = used.Dash = used.Ult = false; sim.Inputs[kv.Key] = used; }
+                }
+            }
             if (sim.Shots.Count + sim.Explosions.Count + sim.Announcements.Count + sim.Damages.Count > 0)
             {
                 var events = Protocol.Frame(Msg.Events, w => Protocol.WriteEvents(w, sim));
@@ -526,6 +539,8 @@ namespace RiftWard.Client
                             }
                             p.ClientSeq = input.Seq;
                             if (p.Bot) { p.LastInput = clock; break; }   // the computer keeps playing until they act
+                            p.TapSkill |= input.Skill; p.TapDash |= input.Dash; p.TapUlt |= input.Ult;
+                            input.Skill |= p.TapSkill; input.Dash |= p.TapDash; input.Ult |= p.TapUlt;
                             sim.Inputs[id] = input;
                             p.LastInput = clock;
                             p.ReceivedMissionInput = true;

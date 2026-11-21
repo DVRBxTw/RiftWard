@@ -11,6 +11,8 @@ namespace RiftWard.Client
         public int Rarity, Level;
         /// 突破 tier (0-3) and set id ("" = none).
         public int Limit;
+        /// 命之座 (0-6), raised by feeding another piece of the same slot and rarity.
+        public int Constellation;
         /// Damage reduction (%) from enhancement and 突破, worked out by the server.
         public float Defense;
         public string Set = "";
@@ -28,12 +30,13 @@ namespace RiftWard.Client
             if (baseStats != null) foreach (var kv in baseStats) item.Base[kv.Key] = kv.Value is double n ? (int)n : 0;
             item.Level = Mathf.Clamp(d.Int("level"), 0, Gear.MaxLevel);
             item.Limit = Mathf.Clamp(d.Int("limit"), 0, Gear.LimitMax);
+            item.Constellation = Mathf.Clamp(d.Int("const"), 0, Defs.ConstellationMax);
             item.Defense = d.TryGetValue("defense", out var dv) && dv is double dd ? (float)dd : 0f;
             item.Set = Gear.Sets.ContainsKey(d.Str("set")) ? d.Str("set") : "";
             return item;
         }
 
-        public string Name => Gear.ItemName(Slot, Rarity) + (Level > 0 ? $" +{Level}" : "") + (Limit > 0 ? $" ★{Limit}" : "");
+        public string Name => Gear.ItemName(Slot, Rarity) + (Level > 0 ? $" +{Level}" : "") + (Limit > 0 ? $" ★{Limit}" : "") + (Constellation > 0 ? $" C{Constellation}" : "");
         public string SetName => Set != "" ? Gear.Sets[Set].name : "";
         public bool Maxed => Level >= Gear.MaxLevel;
         /// 突破 opens at +5 (enhancement itself goes on to +10).
@@ -61,6 +64,8 @@ namespace RiftWard.Client
         /// Gear enhancement; mirrors GEAR_UPGRADE_BASE / GEAR_MAX_LEVEL in server/service.py.
         /// Mirrors gear_upgrade_cost / gear_upgrade_shards in server/service.py: +10 cap, steeper gold and shards past +5.
         public const int MaxLevel = 10, LimitLevel = 5;
+        /// Gear bag size (mirrors INVENTORY_LIMIT in server/service.py).
+        public const int InventoryLimit = 200;
         public static readonly int[] UpgradeBase = { 100, 175, 300, 500, 800 };
         public static int UpgradeCost(int rarity, int level) =>
             (int)System.Math.Round(UpgradeBase[Mathf.Clamp(rarity, 0, 4)] * (level + 1) * System.Math.Pow(1.5, System.Math.Max(0, level - LimitLevel + 1)), System.MidpointRounding.ToEven);

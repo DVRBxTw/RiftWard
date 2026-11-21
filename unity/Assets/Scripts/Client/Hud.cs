@@ -827,13 +827,14 @@ namespace RiftWard.Client
                 weaponName.color = Gear.RarityColors[rarity];
                 if (Changed(weaponRarity, ((long)rarity << 32) | (long)Mathf.RoundToInt(local.Damage))) weaponRarity.text = $"{Gear.RarityNames[rarity]}  ·  傷害 {local.Damage:0}";
                 bool melee = local.Melee;
-                bool reloading = !melee && local.Reload > 0;
-                bool lowMag = !melee && !reloading && local.Ammo <= Mathf.Max(1, local.Mag / 5);
-                if (Changed(ammo, melee ? -2 : reloading ? -1 : local.Ammo)) ammo.text = melee ? "近戰" : reloading ? "換彈" : local.Ammo.ToString();
+                bool endless = local.WeaponId == "minigun";   // infinite ammo: the heat bar is the limit
+                bool reloading = !melee && !endless && local.Reload > 0;
+                bool lowMag = !melee && !endless && !reloading && local.Ammo <= Mathf.Max(1, local.Mag / 5);
+                if (Changed(ammo, melee ? -2 : endless ? -3 : reloading ? -1 : local.Ammo)) ammo.text = melee ? "近戰" : endless ? "∞" : reloading ? "換彈" : local.Ammo.ToString();
                 ammo.fontSize = reloading || melee ? 30 : 56;
                 ammo.color = reloading || lowMag ? Palette.Amber : Palette.Bone;
-                if (Changed(ammoMax, melee ? -1 : local.Mag)) ammoMax.text = melee ? "" : $"/ {local.Mag}";
-                reloadBar.Value = reloading ? 1f - local.Reload / local.ReloadTime : (float)local.Ammo / Mathf.Max(1, local.Mag);
+                if (Changed(ammoMax, melee || endless ? -1 : local.Mag)) ammoMax.text = melee ? "" : endless ? "無限彈藥" : $"/ {local.Mag}";
+                reloadBar.Value = reloading ? 1f - local.Reload / local.ReloadTime : endless ? 1f : (float)local.Ammo / Mathf.Max(1, local.Mag);
                 reloadBar.Color = reloading ? Palette.Amber : Palette.Bone;
                 lowAmmo.text = lowMag && local.Alive ? (local.Ammo == 0 ? $"彈匣已空 · 按 {Bindings.Name(Bindings.Action.Reload)} 換彈" : $"彈藥不足 · 按 {Bindings.Name(Bindings.Action.Reload)} 換彈") : "";
                 bool minigun = local.WeaponId == "minigun";

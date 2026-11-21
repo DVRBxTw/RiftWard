@@ -1040,6 +1040,43 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(board["me"]["rank"], 3)
         self.assertEqual(board["me"]["matches"], 1)
 
+    def test_gear_constellation(self):
+        account = self.register()
+        auth = {"Authorization":"Bearer "+account["token"]}
+        aid = account["profile"]["id"]
+        base = {"hp": 20}
+        def piece(i, rarity=2, slot="armor", level=0):
+            return {"id": f"g{i}", "slot": slot, "rarity": rarity, "stats": dict(base), "level": level}
+        bag = [piece(0), piece(1, level=3), piece(2), piece(3, rarity=1), piece(4, slot="boots")] + [piece(10 + n) for n in range(6)]
+        with self.store.connect() as db:
+            db.execute("UPDATE progress SET gear=?, gold=100000 WHERE account_id=?", (service.json.dumps({"inventory": bag, "equipped": {"armor": "g0"}}), aid))
+        before = self.call("/api/me", {}, auth)[1]["profile"]
+        hp0 = next(i for i in before["inventory"] if i["id"] == "g0")["stats"]["hp"]
+        # The worn piece can be raised; the material is the least-invested spare of the same slot and rarity.
+        code, r = self.call("/api/gear/constellation", {"item": "g0"}, auth)
+        self.assertEqual(code, 200)
+        inv = {i["id"]: i for i in r["profile"]["inventory"]}
+        self.assertEqual(inv["g0"]["const"], 1)
+        self.assertIn("g1", inv)            # the +3 piece is kept, a +0 one was used
+        self.assertNotIn("g2", inv)
+        self.assertIn("g3", inv); self.assertIn("g4", inv)   # other rarity / slot never used
+        self.assertEqual(r["profile"]["gold"], 100000 - service.CONST_GOLD[0])
+        for _ in range(5):
+            self.assertEqual(self.call("/api/gear/constellation", {"item": "g0"}, auth)[0], 200)
+        top = next(i for i in self.call("/api/me", {}, auth)[1]["profile"]["inventory"] if i["id"] == "g0")
+        self.assertEqual(top["const"], 6)
+        self.assertGreater(top["stats"]["hp"], hp0)
+        self.assertEqual(top["defense"], service.GEAR_CONST_C3_DEF)   # C3 bonus, no levels
+        self.assertEqual(self.call("/api/gear/constellation", {"item": "g0"}, auth)[1]["error"], "命之座已達上限")
+        self.assertEqual(self.call("/api/gear/constellation", {"item": "g3"}, auth)[1]["error"], "稀世以上的裝備才能升命之座")
+        self.assertEqual(self.call("/api/gear/constellation", {"item": "g4"}, auth)[1]["error"], "需要一件未裝備、同部位且同稀有度的裝備作為素材")
+
+    def test_endless_pays_more_account_xp(self):
+        run = {"kills": 600, "wave": 40, "victory": False, "difficulty": 0}
+        self.assertEqual(service.mission_xp(run), 800)
+        self.assertEqual(service.mission_xp({**run, "endless": True}), round((800 + 40 * 8) * 1.5))
+        self.assertEqual(service.mission_xp({**run, "endless": True, "difficulty": 2}), round((800 + 320) * 1.5 * 1.5))
+
     def test_claim_all_achievements(self):
         account = self.register()
         auth = {"Authorization":"Bearer "+account["token"]}

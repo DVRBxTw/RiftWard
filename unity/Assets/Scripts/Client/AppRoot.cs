@@ -326,7 +326,7 @@ namespace RiftWard.Client
                     int finishedWave = Client.Sim?.Wave ?? 0;
                     var progress = Profile == null ? null : new Menus.ResultProgress
                     {
-                        Xp = Defs.MissionXp(record[0], finishedWave, success, finishedTier), Level = Profile.Level, LevelXp = Profile.LevelXp,
+                        Xp = Defs.MissionXp(record[0], finishedWave, success, finishedTier, Client.Sim?.Endless ?? false), Level = Profile.Level, LevelXp = Profile.LevelXp,
                         Wave = finishedWave, BestWave = Profile.BestWave,
                         Unlocked = success && finishedTier > clearedAtDeploy && finishedTier + 1 < Defs.Difficulties.Length ? finishedTier + 1 : -1,
                         FirstClearKeys = success && finishedTier > clearedAtDeploy ? Defs.FirstClearKeys(finishedTier) : 0,
@@ -1039,6 +1039,9 @@ namespace RiftWard.Client
             Screens.ShowCraftForCapture();
             yield return Settle(0.3f);
             yield return Shot(folder, "unity-craft");
+            Screens.BagFullForCapture(196, 10);
+            yield return Settle(0.2f);
+            yield return Shot(folder, "unity-bag-full");
             Screens.SetGearFilter("");
             Screens.ShowShop();
             yield return Settle(0.4f);

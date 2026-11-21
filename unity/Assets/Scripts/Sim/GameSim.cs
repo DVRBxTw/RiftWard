@@ -106,7 +106,7 @@ namespace RiftWard.Sim
         {
             Region = Mathf.Clamp(region, 0, Defs.Regions.Length - 1);
             Difficulty = Mathf.Clamp(difficulty, 0, Defs.Difficulties.Length - 1);
-            Enemies.Clear(); Bullets.Clear(); Pickups.Clear(); Inputs.Clear(); BuffOffers.Clear(); tornadoHits.Clear(); Pvp = false;
+            Enemies.Clear(); Bullets.Clear(); Pickups.Clear(); Inputs.Clear(); BuffOffers.Clear(); tornadoHits.Clear(); Pvp = false; history.Clear();
             Wave = 0; WaveDelay = 1.8f; Elapsed = 0; Kills = 0;
             Level = 1; Xp = 0; XpNeed = Defs.XpForLevel(1); PendingLevels = 0; BuffPending = false; SuperRounds = 0; SuperPick = 0;
             WaveGrades.Clear(); waveScores.Clear(); waveWeights.Clear(); waveGraded = true; waveDamage = 0;
@@ -442,12 +442,12 @@ namespace RiftWard.Sim
                     {
                         // P-9 perk: faster fire for a moment after a kill. The minigun fires faster as it spins up.
                         a.FireCooldown = Mathf.Max(-dt, a.FireCooldown) + a.FireInterval / (a.PerkHaste > 0 ? 1f + PerkStrength(a, 0.4f) : 1f) / (minigun ? a.Spin : 1f);
-                        a.Ammo--;
+                        if (!minigun) a.Ammo--;   // the minigun never runs dry: only heat stops it
                         Vector3 aim = input.Aim == Vector3.zero ? a.Position + Vector3.up + LookDirection(a.Yaw, 0) * 30f : CheckedAim(a, input);
                         Fire(a.Id, aim);
                         if (minigun)
                         {
-                            a.Heat += 1f / Defs.MinigunHeatShots;
+                            a.Heat += 1f / Defs.MinigunHeatShotsFor(a.Mag);
                             if (a.Heat >= 1f) { a.Heat = 1f; a.Overheat = Defs.MinigunCool * (1f - PerkStrength(a, 0.3f)); }
                         }
                         if (a.Ammo <= 0) StartReload(a);
@@ -496,6 +496,52 @@ namespace RiftWard.Sim
             foreach (var a in Actors.Values)
                 if (hpBefore.TryGetValue(a.Id, out var before) && a.Hp < before && !(a.IsAdmin && a.Admin.God)) waveDamage += before - a.Hp;
             if (!waveGraded && Wave > 0 && Enemies.Count == 0) GradeWave();
+            RecordHistory();
+        }
+
+        // ------------------------------------------------------------ lag compensation
+
+        /// Where every enemy and player stood at the end of recent ticks (what the snapshots showed), oldest first.
+        readonly List<(float time, Dictionary<int, Vector3> enemies, Dictionary<int, Vector3> actors)> history =
+            new List<(float, Dictionary<int, Vector3>, Dictionary<int, Vector3>)>();
+
+        void RecordHistory()
+        {
+            var e = new Dictionary<int, Vector3>(Enemies.Count);
+            foreach (var kv in Enemies) e[kv.Key] = kv.Value.Position;
+            var a = new Dictionary<int, Vector3>(Actors.Count);
+            foreach (var kv in Actors) a[kv.Key] = kv.Value.Position;
+            history.Add((Elapsed, e, a));
+            while (history.Count > 0 && history[0].time < Elapsed - Defs.RewindHistory) history.RemoveAt(0);
+        }
+
+        /// Runs a hit test with targets moved back to where this shooter saw them, then puts everything back. Targets
+        /// that died meanwhile stay gone; ones that appeared since stay where they are.
+        void Rewound(Actor shooter, System.Action test)
+        {
+            Inputs.TryGetValue(shooter.Id, out var input);
+            float rewind = Mathf.Clamp(input.RewindMs / 1000f, 0f, Defs.MaxRewind);
+            if (rewind < 0.005f || history.Count == 0) { test(); return; }
+            float at = Elapsed - rewind;
+            // The two recorded ticks around that moment, blended.
+            int i = history.FindIndex(h => h.time >= at);
+            var newer = history[i < 0 ? history.Count - 1 : i];
+            var older = i > 0 ? history[i - 1] : newer;
+            float k = newer.time > older.time ? Mathf.Clamp01((at - older.time) / (newer.time - older.time)) : 1f;
+            Vector3 Past(Dictionary<int, Vector3> o, Dictionary<int, Vector3> n, int id, Vector3 now) =>
+                n.TryGetValue(id, out var b) ? (o.TryGetValue(id, out var a) ? Vector3.Lerp(a, b, k) : b) : now;
+            var savedEnemies = new Dictionary<Enemy, Vector3>();
+            foreach (var e in Enemies.Values) { savedEnemies[e] = e.Position; e.Position = Past(older.enemies, newer.enemies, e.Id, e.Position); }
+            var savedActors = new Dictionary<Actor, Vector3>();
+            if (Pvp)
+                foreach (var o in Actors.Values)
+                    if (o.Id != shooter.Id) { savedActors[o] = o.Position; o.Position = Past(older.actors, newer.actors, o.Id, o.Position); }
+            try { test(); }
+            finally
+            {
+                foreach (var kv in savedEnemies) kv.Key.Position = kv.Value;
+                foreach (var kv in savedActors) kv.Key.Position = kv.Value;
+            }
         }
 
         /// Damage taken since the last check is reduced by each player's armour. Hits leave health below zero until
@@ -560,6 +606,7 @@ namespace RiftWard.Sim
 
         void UpdateAmmo(Actor a, PlayerInput input, float dt)
         {
+            if (a.WeaponId == "minigun") { a.Reload = 0; a.Ammo = a.Mag; return; }   // infinite ammo: no reloads
             if (a.Reload > 0)
             {
                 a.Reload = Mathf.Max(0, a.Reload - dt);
@@ -804,7 +851,9 @@ namespace RiftWard.Sim
             return best;
         }
 
-        public void Fire(int id, Vector3 target)
+        public void Fire(int id, Vector3 target) => Rewound(Actors[id], () => FireNow(id, target));
+
+        void FireNow(int id, Vector3 target)
         {
             var a = Actors[id];
             Vector3 origin = a.Position + Vector3.up * Defs.EyeHeight;
@@ -940,7 +989,9 @@ namespace RiftWard.Sim
 
         /// One sword swing: every enemy within reach inside the frontal arc (and not behind cover) is hit, nearest
         /// first, up to MeleeCleave. A swing that hits nothing still reports a miss so clients play the swing.
-        public void Swing(Actor a)
+        public void Swing(Actor a) => Rewound(a, () => SwingNow(a));
+
+        void SwingNow(Actor a)
         {
             Vector3 eye = a.Position + Vector3.up * Defs.EyeHeight;
             Vector3 forward = LookDirection(a.Yaw, 0);

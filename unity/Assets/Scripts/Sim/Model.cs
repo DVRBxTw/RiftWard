@@ -13,6 +13,8 @@ namespace RiftWard.Sim
         public bool Fire, Dash, Jump, Descend, Reload, Skill, Interact;
         /// 大招 (X): cast the tornado.
         public bool Ult;
+        /// How far behind the server this client's view is (ms): shots are judged against targets rewound by it.
+        public int RewindMs;
         /// Melee weapons: guard against bullets from the front (right mouse).
         public bool Block;
         public int Slot;

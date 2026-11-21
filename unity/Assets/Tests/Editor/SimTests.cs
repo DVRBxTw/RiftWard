@@ -28,6 +28,63 @@ namespace RiftWard.Tests
         }
 
         [Test]
+        public void MinigunHasInfiniteAmmoButStillOverheats()
+        {
+            var lo = new Loadout { Owned = new System.Collections.Generic.List<string> { "minigun" }, Equipped = new System.Collections.Generic.List<string> { "minigun" } };
+            var sim = NewMission(lo); sim.Enemies.Clear(); sim.WaveDelay = 999;
+            PlaceEnemy(sim, new Vector3(0, 0, 30f), 1e9f);
+            var a = sim.Actors[1];
+            Assert.AreEqual("minigun", a.WeaponId);
+            int mag = a.Mag;
+            bool overheated = false;
+            int shotsBefore = a.StatShots;
+            for (int i = 0; i < 600; i++)
+            {
+                sim.Inputs[1] = new PlayerInput { Fire = true, Aim = a.Position + new Vector3(0, 1.6f, 30f), Reload = true };
+                sim.Tick(0.02f);
+                Assert.AreEqual(mag, a.Ammo, "the drum never empties");
+                Assert.AreEqual(0f, a.Reload, "and never reloads, even when asked");
+                overheated |= a.Overheat > 0;
+            }
+            Assert.Greater(a.StatShots - shotsBefore, mag, "fired more than a full drum in one go");
+            Assert.IsTrue(overheated, "heat still locks the gun");
+        }
+
+        [Test]
+        public void ShotsAreJudgedWhereTheShooterSawTheTarget()
+        {
+            // An enemy strafing sideways at 5 m/s, 8 m ahead. The shooter aims where it was 0.2 s ago.
+            GameSim Setup(out Enemy e, out Vector3 seen)
+            {
+                var sim = NewMission(); sim.Enemies.Clear(); sim.WaveDelay = 999;
+                e = PlaceEnemy(sim, new Vector3(-2f, 0, 8f), 10000);
+                e.Speed = 0;
+                Vector3 start = e.Position;
+                for (int i = 0; i < 10; i++) { sim.Tick(0.02f); e.Position += new Vector3(5f * 0.02f, 0, 0); }   // 0.2 s, 1 m
+                seen = start + Vector3.up;   // where the client still shows it
+                return sim;
+            }
+            var a = Setup(out var e1, out var seen1);
+            a.Inputs[1] = new PlayerInput { RewindMs = 200 };
+            a.Fire(1, seen1);
+            Assert.Less(e1.Hp, 10000f, "rewound to what the shooter saw: hit");
+            Assert.AreEqual(seen1.x + 1f, e1.Position.x, 0.05f, "and the enemy is back where it really is");
+            var b = Setup(out var e2, out var seen2);
+            b.Inputs[1] = new PlayerInput { RewindMs = 0 };
+            b.Fire(1, seen2 + new Vector3(0, 0, 0));
+            Assert.AreEqual(10000f, e2.Hp, 0.01f, "no rewind: the enemy has moved on, a miss");
+            // A huge reported delay is capped at MaxRewind: it cannot reach far into the past.
+            var c = NewMission(); c.Enemies.Clear(); c.WaveDelay = 999;
+            var e3 = PlaceEnemy(c, new Vector3(-3f, 0, 8f), 10000);
+            e3.Speed = 0;
+            var old = e3.Position + Vector3.up;
+            for (int i = 0; i < 25; i++) { c.Tick(0.02f); e3.Position += new Vector3(12f * 0.02f, 0, 0); }   // 0.5 s, 6 m: 0.35 s back is still 1.8 m off
+            c.Inputs[1] = new PlayerInput { RewindMs = 1000 };
+            c.Fire(1, old);
+            Assert.AreEqual(10000f, e3.Hp, 0.01f, "0.5 s back is beyond the cap");
+        }
+
+        [Test]
         public void GearSkillDamageScalesGadgetsButNotGuns()
         {
             float Lightning(float gadgetPct)
@@ -453,14 +510,13 @@ namespace RiftWard.Tests
             sim.WaveDelay = 999f;
             sim.Enemies.Clear();
             Assert.AreEqual("minigun", a.WeaponId);
-            a.MagBonus = 1000; sim.RefreshWeapon(a); a.Ammo = a.Mag;   // no reloads in this test
-            int start = a.Ammo;
+            int start = a.StatShots;   // infinite ammo: shots are counted, not rounds
             sim.Inputs[1] = new PlayerInput { Fire = true, Yaw = 0 };
             for (int i = 0; i < 5; i++) sim.Tick(0.02f);                 // 0.1 s: still spinning up
-            Assert.AreEqual(start, a.Ammo, "no shot before the barrels reach the minimum spin");
+            Assert.AreEqual(start, a.StatShots, "no shot before the barrels reach the minimum spin");
             for (int i = 0; i < 40; i++) sim.Tick(0.02f);                // to full spin
             Assert.AreEqual(1f, a.Spin, 1e-3f);
-            int fired = start - a.Ammo;
+            int fired = a.StatShots - start;
             Assert.Greater(fired, 0);
             Assert.Greater(a.Heat, 0f);
             // Hot barrels hit harder.
@@ -473,12 +529,12 @@ namespace RiftWard.Tests
             a.Heat = 0.99f;
             for (int i = 0; i < 10; i++) sim.Tick(0.02f);
             Assert.Greater(a.Overheat, 0f, "full heat locks the gun");
-            int locked = a.Ammo;
+            int locked = a.StatShots;
             for (int i = 0; i < 20; i++) sim.Tick(0.02f);
-            Assert.AreEqual(locked, a.Ammo, "no shots while overheated");
+            Assert.AreEqual(locked, a.StatShots, "no shots while overheated");
             for (int i = 0; i < 120; i++) sim.Tick(0.02f);
             Assert.AreEqual(0f, a.Overheat, 1e-4f);
-            Assert.Less(a.Ammo, locked, "fires again once cooled");
+            Assert.Greater(a.StatShots, locked, "fires again once cooled");
             // Firing slows the walk.
             var walker = new Actor { Speed = 10f, Hp = 100f, MaxHp = 100f, Loadout = kit };
             var p0 = walker.Position;
@@ -850,6 +906,7 @@ namespace RiftWard.Tests
             Assert.AreEqual(240, Defs.MissionXp(40, 20, true));
             Assert.AreEqual(300, Defs.MissionXp(40, 20, true, 1));
             Assert.AreEqual(360, Defs.MissionXp(40, 20, true, 2));
+            Assert.AreEqual((int)System.Math.Round((600 + 200 + 40 * 8) * 1.5), Defs.MissionXp(600, 40, false, 0, true), "endless mirrors mission_xp");
         }
 
         [Test]
@@ -1366,12 +1423,12 @@ namespace RiftWard.Tests
             var lo = new Loadout { Owned = new List<string> { "minigun" }, Equipped = new List<string> { "minigun" } };
             var sim = NewMission(lo); var a = sim.Actors[1];
             sim.WaveDelay = 999; sim.Enemies.Clear();
-            a.RateMult = 0.3f; a.MagBonus = 1000; sim.RefreshWeapon(a);
-            a.Ammo = a.Mag; a.Spin = 1;
+            a.RateMult = 0.3f; a.MagBonus = 1000; sim.RefreshWeapon(a);   // a huge drum: no overheat inside this second
+            a.Spin = 1;
             sim.Inputs[1] = new PlayerInput { Fire = true };
-            int ammo = a.Ammo;
+            int shots = a.StatShots;
             for (int i = 0; i < 60; i++) sim.Tick(1f / 60);
-            Assert.That(ammo - a.Ammo, Is.InRange(39, 41));
+            Assert.That(a.StatShots - shots, Is.InRange(39, 41));
         }
 
         [Test]

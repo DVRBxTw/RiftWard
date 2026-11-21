@@ -191,6 +191,8 @@ namespace RiftWard.Client
             NetworkInput = input =>
             {
                 input.Seq = ++inputSeq;
+                // Lag compensation: how far behind the server this view is (round trip + render delay).
+                input.RewindMs = (net.PingMs >= 0 ? net.PingMs : 60) + Defs.RenderDelayMs;
                 net.Send(Msg.Input, w => w.Write(input));
                 pendingInputs.Add(input);
                 if (pendingInputs.Count > 120) pendingInputs.RemoveAt(0);
@@ -457,6 +459,8 @@ namespace RiftWard.Client
                 Block = me != null && (active && Input.GetMouseButton(1) || AimForCapture && !me.Melee),
                 Slot = desiredSlot,
             };
+            if (input.Ult && !ultHeld) UltFeedback(me);
+            ultHeld = input.Ult;
             SubmitInput(input);
             DrainEvents();
             if (Sim.State != lastState && net == null)
@@ -464,6 +468,21 @@ namespace RiftWard.Client
                 lastState = Sim.State;
                 if (Sim.State == MissionState.Victory || Sim.State == MissionState.Defeat) MissionEnded?.Invoke(Sim);
             }
+        }
+
+        bool ultHeld;
+        string notice = "";
+        float noticeUntil;
+
+        /// X pressed: say why nothing happens when the tornado cannot go (cooling down, or nobody in range).
+        void UltFeedback(Actor me)
+        {
+            if (me == null || !me.Alive) return;
+            if (me.UltCooldown > 0) { notice = $"龍捲風冷卻中 · 還要 {Mathf.CeilToInt(me.UltCooldown)} 秒"; noticeUntil = Time.time + 1.6f; return; }
+            bool target = Sim.Pvp
+                ? Sim.Actors.Values.Any(o => o.Id != me.Id && o.Alive && Vector3.Distance(o.Position, me.Position) < Defs.UltRange)
+                : Sim.Enemies.Values.Any(e => e.Hp > 0 && Vector3.Distance(e.Position, me.Position) < Defs.UltRange);
+            if (!target) { notice = $"{Defs.UltRange:0} 公尺內沒有敵人 · 龍捲風未施放"; noticeUntil = Time.time + 1.6f; }
         }
 
         /// Offline: feed the local simulation. Networked sessions override this through NetworkInput.
@@ -1087,7 +1106,8 @@ namespace RiftWard.Client
 
             UpdateCamera(me, dt);
             UpdateAudio(me, dt);
-            string toast = Sim.State == MissionState.Playing && !Paused && !Sim.BuffPending && !ChatHud.Typing && Cursor.lockState != CursorLockMode.Locked ? Hud.CursorPrompt : Objective;
+            string toast = Sim.State == MissionState.Playing && !Paused && !Sim.BuffPending && !ChatHud.Typing && Cursor.lockState != CursorLockMode.Locked ? Hud.CursorPrompt
+                : Time.time < noticeUntil ? notice : Objective;
             Hud.Spectating = SpectatingId != 0 && Sim.Actors.TryGetValue(SpectatingId, out var watchedActor) ? (string.IsNullOrEmpty(watchedActor.Name) ? "隊友" : watchedActor.Name) : null;
             Hud.Tick(dt, Sim, me, Camera, thirdPerson, toast);
         }

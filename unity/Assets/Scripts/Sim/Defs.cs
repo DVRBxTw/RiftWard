@@ -24,8 +24,15 @@ namespace RiftWard.Sim
         }
 
         /// Account XP for a mission; mirrors mission_xp() in server/service.py (higher difficulty multiplies it).
-        public static int MissionXp(int kills, int wave, bool victory, int difficulty = 0) =>
-            (int)System.Math.Round((Mathf.Max(0, kills) + Mathf.Max(0, wave) * 5 + (victory ? 100 : 0)) * (double)Difficulty(difficulty).Xp, System.MidpointRounding.ToEven);
+        /// 無盡: no clear bonus, so every 5 waves survived pays EndlessXpStep and the run counts EndlessXpMult (mirrors mission_xp).
+        public const float EndlessXpMult = 1.5f;
+        public const int EndlessXpStep = 40;
+        public static int MissionXp(int kills, int wave, bool victory, int difficulty = 0, bool endless = false)
+        {
+            double xp = Mathf.Max(0, kills) + Mathf.Max(0, wave) * 5 + (victory ? 100 : 0);
+            if (endless) xp = (xp + EndlessXpStep * (Mathf.Max(0, wave) / 5)) * EndlessXpMult;
+            return (int)System.Math.Round(xp * Difficulty(difficulty).Xp, System.MidpointRounding.ToEven);
+        }
 
         /// Mission difficulty tiers; mirrors DIFFICULTY_* in server/service.py. A tier opens for a region once the
         /// tier below it has been cleared there.
@@ -74,7 +81,7 @@ namespace RiftWard.Sim
         /// XP needed to go from this account level to the next; mirrors level_for() in server/service.py.
         public static int AccountLevelNeed(int level) => 100 + 50 * level;
 
-        public const string Version = "0.8.2-unity.1";
+        public const string Version = "0.8.3-unity.1";
 
         // Player movement
         public const float EyeHeight = 1.65f;
@@ -180,6 +187,9 @@ namespace RiftWard.Sim
         /// gun for MinigunCool seconds. Firing slows the walk.
         public const float MinigunSpinUp = 0.6f, MinigunSpinDown = 0.8f, MinigunMinSpin = 0.25f, MinigunHeatShots = 90f,
             MinigunCool = 2f, MinigunHeatBonus = 0.3f, MinigunFireSpeed = 0.6f, MinigunIdleCool = 2.5f;
+        /// The minigun has infinite ammo (heat is its only limit), so its 彈匣 upgrade and C3 bonus raise how many shots
+        /// it takes to overheat instead: MinigunHeatShots at the base 120-round drum, more with a bigger one.
+        public static float MinigunHeatShotsFor(int mag) => MinigunHeatShots * Mathf.Max(1, mag) / 120f;
 
         // Melee (光劍): left click swings through a frontal arc, right click blocks bullets from the front.
         /// Aiming down sights: spread multiplier (shotguns use AimSpreadPellets) and walk speed multiplier.
@@ -195,7 +205,7 @@ namespace RiftWard.Sim
             ["rifle"] = new WeaponDef("rifle", "AR-27 突擊步槍", "步槍", "全自動高射速，適合壓制大群敵人。", 17f, 0.1f, 30, 1.8f, 1, 0.012f, 2f, 0.75f, 400, 0.019f, 0.007f, 1.3f),
             ["shotgun"] = new WeaponDef("shotgun", "SG-8 霰彈槍", "霰彈", "一次射出 9 顆彈丸，近距離威力驚人。", 16.8f, 0.75f, 6, 2.0f, 9, 0.07f, 1.5f, 0.85f, 600, 0.065f, 0.015f, 1.4f),
             ["sniper"] = new WeaponDef("sniper", "LR-50 狙擊槍", "狙擊", "單發高傷害，爆頭 3 倍。右鍵開鏡。", 95f, 1.0f, 5, 2.4f, 1, 0f, 3f, 0.35f, 800, 0.09f, 0.01f, 1.6f),
-            ["minigun"] = new WeaponDef("minigun", "M-7 熔爐機槍", "機槍", "六管轉輪：越轉越快、越熱越痛，過熱需冷卻 2 秒；開火時移動變慢。", 11f, 0.05f, 120, 3.4f, 1, 0.03f, 1.5f, 0.85f, 0, 0.006f, 0.008f, 1.5f),
+            ["minigun"] = new WeaponDef("minigun", "M-7 熔爐機槍", "機槍", "六管轉輪，無限彈藥：越轉越快、越熱越痛，過熱需冷卻 2 秒（彈匣強化改為延長過熱前的射擊時間）；開火時移動變慢。", 11f, 0.05f, 120, 3.4f, 1, 0.03f, 1.5f, 0.85f, 0, 0.006f, 0.008f, 1.5f),
             ["saber"] = new WeaponDef("saber", "EX-1 能量光劍", "光劍", "高能電漿刃。左鍵揮砍前方扇形，一次最多砍中 3 名敵人（最近的一名全額，其餘 60%）；右鍵格擋正面子彈。", 55f, 0.42f, 1, 0f, 1, 0f, 1f, 1f, 0, 0.006f, 0f, 1.5f, melee: true, range: 2.8f),
         };
 
@@ -287,6 +297,11 @@ namespace RiftWard.Sim
         public const float UltCooldown = 30f, UltRange = 30f, TornadoSpeed = 7.5f, TornadoLife = 4f, TornadoRadius = 2.4f,
             TornadoDamage = 110f, TornadoLift = 3.2f, TornadoAirTime = 1.4f;
         public const float AfkTakeover = 60f;
+        /// 延遲補償: a shot or swing is judged against where targets were when the shooter saw them, rewound by the
+        /// rewind the client reports (round trip + render delay), capped at MaxRewind so it cannot be abused.
+        public const float MaxRewind = 0.35f, RewindHistory = 0.5f;
+        /// What the client adds to its round trip: snapshot spacing (half of 50 ms on average) plus view smoothing (~70 ms).
+        public const int RenderDelayMs = 95;
         /// Anti-burst: no single tick of damage takes more than HitCap of max life, and recent damage (a bucket that
         /// drains BurstDrain of max life per second) never exceeds BurstCap. From full life a player therefore loses
         /// at most BurstCap + BurstDrain (70%) in any one second and is never killed in an instant; a long swarm

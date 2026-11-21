@@ -1600,7 +1600,7 @@ namespace RiftWard.Client
             if (item == null || root == null) return;
             craftDialog = Ui.Box(root, new Color(0, 0, 0, 0.62f), "CraftDialog").rectTransform.Fill();
             var sheet = Ui.Box(craftDialog, Palette.Sheet, "Sheet").rectTransform;
-            sheet.Place(new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(560, 640));
+            sheet.Place(new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(560, 736));
             TopRule(sheet, item.Color);
             var st = Ui.VStack(sheet, 6);
             st.Fill();
@@ -1659,6 +1659,20 @@ namespace RiftWard.Client
                 Send("/api/gear/ascend", new Dictionary<string, object> { ["item"] = itemId, ["fodder"] = fodder.Id }, "升階成功"), 14, top ? Palette.Muted : Gear.RarityColors[Mathf.Min(4, item.Rarity + 1)]).Sized(38);
             ascend.interactable = !top && fodder != null && p.Shards >= aShards && p.Gold >= aGold;
 
+            // ---- 命之座 (like the weapons'): same-slot, same-rarity piece + gold
+            int cLevel = item.Constellation;
+            bool cMax = cLevel >= Defs.ConstellationMax, cRare = item.Rarity >= 2;
+            Widgets.Section(st, $"命之座  C{cLevel} / {Defs.ConstellationMax}").Sized(24);
+            var cFodder = cMax || !cRare ? null : p.Inventory.Where(i => i.Id != item.Id && i.Slot == item.Slot && i.Rarity == item.Rarity && !worn.Contains(i.Id))
+                .OrderBy(i => i.Constellation).ThenBy(i => i.Limit).ThenBy(i => i.Level).FirstOrDefault();
+            string effect = $"每級全屬性 +4%，C3 防禦 +2%，C6 全屬性再 +10%（目前 +{cLevel * 4 + (cLevel >= 6 ? 10 : 0)}%）。";
+            Ui.Label(st, !cRare ? "稀世以上的裝備才能升命之座。" : cMax ? "命之座已達上限。" + effect
+                : cFodder != null ? $"消耗素材：{cFodder.Name}。{effect}" : $"需要另一件未裝備的{Gear.RarityNames[item.Rarity]}{Gear.SlotNames[item.Slot]}作為素材。{effect}", 12, Palette.Muted).Sized(34);
+            int cGold = cMax ? 0 : Defs.ConstellationGold[cLevel];
+            var constellation = Ui.Button(st, cMax ? "命之座已滿" : !cRare ? "無法升命之座" : $"升命之座 C{cLevel + 1} · 素材 1 件 + {cGold} G", () =>
+                Send("/api/gear/constellation", new Dictionary<string, object> { ["item"] = itemId }, $"命之座提升至 C{cLevel + 1}"), 14, Palette.Hex("8fd3ff")).Sized(38);
+            constellation.interactable = cRare && !cMax && cFodder != null && p.Gold >= cGold;
+
             Ui.Rect(st, "Spacer").gameObject.AddComponent<LayoutElement>().flexibleHeight = 1;
             var foot = Ui.Rect(st, "Foot").Sized(40);
             Ui.Label(foot, message, 14, error ? Palette.Danger : Palette.Amber, TextAnchor.MiddleLeft).rectTransform.Fill().offsetMax = new Vector2(-250, 0);
@@ -1688,6 +1702,30 @@ namespace RiftWard.Client
 
         /// Salvage everything of the ticked rarities in one go. Equipped gear and the copy in use are never touched;
         /// ticking 傳奇 or 神話 turns the button red and needs a second click (the server also demands confirm).
+        /// The gear bag cannot take this draw: how full it is, and a shortcut to bulk salvage.
+        void BagFullDialog(int have, int count)
+        {
+            if (salvageDialog != null) UnityEngine.Object.Destroy(salvageDialog.gameObject);
+            salvageDialog = Ui.Box(root, new Color(0, 0, 0, 0.62f), "BagFull").rectTransform.Fill();
+            var sheet = Ui.Box(salvageDialog, Palette.Sheet, "Sheet").rectTransform;
+            sheet.Place(new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(460, 250));
+            TopRule(sheet, Palette.Danger);
+            var s = Ui.VStack(sheet, 8);
+            s.Fill();
+            s.GetComponent<VerticalLayoutGroup>().padding = new RectOffset(28, 28, 22, 22);
+            Ui.Label(s, "背包空間", 13, Palette.Danger).Sized(18);
+            bool full = have >= Gear.InventoryLimit;
+            Ui.Label(s, full ? "背包已滿，無法抽取" : "背包快滿了，無法抽取", 24, Palette.Bone, TextAnchor.UpperLeft, true).Sized(34);
+            Ui.Label(s, $"背包 {have} / {Gear.InventoryLimit} 件，這次要抽 {count} 件，空間不足 {have + count - Gear.InventoryLimit} 格。\n請先分解不需要的裝備再抽取。", 14, Palette.Hex("d6d1c6")).Sized(56);
+            Ui.Rect(s, "Spacer").gameObject.AddComponent<LayoutElement>().flexibleHeight = 1;
+            var buttons = Ui.HStack(s, 10).Sized(44);
+            Ui.Button(buttons, "前往一鍵分解", () => { UnityEngine.Object.Destroy(salvageDialog.gameObject); salvageDialog = null; ShowCharacter(); BulkSalvage("gear"); }, 15, Palette.Amber, null, Palette.Amber);
+            Ui.Button(buttons, "知道了", () => { UnityEngine.Object.Destroy(salvageDialog.gameObject); salvageDialog = null; }, 15, Palette.Muted);
+        }
+
+        /// Automated screenshots only.
+        public void BagFullForCapture(int have, int count) => BagFullDialog(have, count);
+
         public void BulkSalvage(string kind)
         {
             var p = app.Profile;
@@ -3181,6 +3219,10 @@ namespace RiftWard.Client
                 Ui.Label(odds, $"{Gear.RarityNames[i]} {weights[i]:0.##}%", 12, Gear.RarityColors[i], TextAnchor.UpperLeft, i == 4 && myth > 0.5f);
             Ui.Label(s, myth > 0.5f ? $"軟保底生效中：神話機率提升至 {myth:0.##}%" : "連續 60 抽未出神話後，神話機率每抽 +0.02%", 12,
                 myth > 0.5f ? Gear.RarityColors[4] : Palette.Muted).Sized(16);
+            // The gear bag holds InventoryLimit pieces: warn as it fills up (a full bag cannot take more draws).
+            if (!weaponPool && !limitedPool && p.Inventory.Count >= Gear.InventoryLimit - 20)
+                Ui.Label(s, p.Inventory.Count >= Gear.InventoryLimit ? $"背包已滿（{p.Inventory.Count} / {Gear.InventoryLimit}）· 請先分解裝備才能抽取"
+                    : $"背包 {p.Inventory.Count} / {Gear.InventoryLimit} · 快滿了，滿了就無法抽取", 13, p.Inventory.Count >= Gear.InventoryLimit ? Palette.Danger : Palette.Amber, TextAnchor.UpperLeft, true).Sized(18);
             var draws = Ui.HStack(s, 10).Sized(54);
             var one = PrimaryButton(draws, "抽 1 次", () => { drawPool = pool; Draw(1); }, 17);
             one.interactable = keys >= 1;
@@ -3221,8 +3263,10 @@ namespace RiftWard.Client
 
         void Draw(int count)
         {
-            if (characterStatus != null) { characterStatus.color = Palette.Amber; characterStatus.text = "開啟補給中…"; }
             bool weapons = drawPool == "weapon" || drawPool == "limited";
+            // Gear draws need room in the bag: say so up front instead of a refused request.
+            if (!weapons && app.Profile != null && app.Profile.Inventory.Count + count > Gear.InventoryLimit) { BagFullDialog(app.Profile.Inventory.Count, count); return; }
+            if (characterStatus != null) { characterStatus.color = Palette.Amber; characterStatus.text = "開啟補給中…"; }
             app.Api.Post(drawPool == "limited" ? "/api/gacha/limited" : weapons ? "/api/gacha/weapon" : "/api/gacha/draw", new Dictionary<string, object> { ["count"] = count }, result =>
             {
                 if (Mode != "shop") return;

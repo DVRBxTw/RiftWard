@@ -226,13 +226,26 @@ GEAR_DEF_PER_LEVEL = 0.8
 GEAR_DEF_PER_LIMIT = 1.5
 
 
+# 裝備命之座 (like the weapons'): feed another unequipped piece of the same slot and rarity (稀世+, plus gold) to raise an
+# item, up to C6. Per level +4% to all its stats; C3 adds 2% defense, C6 another 10% to all stats.
+GEAR_CONST_STAT = 0.04
+GEAR_CONST_C3_DEF = 2.0
+GEAR_CONST_C6_STAT = 0.10
+
+
+def gear_const_mult(item) -> float:
+    c = item.get("const", 0)
+    return 1 + GEAR_CONST_STAT * c + (GEAR_CONST_C6_STAT if c >= 6 else 0)
+
+
 def gear_defense(item) -> float:
-    return GEAR_DEF_PER_LEVEL * item.get("level", 0) + GEAR_DEF_PER_LIMIT * item.get("limit", 0)
+    return GEAR_DEF_PER_LEVEL * item.get("level", 0) + GEAR_DEF_PER_LIMIT * item.get("limit", 0) + (GEAR_CONST_C3_DEF if item.get("const", 0) >= 3 else 0)
 
 
 def gear_invested(item) -> int:
     """Gold put into an item: enhancement levels plus 突破 tiers (salvage refunds 80%)."""
-    return sum(gear_upgrade_cost(item["rarity"], n) for n in range(item.get("level", 0))) + sum(LIMIT_GOLD[:item.get("limit", 0)])
+    return (sum(gear_upgrade_cost(item["rarity"], n) for n in range(item.get("level", 0))) + sum(LIMIT_GOLD[:item.get("limit", 0)])
+            + sum(CONST_GOLD[:item.get("const", 0)]))
 
 
 def gear_invested_shards(item) -> int:
@@ -247,7 +260,7 @@ GEAR_BASE_LIFE = [5, 10, 20, 35, 60]
 def gear_stats(item) -> dict:
     """Effective stats of an item at its enhancement level and 突破 tier (stored stats are the +0 values), with the
     rarity's base life added to its life."""
-    mult = gear_level_mult(item.get("level", 0)) * (1 + GEAR_LIMIT_BONUS * item.get("limit", 0))
+    mult = gear_level_mult(item.get("level", 0)) * (1 + GEAR_LIMIT_BONUS * item.get("limit", 0)) * gear_const_mult(item)
     stats = {k: int(round(v * mult)) for k, v in item["stats"].items()}
     stats["hp"] = stats.get("hp", 0) + int(round(GEAR_BASE_LIFE[item["rarity"]] * mult))
     return stats
@@ -317,6 +330,10 @@ GEAR_NAMES = {"armor": "護甲", "module": "槍械模組", "boots": "戰術靴",
 INVENTORY_LIMIT = 200
 
 
+ENDLESS_XP_MULT = 1.5   # mirrors Defs.EndlessXpMult
+ENDLESS_XP_STEP = 40    # mirrors Defs.EndlessXpStep
+
+
 def mission_xp(stats):
     """Account XP for one mission. Tuned down from kills*3 + wave*15 + 200, which let a single cleared region
     jump several levels; the level curve itself is unchanged so existing accounts keep their level and talents.
@@ -325,7 +342,11 @@ def mission_xp(stats):
     wave = stats.get("wave", 0) if isinstance(stats.get("wave"), int) else 0
     tier = stats.get("difficulty", 0)
     tier = tier if isinstance(tier, int) and not isinstance(tier, bool) and 0 <= tier < len(DIFFICULTY_XP) else 0
-    return int(round((max(0, kills) * 1 + max(0, wave) * 5 + (100 if stats.get("victory") is True else 0)) * DIFFICULTY_XP[tier]))
+    base = max(0, kills) * 1 + max(0, wave) * 5 + (100 if stats.get("victory") is True else 0)
+    if stats.get("endless") is True:
+        # 無盡 has no clear bonus: every 5 waves survived pays ENDLESS_XP_STEP, and the whole run counts ENDLESS_XP_MULT.
+        base = (base + ENDLESS_XP_STEP * (max(0, wave) // 5)) * ENDLESS_XP_MULT
+    return int(round(base * DIFFICULTY_XP[tier]))
 
 
 def level_for(xp: int):
@@ -1005,6 +1026,8 @@ class Store:
             i["level"] = max(0, min(GEAR_MAX_LEVEL, level)) if isinstance(level, int) else 0
             limit = i.get("limit", 0)
             i["limit"] = max(0, min(GEAR_LIMIT_MAX, limit)) if isinstance(limit, int) else 0
+            const = i.get("const", 0)
+            i["const"] = max(0, min(CONST_MAX, const)) if isinstance(const, int) and not isinstance(const, bool) else 0
             if i.get("set") not in GEAR_SETS:
                 i.pop("set", None)
         ids = {i["id"] for i in inventory}
@@ -1335,6 +1358,30 @@ class Store:
         sync_rarity(loadout)
         with self.connect() as db:
             db.execute("UPDATE progress SET loadout=? WHERE account_id=?", (json.dumps(loadout), account_id))
+        return self.profile(account_id)
+
+    @_locked
+    def gear_constellation(self, account_id: int, item_id):
+        """裝備命之座 +1: consumes another unequipped piece of the same slot and rarity (the least invested one), plus gold."""
+        gear = self._raw_gear(account_id)
+        item = self._gear_item(gear, item_id)
+        level = item.get("const", 0)
+        if level >= CONST_MAX:
+            raise ValueError("命之座已達上限")
+        if item["rarity"] < CONST_MIN_RARITY:
+            raise ValueError("稀世以上的裝備才能升命之座")
+        worn = set(gear["equipped"].values())
+        spares = [i for i in gear["inventory"] if i["id"] != item_id and i["slot"] == item["slot"] and i["rarity"] == item["rarity"] and i["id"] not in worn]
+        if not spares:
+            raise ValueError("需要一件未裝備、同部位且同稀有度的裝備作為素材")
+        fodder = min(spares, key=lambda i: (i.get("const", 0), i.get("limit", 0), i.get("level", 0)))
+        cost = CONST_GOLD[level]
+        with self.connect() as db:
+            if not db.execute("UPDATE progress SET gold=gold-? WHERE account_id=? AND gold>=?", (cost, account_id, cost)).rowcount:
+                raise ValueError("金幣不足")
+        gear["inventory"] = [i for i in gear["inventory"] if i["id"] != fodder["id"]]
+        item["const"] = level + 1
+        self._save_gear(account_id, gear)
         return self.profile(account_id)
 
     @_locked
@@ -2873,7 +2920,7 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(200, {"ok": True, "username": name})
             else:
                 self._json(404, {"ok": False, "error": "找不到此服務"})
-        elif self.path in ("/api/talent/assign", "/api/talent/reset", "/api/gacha/draw", "/api/gacha/weapon", "/api/gacha/limited", "/api/gear/equip", "/api/gear/salvage", "/api/gear/upgrade", "/api/gear/reforge", "/api/gear/limit", "/api/gear/ascend", "/api/weapon/select", "/api/weapon/salvage", "/api/salvage/bulk", "/api/weapon/constellation"):
+        elif self.path in ("/api/talent/assign", "/api/talent/reset", "/api/gacha/draw", "/api/gacha/weapon", "/api/gacha/limited", "/api/gear/equip", "/api/gear/salvage", "/api/gear/upgrade", "/api/gear/reforge", "/api/gear/limit", "/api/gear/ascend", "/api/gear/constellation", "/api/weapon/select", "/api/weapon/salvage", "/api/salvage/bulk", "/api/weapon/constellation"):
             try:
                 extra = {}
                 if self.path == "/api/talent/assign":
@@ -2908,6 +2955,8 @@ class Handler(BaseHTTPRequestHandler):
                     result = store.limit_break_gear(profile["id"], data.get("item"))
                 elif self.path == "/api/gear/ascend":
                     result = store.ascend_gear(profile["id"], data.get("item"), data.get("fodder"))
+                elif self.path == "/api/gear/constellation":
+                    result = store.gear_constellation(profile["id"], data.get("item"))
                 else:
                     result = store.salvage(profile["id"], data.get("item"))
             except ValueError as exc:

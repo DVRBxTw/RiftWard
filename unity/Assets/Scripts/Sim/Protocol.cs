@@ -105,6 +105,7 @@ namespace RiftWard.Sim
             w.Write((byte)flags);
             w.Write((byte)Mathf.Clamp(i.Slot, 0, 255));
             w.Write((byte)(i.Ult ? 1 : 0));
+            w.Write((ushort)Mathf.Clamp(i.RewindMs, 0, 1000));
         }
 
         public static PlayerInput ReadInput(this BinaryReader r)
@@ -115,6 +116,7 @@ namespace RiftWard.Sim
             i.Reload = (f & 16) != 0; i.Skill = (f & 32) != 0; i.Interact = (f & 64) != 0; i.Block = (f & 128) != 0;
             i.Slot = r.ReadByte();
             i.Ult = (r.ReadByte() & 1) != 0;
+            i.RewindMs = r.ReadUInt16();
             if (!float.IsFinite(i.Yaw) || !float.IsFinite(i.Pitch) || !float.IsFinite(i.Move.x) || !float.IsFinite(i.Move.y) ||
                 !float.IsFinite(i.Aim.x) || !float.IsFinite(i.Aim.y) || !float.IsFinite(i.Aim.z)) i = new PlayerInput { Seq = i.Seq };
             i.Move = Vector2.ClampMagnitude(i.Move, 1f);
