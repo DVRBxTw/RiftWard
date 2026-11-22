@@ -53,7 +53,7 @@ namespace RiftWard.Launcher
         public const int ApiPort = 24771, GamePort = 24770;
         public const string CacheFolder = "updates";
 #endif
-        public const string DefaultAddress = "123.241.56.94";
+        public const string DefaultAddress = "123.240.75.135";
 
         /// The server.cfg the game reads, for installs that came as the bare exe.
         public static string EmbeddedConfig()
