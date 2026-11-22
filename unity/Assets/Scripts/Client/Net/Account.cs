@@ -277,7 +277,7 @@ namespace RiftWard.Client
     /// JSON-over-HTTP client for the account service (port 24771).
     public sealed class AccountApi
     {
-        public string Host = "123.241.56.94";
+        public string Host = "123.240.75.135";
         public int Port = 24771;
         public string Token = "";
         /// Set on the dedicated server: requests authenticate with X-Server-Key instead of a player token.
